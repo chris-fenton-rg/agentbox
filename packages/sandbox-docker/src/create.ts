@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { mkdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { ConfigError, loadConfig } from '@agentbox/ctl';
 import { containerExists, dockerInfo, ensureVolume, runBox } from './docker.js';
 import { DEFAULT_BOX_IMAGE, ensureImage } from './image.js';
@@ -26,6 +26,22 @@ export interface CreatedBox {
 
 function generateBoxId(): string {
   return randomBytes(4).toString('hex');
+}
+
+export function sanitizeBasename(workspacePath: string): string {
+  const raw = basename(resolve(workspacePath));
+  return raw
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^[-._]+|[-._]+$/g, '')
+    .slice(0, 30)
+    .replace(/[-._]+$/, '');
+}
+
+export function defaultBoxName(workspacePath: string, id: string): string {
+  const base = sanitizeBasename(workspacePath);
+  return base.length > 0 ? `${base}-${id}` : id;
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -88,7 +104,8 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   log(built ? `built image ${imageRef}` : `using cached image ${imageRef}`);
 
   const id = generateBoxId();
-  const containerName = `agentbox-${opts.name ?? id}`;
+  const name = opts.name ?? defaultBoxName(workspace, id);
+  const containerName = `agentbox-${name}`;
   if (await containerExists(containerName)) {
     throw new Error(`container ${containerName} already exists; remove it first`);
   }
@@ -150,7 +167,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
 
   const record: BoxRecord = {
     id,
-    name: opts.name ?? id,
+    name,
     container: containerName,
     image: imageRef,
     workspacePath: workspace,

@@ -39,7 +39,7 @@ function attachShell(container: string): never {
 export const createCommand = new Command('create')
   .description('Create and start a new agent box (Docker container with FUSE overlay)')
   .option('-w, --workspace <path>', 'host workspace to mount', process.cwd())
-  .option('-n, --name <name>', 'friendly box name (default: auto-generated id)')
+  .option('-n, --name <name>', 'friendly box name (default: <workspace-basename>-<id>)')
   .option('--snapshot', 'use a frozen APFS clone of the workspace as the overlay lower')
   .option('--no-snapshot', 'bind the live workspace directly (host edits leak into reads)')
   .option('--image <ref>', 'override the box image', undefined)
