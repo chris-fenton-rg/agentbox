@@ -1,0 +1,36 @@
+{
+  "name": "agentbox-monorepo",
+  "private": true,
+  "version": "0.0.0",
+  "description": "AgentBox monorepo root",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20.10",
+    "pnpm": ">=9"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "clean": "turbo run clean && rm -rf node_modules .turbo",
+    "changeset": "changeset"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.10",
+    "@types/node": "^22.10.1",
+    "eslint": "^9.16.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.4.1",
+    "tsup": "^8.3.5",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.0",
+    "vitest": "^2.1.8"
+  }
+}
