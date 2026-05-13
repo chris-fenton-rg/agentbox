@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import { claudeSessionCommand } from './commands/claude-session.js';
 import { daemonCommand } from './commands/daemon.js';
 import { statusCommand } from './commands/status.js';
 import { logsCommand } from './commands/logs.js';
@@ -25,6 +26,7 @@ program.addCommand(restartCommand);
 program.addCommand(stopServiceCommand);
 program.addCommand(startServiceCommand);
 program.addCommand(reloadCommand);
+program.addCommand(claudeSessionCommand);
 
 program.parseAsync(process.argv).catch((err: unknown) => {
   const msg = err instanceof Error ? err.message : String(err);

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { claudeCommand } from '../src/commands/claude.js';
 import { createCommand } from '../src/commands/create.js';
 import { destroyCommand } from '../src/commands/destroy.js';
 import { inspectCommand } from '../src/commands/inspect.js';
@@ -42,5 +43,29 @@ describe('lifecycle CLI surface', () => {
 
   it('create is still wired (regression check)', () => {
     expect(createCommand.name()).toBe('create');
+  });
+
+  it('claude is registered with create-style options + isolation flag + variadic claude-args', () => {
+    expect(claudeCommand.name()).toBe('claude');
+    const longs = claudeCommand.options.map((o) => o.long);
+    expect(longs).toEqual(
+      expect.arrayContaining([
+        '--workspace',
+        '--name',
+        '--snapshot',
+        '--no-snapshot',
+        '--image',
+        '--yes',
+        '--isolate-claude-config',
+        '--session-name',
+      ]),
+    );
+    // Variadic positional for pass-through `-- <claude-args>`.
+    expect(claudeCommand.registeredArguments).toHaveLength(1);
+    expect(claudeCommand.registeredArguments[0]!.variadic).toBe(true);
+    // attach is a nested subcommand.
+    const attach = claudeCommand.commands.find((c) => c.name() === 'attach');
+    expect(attach).toBeDefined();
+    expect(attach!.options.map((o) => o.long)).toContain('--session-name');
   });
 });

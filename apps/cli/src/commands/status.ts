@@ -1,6 +1,6 @@
 import { log } from '@clack/prompts';
 import { Command } from 'commander';
-import { renderStatusTable, type ServiceStatus } from '@agentbox/ctl';
+import { renderStatusTable, type ClaudeSessionStatus, type ServiceStatus } from '@agentbox/ctl';
 import {
   AmbiguousBoxError,
   BoxNotFoundError,
@@ -37,13 +37,35 @@ export const statusCommand = new Command('status')
         process.exit(1);
       }
       const list = JSON.parse(proc.stdout) as ServiceStatus[];
+      const claude = await fetchClaudeSession(box.container);
 
       if (opts.json) {
-        process.stdout.write(JSON.stringify(list, null, 2) + '\n');
+        process.stdout.write(JSON.stringify({ services: list, claudeSession: claude }, null, 2) + '\n');
       } else {
+        if (claude !== null) {
+          process.stdout.write(`${renderClaudeLine(claude)}\n`);
+        }
         process.stdout.write(renderStatusTable(list) + '\n');
       }
     } catch (err) {
       handleLifecycleError(err);
     }
   });
+
+async function fetchClaudeSession(container: string): Promise<ClaudeSessionStatus | null> {
+  const proc = await execInBox(container, ['agentbox-ctl', 'claude-session', '--json'], {
+    user: 'vscode',
+  });
+  if (proc.exitCode !== 0) return null;
+  try {
+    return JSON.parse(proc.stdout) as ClaudeSessionStatus;
+  } catch {
+    return null;
+  }
+}
+
+function renderClaudeLine(s: ClaudeSessionStatus): string {
+  if (!s.running) return `claude session: not running ("${s.sessionName}")`;
+  const since = s.startedAt ? ` since ${s.startedAt}` : '';
+  return `claude session: running ("${s.sessionName}")${since}`;
+}

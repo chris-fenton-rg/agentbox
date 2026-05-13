@@ -1,5 +1,12 @@
 import { createConnection, type Socket } from 'node:net';
-import type { CtlRequest, CtlResponse, LogEvent, ReloadResult, ServiceStatus } from './types.js';
+import type {
+  ClaudeSessionStatus,
+  CtlRequest,
+  CtlResponse,
+  LogEvent,
+  ReloadResult,
+  ServiceStatus,
+} from './types.js';
 
 export interface ConnectOptions {
   socketPath: string;
@@ -73,6 +80,15 @@ export async function start(opts: ConnectOptions, service: string): Promise<Serv
 
 export async function reload(opts: ConnectOptions): Promise<ReloadResult> {
   return sendOneShot<ReloadResult>(opts, { op: 'reload' });
+}
+
+export async function claudeSession(
+  opts: ConnectOptions & { sessionName?: string },
+): Promise<ClaudeSessionStatus> {
+  return sendOneShot<ClaudeSessionStatus>(opts, {
+    op: 'claude-session',
+    sessionName: opts.sessionName,
+  });
 }
 
 export interface LogsResult {

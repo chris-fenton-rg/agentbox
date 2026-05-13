@@ -1,5 +1,22 @@
 import type { SandboxProvider } from '@agentbox/core';
 
+export {
+  attachClaudeSession,
+  buildClaudeMounts,
+  ClaudeSessionError,
+  claudeSessionInfo,
+  DEFAULT_CLAUDE_SESSION,
+  ensureClaudeVolume,
+  resolveClaudeVolume,
+  SHARED_CLAUDE_VOLUME,
+  startClaudeSession,
+  type ClaudeConfigSpec,
+  type ClaudeMountResult,
+  type ClaudeSessionInfo,
+  type EnsureClaudeVolumeOptions,
+  type EnsureClaudeVolumeResult,
+  type StartClaudeSessionOptions,
+} from './claude.js';
 export { createBox, type CreateBoxOptions, type CreatedBox } from './create.js';
 export { execInBox, type DockerExecResult } from './docker.js';
 export { DEFAULT_BOX_IMAGE } from './image.js';

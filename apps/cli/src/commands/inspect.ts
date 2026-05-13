@@ -26,11 +26,20 @@ function renderText(i: InspectedBox): string {
     `lower         ${i.record.lowerPath}`,
     `upper volume  ${i.upperVolume.name}${i.upperVolume.mountpoint ? `  (${i.upperVolume.mountpoint})` : ''}`,
     `node_modules  ${i.record.nodeModulesVolume}`,
+    `claude config ${i.record.claudeConfigVolume ?? '(none)'}`,
+    `claude session ${renderClaudeSession(i)}`,
     `snapshot dir  ${i.record.snapshotDir ?? '(none — live workspace mount)'}`,
     `snapshot size ${fmtBytes(i.snapshotSizeBytes)}`,
     `created       ${i.record.createdAt}`,
   ];
   return lines.join('\n');
+}
+
+function renderClaudeSession(i: InspectedBox): string {
+  if (i.claudeSession === null) return '(n/a — box not running)';
+  if (!i.claudeSession.running) return `not running ("${i.claudeSession.sessionName}")`;
+  const since = i.claudeSession.startedAt ? ` since ${i.claudeSession.startedAt}` : '';
+  return `running ("${i.claudeSession.sessionName}")${since}`;
 }
 
 export const inspectCommand = new Command('inspect')

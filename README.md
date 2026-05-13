@@ -12,7 +12,7 @@ Launch Claude Code, Codex, and other coding agents inside isolated sandboxes —
 - **upper** — a per-box named volume that captures all writes
 - **`/workspace`** — the merged overlay the agent actually sees
 
-Result: the agent can `git commit`, install packages, scribble files — without touching your host. `node_modules` is shadowed by a Linux-native volume so macOS binaries don't leak in. `~/.claude`, `~/.codex`, `~/.gitconfig` are mounted opportunistically so the agent inherits your identity.
+Result: the agent can `git commit`, install packages, scribble files — without touching your host. `node_modules` is shadowed by a Linux-native volume so macOS binaries don't leak in. `~/.codex` and `~/.gitconfig` are bind-mounted opportunistically so the agent inherits your identity. **Claude Code state** (auth tokens, skills, plugins, settings, MCP config) lives in a named Docker volume `agentbox-claude-config` mounted at `/home/vscode/.claude`; the host is the authoritative source — every `agentbox create` / `agentbox claude` rsyncs your host's `~/.claude` into the volume so updates on the host (new login, new skills, new MCP servers) flow into the next box you spin up. Sync is additive: files written inside earlier boxes (session history, etc.) are preserved.
 
 ## Quick start
 
@@ -44,11 +44,16 @@ docker exec -it agentbox-<id> bash
 
 ```sh
 agentbox create [-w <path>] [-n <name>] [--snapshot | --no-snapshot] [--attach] [-y]
+agentbox claude [-w <path>] [-n <name>] [--snapshot | --no-snapshot] [--isolate-claude-config]
+                [--session-name <name>] [-y] [-- <claude-args>...]
+                                    # create + start Claude Code in detached tmux + attach
+agentbox claude attach <box> [--session-name <name>]   # reattach to the running session
 agentbox list                       # alias: ls
 agentbox inspect <box> [--json]
-agentbox status <box> [--json]                  # services managed by the in-box agentbox-ctl daemon
+agentbox status <box> [--json]                  # services + claude session state
 agentbox logs <box> <service> [-f] [-n <tail>]  # tail or stream a service's stdout/stderr
 # inside a box: agentbox-ctl validate [path]    # check agentbox.yaml shape without starting the daemon
+# inside a box: agentbox-ctl claude-session [--json]   # report tmux 'claude' session state
 agentbox pause <box>                # docker pause — 0 CPU, RAM stays mapped
 agentbox unpause <box>              # docker unpause — sub-second resume
 agentbox stop <box>                 # docker stop — preserves upper + node_modules volumes
@@ -64,7 +69,7 @@ Quick tour:
 ```sh
 agentbox create -n alpha          # spin one up
 agentbox list                     # see it
-agentbox inspect alpha            # state, overlay status, volume mountpoint, sizes
+agentbox inspect alpha            # state, overlay status, claude session, sizes
 agentbox pause alpha              # freeze (TS server cache, RAM all stays)
 agentbox unpause alpha            # resume
 agentbox stop alpha               # full shutdown
@@ -72,6 +77,22 @@ agentbox start alpha              # restart + re-mount the overlay
 agentbox destroy alpha            # nuke it (prompts to confirm — `-y` to skip)
 agentbox prune --all              # clean up any orphan containers/volumes/snapshots
 ```
+
+### Running Claude Code in a box
+
+```sh
+agentbox claude -n cc                          # snapshot + start claude REPL, attach via tmux
+# (in tmux) press Ctrl-b d to detach — claude keeps running
+agentbox claude attach cc                      # reattach later
+agentbox claude -n one-off -- --model sonnet   # pass-through args after `--`
+agentbox claude -n iso --isolate-claude-config # opt out of the shared identity volume
+```
+
+By default every `claude` box mounts the shared `agentbox-claude-config` Docker volume at `/home/vscode/.claude`. On every box creation the host's `~/.claude` is rsynced into that volume, so the host is the source of truth — install skills and sign in on the host once, and every new box picks up the latest. Host's `~/.claude.json` (the file at home root, containing onboarding state, anonymous id, plugin/cache state, and OAuth account info) is also synced in via an in-volume symlink, so a fresh box doesn't re-trigger first-run onboarding. `--isolate-claude-config` opts into a per-box volume (`agentbox-claude-config-<id>`) that still gets seeded from host on creation but then diverges independently; it's removed when the box is destroyed. `agentbox destroy` **never** auto-removes the shared volume — delete it manually with `docker volume rm agentbox-claude-config` if you need to. Setting `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` on the host forwards it into the container at create time.
+
+Hook commands whose path is under your host home (e.g. `/Users/you/.config/iterm2/...`) are filtered out of the in-volume copy automatically. Hooks resolved via `PATH`, hooks under `/workspace`, and project-level hooks in your workspace's `.claude/settings.json` are kept untouched. The host file is never modified — the filter only affects the synced copy. (Smarter remapping of project-internal paths is a future enhancement.) The synced `.claude.json` also has its `installMethod` field stripped, because the box image installs Claude Code via Anthropic's native installer (`curl https://claude.ai/install.sh | bash -s stable`) and the host's recorded install method may not match; claude inside the box redetects on first run.
+
+**First-run auth onboarding.** macOS Keychain doesn't transfer into containers, so the first `agentbox claude` without a token offers to run `claude setup-token` for you. After the OAuth flow you paste the printed token once, and it's saved to `~/.agentbox/auth.json` (mode 0600). Every later `agentbox claude` forwards it silently as `CLAUDE_CODE_OAUTH_TOKEN`. Resolution order: `ANTHROPIC_API_KEY` env → `CLAUDE_CODE_OAUTH_TOKEN` env → `~/.agentbox/auth.json`. To rotate the saved token: `rm ~/.agentbox/auth.json` then run `agentbox claude` again. Pass `-y` (or run with stdin not a TTY) to skip the prompt entirely — useful for CI; the box will just show "Run /login" inside.
 
 ## Layout
 

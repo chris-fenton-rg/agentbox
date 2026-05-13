@@ -3,6 +3,7 @@ import { mkdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { ConfigError, loadConfig } from '@agentbox/ctl';
+import { buildClaudeMounts, ensureClaudeVolume, resolveClaudeVolume } from './claude.js';
 import { containerExists, dockerInfo, ensureVolume, runBox } from './docker.js';
 import { DEFAULT_BOX_IMAGE, ensureImage } from './image.js';
 import { mountOverlay, verifyOverlay, type OverlayCheck } from './overlay.js';
@@ -16,6 +17,14 @@ export interface CreateBoxOptions {
   useSnapshot: boolean;
   image?: string;
   onLog?: (line: string) => void;
+  /**
+   * Claude Code config volume. When omitted, defaults to `{ isolate: false }` —
+   * every box mounts the shared `agentbox-claude-config` volume at
+   * /home/vscode/.claude so auth / skills / plugins persist across boxes.
+   */
+  claudeConfig?: { isolate: boolean };
+  /** Extra env vars forwarded to the container (merged on top of claude env forwarding). */
+  claudeEnv?: Record<string, string>;
 }
 
 export interface CreatedBox {
@@ -53,10 +62,13 @@ async function pathExists(p: string): Promise<boolean> {
   }
 }
 
-async function buildAgentMounts(): Promise<string[]> {
+// ~/.claude is intentionally NOT in this list: it lives in the named volume
+// `agentbox-claude-config` (see resolveClaudeVolume / ensureClaudeVolume) so
+// auth persists inside the container without leaking host state. Only
+// non-claude identity files are bind-mounted from the host.
+async function buildIdentityMounts(): Promise<string[]> {
   const home = homedir();
   const candidates: Array<{ src: string; dst: string; readOnly: boolean }> = [
-    { src: join(home, '.claude'), dst: '/home/vscode/.claude', readOnly: false },
     { src: join(home, '.codex'), dst: '/home/vscode/.codex', readOnly: false },
     { src: join(home, '.gitconfig'), dst: '/home/vscode/.gitconfig', readOnly: true },
   ];
@@ -126,11 +138,43 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   await ensureVolume(nodeModulesVolume);
   log(`prepared volumes ${upperVolume}, ${nodeModulesVolume}`);
 
+  // Claude Code config volume. Shared by default so users sign in once across
+  // every box; --isolate-claude-config opts into a per-box volume. Either way,
+  // the host's ~/.claude is the authoritative source: we rsync host -> volume
+  // on every create so updates on the host (new login, new skills, new MCP)
+  // flow into the next box. Sync is additive — box-only state (session logs,
+  // etc.) is preserved.
+  const claudeSpec = resolveClaudeVolume({
+    isolate: opts.claudeConfig?.isolate ?? false,
+    boxId: id,
+  });
+  const claudeEnsured = await ensureClaudeVolume(claudeSpec, {
+    syncFromHost: true,
+    image: imageRef,
+  });
+  if (claudeEnsured.synced) {
+    log(`synced ${claudeSpec.volume} from ~/.claude`);
+    if ((claudeEnsured.filteredHookCount ?? 0) > 0) {
+      log(
+        `filtered ${String(claudeEnsured.filteredHookCount)} host-path hook(s) (paths under ~/)`,
+      );
+    }
+    if (claudeEnsured.clearedInstallMethod) {
+      log("cleared host's installMethod from synced .claude.json (box uses the native installer)");
+    }
+  } else if (claudeEnsured.created) {
+    log(`created empty volume ${claudeSpec.volume} (no host ~/.claude to sync)`);
+  } else {
+    log(`reusing volume ${claudeSpec.volume} (no host ~/.claude to sync)`);
+  }
+  const claudeMounts = buildClaudeMounts(claudeSpec, process.env);
+
   const socketDir = join(homedir(), '.agentbox', 'boxes', id, 'run');
   const socketPath = join(socketDir, 'ctl.sock');
   await mkdir(socketDir, { recursive: true });
 
-  const extraVolumes = await buildAgentMounts();
+  const extraVolumes = await buildIdentityMounts();
+  extraVolumes.push(...claudeMounts.extraVolumes);
   extraVolumes.push(`${socketDir}:/run/agentbox`);
   for (const v of extraVolumes) log(`mounting agent dir: ${v}`);
 
@@ -141,7 +185,11 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     upperVolume,
     nodeModulesVolume,
     extraVolumes,
-    env: { AGENTBOX_BOX_ID: id },
+    env: {
+      AGENTBOX_BOX_ID: id,
+      ...claudeMounts.env,
+      ...(opts.claudeEnv ?? {}),
+    },
   });
   log(`container ${containerName} started`);
 
@@ -176,6 +224,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     nodeModulesVolume,
     snapshotDir,
     socketPath,
+    claudeConfigVolume: claudeSpec.volume,
     createdAt: new Date().toISOString(),
   };
   await recordBox(record);

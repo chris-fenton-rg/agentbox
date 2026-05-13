@@ -15,6 +15,26 @@ USER root
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# COLORTERM is the de-facto signal TUI apps (including Claude Code) use to
+# decide whether to emit 24-bit RGB. Without it, claude sees TERM=tmux-256color
+# in panes and falls back to a 256-color palette, which renders the logo and
+# gradients as dim monochrome blocks. tmux is configured to forward RGB to the
+# outer terminal regardless; this just unlocks the in-pane side.
+#
+# DISABLE_AUTOUPDATER follows Anthropic's own devcontainer guidance: there's no
+# point updating Claude Code inside a sandbox that's torn down regularly, and
+# leaving it enabled triggers a "installMethod is native, but .local/bin
+# missing" warning when the host's .claude.json (synced in) reports a native
+# install method while the box uses npm-global.
+ENV COLORTERM=truecolor \
+    DISABLE_AUTOUPDATER=1 \
+    PATH=/home/vscode/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# The PATH prepend above is load-bearing: Anthropic's native installer drops
+# `claude` at /home/vscode/.local/bin/, which isn't in `docker exec`'s default
+# PATH. Without this, the tmux session started by `startClaudeSession` can't
+# resolve `claude` via /bin/sh -c and the session exits immediately.
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         curl ca-certificates gnupg \
@@ -29,6 +49,7 @@ RUN apt-get update \
         python3-venv \
         build-essential \
         git \
+        tmux \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /workspace /host-src /upper /snapshot /run/agentbox /var/log/agentbox \
     && chmod 755 /workspace /host-src /upper /snapshot \
@@ -40,6 +61,50 @@ RUN apt-get update \
 # inlined (see tsup config), so a single COPY is enough.
 COPY packages/ctl/dist/bin.cjs /usr/local/bin/agentbox-ctl
 RUN chmod +x /usr/local/bin/agentbox-ctl
+
+# Prepare /home/vscode/.claude (the volume mount target) and the .claude.json
+# symlink. The mkdir+chown is load-bearing: when we mount the named
+# `agentbox-claude-config` volume at runtime, Docker seeds the empty volume's
+# perms from this directory on first mount. Without the chown the volume comes
+# up root-owned and Claude Code can't write.
+#
+# The symlink ~/.claude.json -> ~/.claude/_claude.json routes Claude's
+# top-level state file (onboarding, anonymous id, plugin caches, oauth account
+# stub) into the volume, so it persists across box rebuilds and gets refreshed
+# from the host on every `agentbox claude` create. The target is initially
+# dangling — it materializes when `ensureClaudeVolume` copies the host's
+# ~/.claude.json into the volume.
+RUN mkdir -p /home/vscode/.claude \
+    && chown vscode:vscode /home/vscode/.claude \
+    && ln -s /home/vscode/.claude/_claude.json /home/vscode/.claude.json \
+    && chown -h vscode:vscode /home/vscode/.claude.json
+
+# Claude Code via Anthropic's native installer — the recommended path per
+# code.claude.com/docs/en/setup (npm-global is under "Advanced installation"
+# now, with a warning against `sudo npm install -g`). Pinned to the `stable`
+# release channel so rebuilds get a predictable ~week-old release.
+# DISABLE_AUTOUPDATER=1 (set above) prevents in-box self-updates. We run as
+# `vscode` so the binary lands at /home/vscode/.local/bin/claude — the path
+# the host's `.claude.json` (with installMethod=native) expects, so the in-box
+# integrity check doesn't fire.
+USER vscode
+RUN curl -fsSL https://claude.ai/install.sh | bash -s stable
+USER root
+
+# tmux config so Claude's true-color output and OSC 8 hyperlinks survive the
+# in-container tmux. `terminal-features` is a no-op on tmux < 3.4. Without
+# this, claude renders without 24-bit color (logo invisible) and hyperlinks
+# get broken across visual wrap boundaries.
+RUN printf '%s\n' \
+        'set -g default-terminal "tmux-256color"' \
+        'set -as terminal-overrides ",*:Tc"' \
+        'set -as terminal-overrides ",*:RGB"' \
+        'set -as terminal-features ",*:hyperlinks"' \
+        'set -as terminal-features ",*:RGB"' \
+        'set -g mouse on' \
+        'set -g history-limit 50000' \
+        'set -g escape-time 0' \
+        > /etc/tmux.conf
 
 # Default to the vscode user (UID 1000) provided by base:ubuntu. The overlay
 # mount itself happens via `docker exec --user root`, so this is just the

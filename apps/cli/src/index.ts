@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import { claudeCommand } from './commands/claude.js';
 import { createCommand } from './commands/create.js';
 import { destroyCommand } from './commands/destroy.js';
 import { inspectCommand } from './commands/inspect.js';
@@ -16,6 +17,7 @@ const program = new Command();
 program.name('agentbox').description('Launch coding agents in isolated sandboxes').version('0.0.0');
 
 program.addCommand(createCommand);
+program.addCommand(claudeCommand);
 program.addCommand(listCommand);
 program.addCommand(inspectCommand);
 program.addCommand(statusCommand);

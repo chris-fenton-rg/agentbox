@@ -1,5 +1,5 @@
 import { log } from '@clack/prompts';
-import { AmbiguousBoxError, BoxNotFoundError } from '@agentbox/sandbox-docker';
+import { AmbiguousBoxError, BoxNotFoundError, ClaudeSessionError } from '@agentbox/sandbox-docker';
 
 /**
  * Map common lifecycle errors to user-facing messages and the right exit code,
@@ -14,6 +14,10 @@ export function handleLifecycleError(err: unknown): never {
   if (err instanceof AmbiguousBoxError) {
     log.error(err.message);
     log.info('Specify more characters of the id, or use the full name.');
+    process.exit(2);
+  }
+  if (err instanceof ClaudeSessionError) {
+    log.error(err.message);
     process.exit(2);
   }
   const msg = err instanceof Error ? err.message : String(err);

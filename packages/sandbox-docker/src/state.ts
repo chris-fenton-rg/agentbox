@@ -21,6 +21,13 @@ export interface BoxRecord {
    * field existed (treated as "ctl not available").
    */
   socketPath?: string;
+  /**
+   * Docker volume mounted at /home/vscode/.claude inside the box. The default
+   * shared volume (`agentbox-claude-config`) is reused across boxes; isolated
+   * boxes get a per-box volume suffixed with the box id. Absent for boxes
+   * created before this field existed.
+   */
+  claudeConfigVolume?: string;
   createdAt: string; // ISO-8601
 }
 

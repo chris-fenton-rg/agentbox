@@ -2,6 +2,7 @@ import { execa } from 'execa';
 import { readdir, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { BoxState } from '@agentbox/core';
+import { claudeSessionInfo, SHARED_CLAUDE_VOLUME, type ClaudeSessionInfo } from './claude.js';
 import {
   inspectContainer,
   inspectContainerStatus,
@@ -115,6 +116,8 @@ export interface InspectedBox {
   snapshotSizeBytes: number | null;
   overlayMounted: boolean;
   dockerInspect: unknown;
+  /** Null when the container isn't running; otherwise best-effort probe of the tmux 'claude' session. */
+  claudeSession: ClaudeSessionInfo | null;
 }
 
 async function dirSizeBytes(path: string): Promise<number | null> {
@@ -146,6 +149,15 @@ export async function inspectBox(idOrName: string): Promise<InspectedBox> {
     overlayMounted = probe.exitCode === 0;
   }
 
+  let claudeSession: ClaudeSessionInfo | null = null;
+  if (state === 'running') {
+    try {
+      claudeSession = await claudeSessionInfo(record.container);
+    } catch {
+      claudeSession = null;
+    }
+  }
+
   return {
     record,
     state,
@@ -153,6 +165,7 @@ export async function inspectBox(idOrName: string): Promise<InspectedBox> {
     snapshotSizeBytes,
     overlayMounted,
     dockerInspect: dockerJson,
+    claudeSession,
   };
 }
 
@@ -184,6 +197,13 @@ export async function destroyBox(
   for (const v of [box.upperVolume, box.nodeModulesVolume]) {
     await removeVolume(v);
     removedVolumes.push(v);
+  }
+  // Per-box claude config volumes are box-private — safe to remove. The shared
+  // SHARED_CLAUDE_VOLUME holds user identity (auth, skills, plugins) across
+  // every box, so never auto-remove it; users delete it manually if they want.
+  if (box.claudeConfigVolume && box.claudeConfigVolume !== SHARED_CLAUDE_VOLUME) {
+    await removeVolume(box.claudeConfigVolume);
+    removedVolumes.push(box.claudeConfigVolume);
   }
 
   let removedSnapshot: string | null = null;
@@ -259,9 +279,15 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
     // The state we'd have AFTER step 1 runs: missing-state records gone.
     const survivingBoxes = boxes.filter((b) => !missingRecords.some((m) => m.id === b.id));
     const expectedContainers = new Set(survivingBoxes.map((b) => b.container));
-    const expectedVolumes = new Set(
-      survivingBoxes.flatMap((b) => [b.upperVolume, b.nodeModulesVolume]),
-    );
+    const expectedVolumes = new Set<string>([
+      ...survivingBoxes.flatMap((b) => [b.upperVolume, b.nodeModulesVolume]),
+      ...survivingBoxes
+        .map((b) => b.claudeConfigVolume)
+        .filter((v): v is string => typeof v === 'string'),
+      // The shared claude-config volume holds user identity across every box;
+      // never reap it via prune even if no surviving box currently references it.
+      SHARED_CLAUDE_VOLUME,
+    ]);
     const expectedSnapshots = new Set(
       survivingBoxes
         .filter((b): b is BoxRecord & { snapshotDir: string } => b.snapshotDir !== null)

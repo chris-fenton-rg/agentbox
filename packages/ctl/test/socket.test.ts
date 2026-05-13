@@ -2,9 +2,10 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { randomBytes } from 'node:crypto';
 import { startServer } from '../src/socket.js';
 import { Supervisor } from '../src/supervisor.js';
-import { ping, status, logs } from '../src/client.js';
+import { claudeSession, ping, status, logs } from '../src/client.js';
 import type { ServiceSpec } from '../src/config.js';
 import type { Server } from 'node:net';
 
@@ -82,5 +83,16 @@ describe('socket protocol', () => {
       if (Date.now() > deadline) break;
     }
     expect(got).toBe(true);
+  });
+
+  it('claude-session reports running=false for a non-existent session name', async () => {
+    // Random name guarantees no collision with a real tmux session that might
+    // happen to be running in this user's env. Whether tmux is installed or
+    // not, has-session for a missing name returns non-zero -> running: false.
+    const uniqueName = `agentbox-test-${randomBytes(4).toString('hex')}`;
+    const result = await claudeSession({ socketPath: sock, sessionName: uniqueName });
+    expect(result.running).toBe(false);
+    expect(result.sessionName).toBe(uniqueName);
+    expect(result.startedAt).toBeNull();
   });
 });
