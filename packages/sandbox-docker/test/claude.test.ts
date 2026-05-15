@@ -37,10 +37,27 @@ describe('buildClaudeMounts', () => {
     });
   });
 
+  it('forwards CLAUDE_EFFORT and ANTHROPIC_MODEL when set', () => {
+    const result = buildClaudeMounts(
+      { volume: 'v' },
+      { CLAUDE_EFFORT: 'xhigh', ANTHROPIC_MODEL: 'claude-opus-4-7' },
+    );
+    expect(result.env).toEqual({
+      CLAUDE_EFFORT: 'xhigh',
+      ANTHROPIC_MODEL: 'claude-opus-4-7',
+    });
+  });
+
   it('skips empty/missing env values rather than injecting blanks', () => {
     const result = buildClaudeMounts(
       { volume: 'v' },
-      { ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: undefined, OTHER_KEY: 'x' },
+      {
+        ANTHROPIC_API_KEY: '',
+        CLAUDE_CODE_OAUTH_TOKEN: undefined,
+        CLAUDE_EFFORT: '',
+        ANTHROPIC_MODEL: undefined,
+        OTHER_KEY: 'x',
+      },
     );
     expect(result.env).toEqual({});
   });

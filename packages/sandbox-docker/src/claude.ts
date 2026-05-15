@@ -345,7 +345,23 @@ export interface ClaudeMountResult {
   volumeName: string;
 }
 
-const FORWARDED_ENV_KEYS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'] as const;
+// Forwarded from the host's `process.env` into the box at `docker run -e` time
+// (and re-forwarded by `startClaudeSession` at `docker exec -e` time, so a
+// later `agentbox claude start <existing-box>` picks up the host's current
+// session env even when the container was created from a different shell).
+//
+// CLAUDE_EFFORT / ANTHROPIC_MODEL: Claude Code stores the user's model
+// selection (Opus/Sonnet/Haiku via /model or --effort) only in the parent
+// claude's process env — not in `~/.claude.json` or `~/.claude/settings.json`.
+// When the user invokes `agentbox claude` from inside their host claude
+// session, that env IS present in the calling shell; forwarding it is the
+// only way the in-box claude inherits the same model default.
+const FORWARDED_ENV_KEYS = [
+  'ANTHROPIC_API_KEY',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'CLAUDE_EFFORT',
+  'ANTHROPIC_MODEL',
+] as const;
 
 export function buildClaudeMounts(
   spec: ClaudeConfigSpec,
@@ -477,17 +493,28 @@ function shQuote(arg: string): string {
  * We forward the host's TERM (default xterm-256color) so the in-container tmux
  * picks the right terminal-overrides at session creation time — without this,
  * docker exec defaults TERM to `xterm` and tmux can't declare 24-bit color.
+ *
+ * We also re-forward {@link FORWARDED_ENV_KEYS} from the host's process env.
+ * Values set at container-create time (via runBox -e) are still inherited
+ * for free, but the user might be invoking `agentbox claude start <box>`
+ * from a different shell session — e.g. inside their host claude (which sets
+ * CLAUDE_EFFORT) for a box created earlier from a plain terminal. Re-passing
+ * at exec time lets the in-box claude pick up the host's *current* selection.
  */
 export async function startClaudeSession(opts: StartClaudeSessionOptions): Promise<void> {
   const sessionName = opts.sessionName ?? DEFAULT_CLAUDE_SESSION;
   const cmd = ['claude', ...opts.claudeArgs].map(shQuote).join(' ');
   const term = process.env['TERM'] ?? 'xterm-256color';
+  const envFlags: string[] = ['-e', `TERM=${term}`];
+  for (const k of FORWARDED_ENV_KEYS) {
+    const v = process.env[k];
+    if (typeof v === 'string' && v.length > 0) envFlags.push('-e', `${k}=${v}`);
+  }
   const result = await execa(
     'docker',
     [
       'exec',
-      '-e',
-      `TERM=${term}`,
+      ...envFlags,
       '--user',
       CONTAINER_USER,
       opts.container,
