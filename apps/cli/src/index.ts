@@ -1,7 +1,9 @@
 import { Command } from 'commander';
+import { applyEngineOverrideAtStartup } from './engine-override.js';
 import { browserCommand } from './commands/browser.js';
 import { claudeCommand } from './commands/claude.js';
 import { codeCommand } from './commands/code.js';
+import { configCommand } from './commands/config.js';
 import { createCommand } from './commands/create.js';
 import { destroyCommand } from './commands/destroy.js';
 import { inspectCommand } from './commands/inspect.js';
@@ -40,6 +42,9 @@ program.addCommand(stopCommand);
 program.addCommand(startCommand);
 program.addCommand(destroyCommand);
 program.addCommand(pruneCommand);
+program.addCommand(configCommand);
+
+await applyEngineOverrideAtStartup();
 
 program.parseAsync(process.argv).catch((err: unknown) => {
   console.error(err);

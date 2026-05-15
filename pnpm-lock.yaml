@@ -41,6 +41,9 @@ importers:
 
   apps/cli:
     dependencies:
+      '@agentbox/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@agentbox/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -60,6 +63,28 @@ importers:
       '@types/node':
         specifier: ^22.10.1
         version: 22.19.19
+      tsup:
+        specifier: ^8.3.5
+        version: 8.5.1(postcss@8.5.14)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.19)
+
+  packages/config:
+    dependencies:
+      yaml:
+        specifier: ^2.6.1
+        version: 2.9.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.1
+        version: 22.19.19
+      ajv:
+        specifier: ^8.17.1
+        version: 8.20.0
       tsup:
         specifier: ^8.3.5
         version: 8.5.1(postcss@8.5.14)(typescript@5.9.3)(yaml@2.9.0)

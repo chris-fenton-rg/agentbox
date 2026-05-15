@@ -1,4 +1,5 @@
 import { confirm, intro, isCancel, log, outro, password, spinner } from '@clack/prompts';
+import { loadEffectiveConfig, type UserConfig } from '@agentbox/config';
 import {
   AmbiguousBoxError,
   attachClaudeSession,
@@ -35,7 +36,22 @@ interface ClaudeCreateOptions {
   isolateClaudeConfig?: boolean;
   withPlaywright?: boolean;
   vnc?: boolean; // commander: --no-vnc => false; default true (undefined treated as true)
-  sessionName: string;
+  sessionName?: string;
+}
+
+function buildClaudeCliOverrides(opts: ClaudeCreateOptions): Partial<UserConfig> {
+  const box: NonNullable<UserConfig['box']> = {};
+  if (opts.snapshot !== undefined) box.snapshot = opts.snapshot;
+  if (opts.image !== undefined) box.image = opts.image;
+  if (opts.withPlaywright === true) box.withPlaywright = true;
+  if (opts.vnc === false) box.vnc = false;
+  if (opts.isolateClaudeConfig === true) box.isolateClaudeConfig = true;
+  const claude: NonNullable<UserConfig['claude']> = {};
+  if (opts.sessionName !== undefined) claude.sessionName = opts.sessionName;
+  const out: Partial<UserConfig> = {};
+  if (Object.keys(box).length > 0) out.box = box;
+  if (Object.keys(claude).length > 0) out.claude = claude;
+  return out;
 }
 
 interface ClaudeAttachOptions {
@@ -101,7 +117,7 @@ export const claudeCommand = new Command('claude')
   )
   .option('--with-playwright', 'also install @playwright/cli@latest globally inside the box')
   .option('--no-vnc', 'disable the per-box Xvnc + noVNC web client (on by default)')
-  .option('--session-name <name>', 'tmux session name', DEFAULT_CLAUDE_SESSION)
+  .option('--session-name <name>', 'tmux session name (default from config; built-in: claude)')
   .argument(
     '[claude-args...]',
     "extra args passed to claude inside the box; place after `--`, e.g. `agentbox claude -- --model sonnet`",
@@ -109,10 +125,19 @@ export const claudeCommand = new Command('claude')
   .action(async (claudeArgs: string[], opts: ClaudeCreateOptions) => {
     intro('agentbox claude');
 
+    const cfg = await loadEffectiveConfig(opts.workspace, {
+      cliOverrides: buildClaudeCliOverrides(opts),
+    });
+
     // For the create-and-launch verb the default is snapshot=on; explicit
-    // --no-snapshot still works. We don't prompt — `agentbox claude` is the
-    // "just run it" entrypoint.
-    const useSnapshot = opts.snapshot !== false;
+    // --no-snapshot still wins. Config can also flip the default.
+    const useSnapshot =
+      opts.snapshot === false
+        ? false
+        : opts.snapshot === true
+          ? true
+          : (cfg.effective.box.snapshot ?? true);
+    const sessionName = cfg.effective.claude.sessionName;
 
     // Resolve auth from env or the saved auth file. On first run (nothing
     // saved, nothing in env), drive the user through `claude setup-token`
@@ -128,15 +153,19 @@ export const claudeCommand = new Command('claude')
     s.start('creating box');
     let containerName = '';
     try {
+      // browser.default = 'playwright' | 'both' implies installing playwright
+      // even if box.withPlaywright wasn't explicitly set in any layer.
+      const withPlaywright =
+        cfg.effective.box.withPlaywright || cfg.effective.browser.default !== 'agent-browser';
       const result = await createBox({
         workspacePath: opts.workspace,
         name: opts.name,
         useSnapshot,
-        image: opts.image,
-        claudeConfig: { isolate: !!opts.isolateClaudeConfig },
+        image: cfg.effective.box.image,
+        claudeConfig: { isolate: cfg.effective.box.isolateClaudeConfig },
         claudeEnv: resolved.env,
-        withPlaywright: !!opts.withPlaywright,
-        vnc: { enabled: opts.vnc !== false },
+        withPlaywright,
+        vnc: { enabled: cfg.effective.box.vnc },
         onLog: (line) => s.message(clampSpinnerLine(line)),
       });
       containerName = result.record.container;
@@ -168,12 +197,12 @@ export const claudeCommand = new Command('claude')
       await startClaudeSession({
         container: result.record.container,
         claudeArgs,
-        sessionName: opts.sessionName,
+        sessionName,
       });
-      s.stop(`tmux session "${opts.sessionName}" started`);
+      s.stop(`tmux session "${sessionName}" started`);
 
       outro('attaching — Ctrl-b d to detach, leaves claude running');
-      attachClaudeSession(result.record.container, opts.sessionName);
+      attachClaudeSession(result.record.container, sessionName);
     } catch (err) {
       s.stop('failed');
       if (err instanceof ClaudeSessionError) {

@@ -147,6 +147,27 @@ ide:
   auto_open_terminals: true
 `,
   },
+  // Top-level `defaults:` block — host-side @agentbox/config consumes it; the
+  // ctl parser only confirms it's a mapping (so typos at the top level still
+  // surface). See packages/config/test/schema-drift.test.ts for strict leaf
+  // validation of the `defaults:` body.
+  {
+    name: 'empty defaults block',
+    yaml: 'defaults: {}\nservices: {}\n',
+  },
+  {
+    name: 'defaults with leaves (ctl is permissive)',
+    yaml: `
+defaults:
+  box:
+    snapshot: true
+  engine:
+    kind: orbstack
+services:
+  web:
+    command: pnpm dev
+`,
+  },
 ];
 
 const INVALID: Fixture[] = [
@@ -169,6 +190,14 @@ const INVALID: Fixture[] = [
   {
     name: 'unknown top-level key',
     yaml: `extra: 1\nservices:\n  web:\n    command: foo\n`,
+  },
+  {
+    name: 'typo of defaults (defualts) is rejected as unknown top-level key',
+    yaml: `defualts:\n  box:\n    snapshot: true\n`,
+  },
+  {
+    name: 'defaults that is not a mapping',
+    yaml: `defaults: 42\n`,
   },
   {
     name: 'unknown service key',

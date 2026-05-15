@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { log } from '@clack/prompts';
 import { Command, InvalidArgumentError } from 'commander';
 import type { StatusReply, WaitReadyReply } from '@agentbox/ctl';
+import { loadEffectiveConfig, type IdeFlavor as ConfigIdeFlavor, type UserConfig } from '@agentbox/config';
 import {
   AmbiguousBoxError,
   BoxNotFoundError,
@@ -20,11 +21,23 @@ import { handleLifecycleError } from './_errors.js';
 
 interface CodeOptions {
   noWait?: boolean;
-  timeout: string;
+  timeout?: string;
   noAutoTerminals?: boolean;
   regenTasks?: boolean;
   print?: boolean;
   ide?: IdeFlavor;
+}
+
+function buildCodeCliOverrides(opts: CodeOptions): Partial<UserConfig> {
+  const code: NonNullable<UserConfig['code']> = {};
+  if (opts.ide !== undefined) code.ide = opts.ide as ConfigIdeFlavor;
+  if (opts.noWait === true) code.wait = false;
+  if (opts.noAutoTerminals === true) code.autoTerminals = false;
+  if (opts.timeout !== undefined) {
+    const n = Number(opts.timeout);
+    if (Number.isFinite(n) && Number.isInteger(n)) code.timeoutMs = n;
+  }
+  return Object.keys(code).length > 0 ? { code } : {};
 }
 
 function parseIdeFlavor(value: string): IdeFlavor {
@@ -36,12 +49,12 @@ export const codeCommand = new Command('code')
   .description('Open a box in VS Code or Cursor via the Dev Containers extension')
   .argument('<box>', 'box id, id prefix, name, or container name')
   .option('--no-wait', "don't block on agentbox-ctl wait-ready before opening")
-  .option('--timeout <ms>', 'wait-ready timeout in milliseconds', '120000')
+  .option('--timeout <ms>', 'wait-ready timeout in milliseconds (default from config; built-in: 120000)')
   .option('--no-auto-terminals', "don't generate /workspace/.vscode/tasks.json")
   .option('--regen-tasks', 'overwrite a user-owned tasks.json (skips sentinel check)', false)
   .option(
     '--ide <flavor>',
-    'force a specific IDE: vscode | cursor (default: prefer code, fall back to cursor)',
+    'force a specific IDE: vscode | cursor (default from config; built-in: auto)',
     parseIdeFlavor,
   )
   .option(
@@ -56,6 +69,18 @@ export const codeCommand = new Command('code')
       if (result.kind === 'ambiguous') throw new AmbiguousBoxError(idOrName, result.matches);
       const box = result.box;
 
+      // Layered config: workspace = the box's host workspace, not cwd, so
+      // per-project defaults follow the box even if you run `agentbox code`
+      // from elsewhere.
+      const cfg = await loadEffectiveConfig(box.workspacePath, {
+        cliOverrides: buildCodeCliOverrides(opts),
+      });
+      const wait = cfg.effective.code.wait;
+      const autoTerminals = cfg.effective.code.autoTerminals;
+      const timeoutMs = String(cfg.effective.code.timeoutMs);
+      const ide = cfg.effective.code.ide;
+      const forcedIde: IdeFlavor | undefined = ide === 'auto' ? undefined : (ide as IdeFlavor);
+
       // Bring the box online if it isn't already.
       const insp = await inspectBox(box.id);
       if (insp.state === 'paused') {
@@ -68,9 +93,9 @@ export const codeCommand = new Command('code')
         throw new Error(`box ${box.name} has no container; was it destroyed?`);
       }
 
-      // Wait for tasks + autostart services to be ready (unless --no-wait).
-      if (!opts.noWait) {
-        const reply = await runWaitReady(box.container, opts.timeout);
+      // Wait for tasks + autostart services to be ready.
+      if (wait) {
+        const reply = await runWaitReady(box.container, timeoutMs);
         if (!reply.ready) {
           const lines: string[] = [];
           if (reply.timedOut.length > 0) lines.push(`timed out: ${reply.timedOut.join(', ')}`);
@@ -83,7 +108,7 @@ export const codeCommand = new Command('code')
 
       // Inject .vscode/tasks.json so the IDE auto-opens terminal panels.
       // (Cursor reads the same .vscode/ path; it's a VS Code fork.)
-      if (!opts.noAutoTerminals) {
+      if (autoTerminals) {
         try {
           const services = await fetchServiceNames(box.container);
           const r = await ensureAgentboxTasksFile(box.container, services, {
@@ -108,7 +133,7 @@ export const codeCommand = new Command('code')
         process.stdout.write(folderUri + '\n');
         return;
       }
-      const exit = await launchIde(folderUri, opts.ide);
+      const exit = await launchIde(folderUri, forcedIde);
       if (exit.code !== 0) {
         log.error(`failed to launch ${exit.flavor ? ideProfile(exit.flavor).displayName : 'IDE'} via ${exit.via} (exit ${String(exit.code)})`);
         process.stdout.write(folderUri + '\n');

@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { log } from '@clack/prompts';
 import { Command } from 'commander';
+import { loadEffectiveConfig, type UserConfig } from '@agentbox/config';
 import {
   AmbiguousBoxError,
   BoxNotFoundError,
@@ -13,8 +14,15 @@ import {
 import { handleLifecycleError } from './_errors.js';
 
 interface ShellOptions {
-  user: string;
-  login: boolean;
+  user?: string;
+  login?: boolean;
+}
+
+function buildShellCliOverrides(opts: ShellOptions): Partial<UserConfig> {
+  const shell: NonNullable<UserConfig['shell']> = {};
+  if (opts.user !== undefined) shell.user = opts.user;
+  if (opts.login === false) shell.login = false;
+  return Object.keys(shell).length > 0 ? { shell } : {};
 }
 
 export const shellCommand = new Command('shell')
@@ -24,7 +32,7 @@ export const shellCommand = new Command('shell')
     '[cmd...]',
     'optional one-shot command to run instead of an interactive shell; place after `--`, e.g. `agentbox shell smoke -- ls /workspace`',
   )
-  .option('--user <name>', 'user inside the container', 'vscode')
+  .option('--user <name>', 'user inside the container (default from config; built-in: vscode)')
   .option('--no-login', 'invoke `bash` instead of `bash -l` (skip login profile)')
   .action(async (idOrName: string, cmd: string[], opts: ShellOptions) => {
     try {
@@ -33,6 +41,12 @@ export const shellCommand = new Command('shell')
       if (r.kind === 'none') throw new BoxNotFoundError(idOrName);
       if (r.kind === 'ambiguous') throw new AmbiguousBoxError(idOrName, r.matches);
       const box = r.box;
+
+      const cfg = await loadEffectiveConfig(box.workspacePath, {
+        cliOverrides: buildShellCliOverrides(opts),
+      });
+      const user = cfg.effective.shell.user;
+      const login = cfg.effective.shell.login;
 
       const insp = await inspectBox(box.id);
       if (insp.state === 'paused') {
@@ -49,7 +63,7 @@ export const shellCommand = new Command('shell')
       // hyperlink capabilities (docker exec defaults to TERM=xterm).
       const term = process.env['TERM'] ?? 'xterm-256color';
       const bashArgs: string[] = [];
-      if (opts.login) bashArgs.push('-l');
+      if (login) bashArgs.push('-l');
       if (cmd.length > 0) bashArgs.push('-c', cmd.join(' '));
 
       // -i always (so stdin pipes / heredocs work). -t only when stdout is a
@@ -65,7 +79,7 @@ export const shellCommand = new Command('shell')
           '-e',
           `TERM=${term}`,
           '--user',
-          opts.user,
+          user,
           box.container,
           'bash',
           ...bashArgs,

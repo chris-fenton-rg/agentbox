@@ -1,0 +1,229 @@
+import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
+import { stringify as stringifyYaml } from 'yaml';
+import {
+  configPathFor,
+  findProjectRoot,
+  hashProjectPath,
+  PROJECTS_DIR,
+  projectConfigFile,
+  projectMetaFile,
+} from './paths.js';
+import { coerceFromString, parseUserConfig } from './parse.js';
+import { type ConfigScope, lookupKey, type UserConfig, UserConfigError } from './types.js';
+import { readdir } from 'node:fs/promises';
+
+interface WriteResult {
+  path: string;
+  /** The value we coerced and stored, after string→typed conversion. */
+  coerced: unknown;
+}
+
+interface SetOptions {
+  /**
+   * When true (the CLI `set` path), accept a string and coerce. When false
+   * (programmatic), accept any typed value and write it through after a
+   * round-trip parse for validation.
+   */
+  raw?: boolean;
+}
+
+/**
+ * Write a single key into the chosen scope's config file. Creates parent
+ * dirs and (for project scope) the meta.json sidecar. Atomic via tmp-rename.
+ */
+export async function setConfigValue(
+  scope: ConfigScope,
+  key: string,
+  value: unknown,
+  cwd: string,
+  opts: SetOptions = {},
+): Promise<WriteResult> {
+  if (!lookupKey(key)) {
+    throw new UserConfigError(`unknown key "${key}"`);
+  }
+
+  const coerced = opts.raw && typeof value === 'string'
+    ? coerceFromString(key, value)
+    : value;
+
+  const path = await configPathFor(scope, cwd);
+  const current = await readExistingDoc(path);
+  setLeaf(current, key, coerced);
+  // Re-parse to validate the merged document; any change that produces an
+  // invalid file (shouldn't be possible here, but defence-in-depth) throws.
+  parseUserConfig(stringifyYaml(current), path);
+  await atomicWriteYaml(path, current);
+
+  if (scope === 'project') {
+    const root = (await findProjectRoot(cwd)).root;
+    await touchProjectMeta(root);
+  }
+
+  return { path, coerced };
+}
+
+/**
+ * Remove a key from the chosen scope's config file. Empty parent objects are
+ * pruned so the file stays tidy. ENOENT is treated as success.
+ */
+export async function unsetConfigValue(
+  scope: ConfigScope,
+  key: string,
+  cwd: string,
+): Promise<{ path: string; existed: boolean }> {
+  if (!lookupKey(key)) {
+    throw new UserConfigError(`unknown key "${key}"`);
+  }
+  const path = await configPathFor(scope, cwd);
+  const current = await readExistingDoc(path);
+  const existed = unsetLeaf(current, key);
+  if (!existed) return { path, existed: false };
+  await atomicWriteYaml(path, current);
+  if (scope === 'project') {
+    const root = (await findProjectRoot(cwd)).root;
+    await touchProjectMeta(root);
+  }
+  return { path, existed: true };
+}
+
+interface ProjectEntry {
+  hash: string;
+  originalPath: string;
+  createdAt: string | null;
+  lastSeenAt: string | null;
+  configPath: string;
+  hasConfigFile: boolean;
+}
+
+/**
+ * Enumerate per-project config dirs. The meta.json's recorded
+ * `originalPath` is what we report — the hash on disk is opaque.
+ */
+export async function listProjectsConfigured(): Promise<ProjectEntry[]> {
+  let entries: string[];
+  try {
+    entries = await readdir(PROJECTS_DIR);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw err;
+  }
+  const out: ProjectEntry[] = [];
+  for (const hash of entries) {
+    if (!/^[0-9a-f]{16}$/.test(hash)) continue;
+    const meta = await readMeta(hash);
+    if (!meta) continue;
+    const cfgPath = projectConfigFile(meta.originalPath);
+    const hasConfig = await fileExists(cfgPath);
+    out.push({
+      hash,
+      originalPath: meta.originalPath,
+      createdAt: meta.createdAt,
+      lastSeenAt: meta.lastSeenAt,
+      configPath: cfgPath,
+      hasConfigFile: hasConfig,
+    });
+  }
+  out.sort((a, b) => a.originalPath.localeCompare(b.originalPath));
+  return out;
+}
+
+async function readMeta(
+  hash: string,
+): Promise<{ originalPath: string; createdAt: string | null; lastSeenAt: string | null } | null> {
+  const metaPath = `${PROJECTS_DIR}/${hash}/meta.json`;
+  try {
+    const text = await readFile(metaPath, 'utf8');
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    if (typeof parsed['originalPath'] !== 'string') return null;
+    return {
+      originalPath: parsed['originalPath'],
+      createdAt: typeof parsed['createdAt'] === 'string' ? parsed['createdAt'] : null,
+      lastSeenAt: typeof parsed['lastSeenAt'] === 'string' ? parsed['lastSeenAt'] : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function fileExists(p: string): Promise<boolean> {
+  try {
+    const st = await stat(p);
+    return st.isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function readExistingDoc(path: string): Promise<Partial<UserConfig>> {
+  let text: string;
+  try {
+    text = await readFile(path, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    throw err;
+  }
+  return parseUserConfig(text, path);
+}
+
+function setLeaf(doc: Partial<UserConfig>, key: string, value: unknown): void {
+  const idx = key.indexOf('.');
+  const branch = key.slice(0, idx);
+  const leaf = key.slice(idx + 1);
+  const root = doc as unknown as Record<string, Record<string, unknown>>;
+  if (!root[branch] || typeof root[branch] !== 'object') {
+    root[branch] = {};
+  }
+  root[branch][leaf] = value;
+}
+
+function unsetLeaf(doc: Partial<UserConfig>, key: string): boolean {
+  const idx = key.indexOf('.');
+  const branch = key.slice(0, idx);
+  const leaf = key.slice(idx + 1);
+  const root = doc as unknown as Record<string, Record<string, unknown>>;
+  const b = root[branch];
+  if (!b || typeof b !== 'object' || !(leaf in b)) return false;
+  delete b[leaf];
+  if (Object.keys(b).length === 0) {
+    delete root[branch];
+  }
+  return true;
+}
+
+async function atomicWriteYaml(path: string, doc: Partial<UserConfig>): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  // YAML serialises empty objects as `{}` which is correct but ugly; if the
+  // doc is empty we still want a usable placeholder file.
+  const text = Object.keys(doc).length === 0
+    ? '# managed by agentbox config — empty\n'
+    : stringifyYaml(doc);
+  const tmp = `${path}.tmp-${process.pid.toString()}-${Date.now().toString(36)}`;
+  await writeFile(tmp, text, { encoding: 'utf8', mode: 0o644 });
+  await rename(tmp, path);
+}
+
+async function touchProjectMeta(absPath: string): Promise<void> {
+  const dir = dirname(projectMetaFile(absPath));
+  await mkdir(dir, { recursive: true });
+  const metaPath = projectMetaFile(absPath);
+  let prior: { originalPath?: string; createdAt?: string } = {};
+  try {
+    prior = JSON.parse(await readFile(metaPath, 'utf8')) as typeof prior;
+  } catch {
+    /* fresh file */
+  }
+  const now = new Date().toISOString();
+  const next = {
+    originalPath: absPath,
+    hash: hashProjectPath(absPath),
+    createdAt: prior.createdAt ?? now,
+    lastSeenAt: now,
+  };
+  const tmp = `${metaPath}.tmp-${process.pid.toString()}-${Date.now().toString(36)}`;
+  await writeFile(tmp, JSON.stringify(next, null, 2) + '\n', { encoding: 'utf8', mode: 0o644 });
+  await rename(tmp, metaPath);
+}
+
+// Re-export for ergonomics; same path resolution as the loader uses.
+export { configPathFor };

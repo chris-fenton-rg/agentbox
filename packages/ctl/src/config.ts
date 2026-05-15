@@ -379,7 +379,11 @@ function assertBool(raw: unknown, where: string): boolean {
   return raw;
 }
 
-const TOP_LEVEL_KEYS = new Set(['services', 'tasks', 'ide']);
+// `defaults` is the host-side config layer (read by @agentbox/config) — the
+// supervisor doesn't touch it, but we accept it here so `ctl validate` doesn't
+// flag it as unknown. Strict typo-detection still applies (top-level keys
+// outside this set are rejected).
+const TOP_LEVEL_KEYS = new Set(['services', 'tasks', 'ide', 'defaults']);
 
 function validateUnitGraph(tasks: TaskSpec[], services: ServiceSpec[]): void {
   const names = new Set<string>();
@@ -483,6 +487,14 @@ export function parseConfig(text: string): CtlConfig {
   // and the supervisor doesn't touch them. Schema is permissive here too.
   if (doc.ide !== undefined && doc.ide !== null && !isPlainObject(doc.ide)) {
     throw new ConfigError('ide must be a mapping');
+  }
+
+  // defaults: host-side layered-config block. We only require it to be a
+  // mapping here; @agentbox/config validates the leaves strictly when the
+  // host loads the file. Letting ctl deep-validate would force a circular
+  // dependency on the host-only @agentbox/config package — see CLAUDE.md.
+  if (doc.defaults !== undefined && doc.defaults !== null && !isPlainObject(doc.defaults)) {
+    throw new ConfigError('defaults must be a mapping');
   }
 
   validateUnitGraph(tasks, services);

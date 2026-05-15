@@ -34,6 +34,13 @@ packages/relay/             @agentbox/relay — host-side HTTP relay (`agentbox-
   src/bin.ts                bundled CJS bin (dist/bin.cjs); `serve` subcommand is the daemon `ensureRelay` spawns
   src/server.ts             /events, /rpc (git.pull|git.push), /admin/* (loopback-only), /healthz
   src/{registry,types,index}.ts
+packages/config/            @agentbox/config — host-side layered config (global / per-project / agentbox.yaml `defaults:`)
+  src/types.ts              UserConfig, EffectiveConfig, BUILT_IN_DEFAULTS, KEY_REGISTRY (single source of truth)
+  src/parse.ts              parseUserConfig (strict) + coerceFromString (CLI input)
+  src/paths.ts              findProjectRoot (ancestor walk), hashProjectPath, configPathFor
+  src/load.ts               loadEffectiveConfig (merge global+project+workspace+cli with per-leaf source map)
+  src/write.ts              setConfigValue / unsetConfigValue (atomic write + meta.json) + listProjectsConfigured
+  schema/user-config.schema.json   JSON schema mirrored by `packages/config/test/schema-drift.test.ts`
 docs/architecture.md        the design doc — source of truth for *why*
 ```
 
@@ -54,6 +61,7 @@ Internal deps are wired via `workspace:*`. Build order is enforced by Turborepo 
 
 ## Where state lives
 
+- `~/.agentbox/config.yaml` — global user config (layered defaults). Same shape as the per-project file and the `defaults:` block in `agentbox.yaml`. Owned by `@agentbox/config` (read by every `apps/cli` command at startup). Manage via `agentbox config get|set|unset|list|edit|path|list-projects` — `set/unset/edit` only target `--global` and `--project` (default), the workspace `defaults:` block is hand-edited. Precedence (highest wins): CLI flag > workspace `defaults:` > per-project (`~/.agentbox/projects/<sha1-16-of-abs-path>/config.yaml`) > global > built-in. Engine override (`engine.kind`) is the only key applied at CLI startup via `setEngineOverride()` in `host-export.ts`; everything else flows through `loadEffectiveConfig()` per command. The full key set + types live in `KEY_REGISTRY` (`packages/config/src/types.ts`) — single source of truth for the parser, the JSON schema, and `config set` coercion. The ctl parser accepts top-level `defaults:` as a permissive passthrough (no dep on `@agentbox/config`); the host re-validates strictly when loading.
 - `~/.agentbox/state.json` — registry of created boxes
 - `~/.agentbox/auth.json` (mode 0600) — long-lived Claude OAuth token captured on first `agentbox claude` via `claude setup-token`. Forwarded to every box as `CLAUDE_CODE_OAUTH_TOKEN`. Host env vars (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`) override it.
 - `~/.agentbox/snapshots/<id>/` — frozen APFS clones of host workspaces

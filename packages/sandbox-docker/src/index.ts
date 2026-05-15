@@ -102,6 +102,7 @@ export {
   openInFinder,
   refreshExport,
   resolveUpperLiveOnHost,
+  setEngineOverride,
   type DockerEngine,
   type ExportLayer,
   type HostPaths,

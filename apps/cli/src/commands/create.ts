@@ -1,4 +1,5 @@
 import { confirm, intro, isCancel, log, outro, spinner } from '@clack/prompts';
+import { loadEffectiveConfig, type UserConfig } from '@agentbox/config';
 import { createBox } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { execSync, spawnSync } from 'node:child_process';
@@ -15,9 +16,22 @@ interface CreateOptions {
   vnc?: boolean; // commander: --no-vnc => false; default true (undefined treated as true)
 }
 
-async function resolveUseSnapshot(opts: CreateOptions): Promise<boolean> {
+function buildCliOverrides(opts: CreateOptions): Partial<UserConfig> {
+  const box: NonNullable<UserConfig['box']> = {};
+  if (opts.snapshot !== undefined) box.snapshot = opts.snapshot;
+  if (opts.image !== undefined) box.image = opts.image;
+  if (opts.withPlaywright === true) box.withPlaywright = true;
+  if (opts.vnc === false) box.vnc = false;
+  return Object.keys(box).length > 0 ? { box } : {};
+}
+
+async function resolveUseSnapshot(
+  opts: CreateOptions,
+  configDefault: boolean | undefined,
+): Promise<boolean> {
   if (opts.snapshot === true) return true;
   if (opts.snapshot === false) return false;
+  if (configDefault !== undefined) return configDefault;
   if (opts.yes) return true;
 
   const ans = await confirm({
@@ -53,18 +67,26 @@ export const createCommand = new Command('create')
   .action(async (opts: CreateOptions) => {
     intro('agentbox create');
 
-    const useSnapshot = await resolveUseSnapshot(opts);
+    const cfg = await loadEffectiveConfig(opts.workspace, {
+      cliOverrides: buildCliOverrides(opts),
+    });
+
+    const useSnapshot = await resolveUseSnapshot(opts, cfg.effective.box.snapshot);
 
     const s = spinner();
     s.start('creating box');
     try {
+      // browser.default = 'playwright' | 'both' implies installing playwright
+      // even if box.withPlaywright wasn't explicitly set in any layer.
+      const withPlaywright =
+        cfg.effective.box.withPlaywright || cfg.effective.browser.default !== 'agent-browser';
       const result = await createBox({
         workspacePath: opts.workspace,
         name: opts.name,
         useSnapshot,
-        image: opts.image,
-        withPlaywright: !!opts.withPlaywright,
-        vnc: { enabled: opts.vnc !== false },
+        image: cfg.effective.box.image,
+        withPlaywright,
+        vnc: { enabled: cfg.effective.box.vnc },
         onLog: (line) => s.message(clampSpinnerLine(line)),
       });
       s.stop(`box ${result.record.container} ready`);

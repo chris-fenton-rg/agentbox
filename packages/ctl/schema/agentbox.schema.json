@@ -26,6 +26,11 @@
       "type": "object",
       "description": "VS Code attach customizations. Read host-side by `agentbox code`; the supervisor ignores it. Shape is intentionally permissive in this PR.",
       "additionalProperties": true
+    },
+    "defaults": {
+      "type": "object",
+      "description": "Host-side AgentBox layered-config defaults for this project. Same shape as ~/.agentbox/config.yaml. The supervisor ignores this; @agentbox/config validates it strictly when loaded. See https://agentbox.dev/schema/user-config.schema.json for the full key set.",
+      "additionalProperties": true
     }
   },
   "$defs": {

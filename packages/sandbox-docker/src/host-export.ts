@@ -48,7 +48,19 @@ export async function detectEngine(): Promise<DockerEngine> {
   return cachedEngine;
 }
 
-/** Test-only escape hatch — let unit tests bypass the docker call. */
+/**
+ * Pin the engine to a specific value, bypassing the `docker info` probe. Two
+ * callers today:
+ *  1. The CLI bootstrap (apps/cli) when the user has set `engine.kind` in
+ *     ~/.agentbox/config.yaml — the override applies for the rest of the
+ *     process so every `detectEngine()` returns the user's choice.
+ *  2. Tests, via `__setEngineForTesting` (kept as an alias for back-compat).
+ */
+export function setEngineOverride(engine: DockerEngine | null): void {
+  cachedEngine = engine;
+}
+
+/** @deprecated alias for `setEngineOverride`; kept so existing tests don't churn. */
 export function __setEngineForTesting(engine: DockerEngine | null): void {
   cachedEngine = engine;
 }

@@ -1,14 +1,21 @@
 {
-  "name": "agentbox",
+  "name": "@agentbox/config",
   "version": "0.0.0",
-  "description": "Launch Claude Code, Codex, and other coding agents in isolated sandboxes",
+  "description": "Layered config (global / per-project / agentbox.yaml) for AgentBox",
   "license": "MIT",
   "type": "module",
-  "bin": {
-    "agentbox": "./dist/index.js"
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./schema": "./schema/user-config.schema.json"
   },
   "files": [
-    "dist"
+    "dist",
+    "schema"
   ],
   "scripts": {
     "build": "tsup",
@@ -19,15 +26,11 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "@agentbox/config": "workspace:*",
-    "@agentbox/core": "workspace:*",
-    "@agentbox/ctl": "workspace:*",
-    "@agentbox/sandbox-docker": "workspace:*",
-    "@clack/prompts": "^0.9.0",
-    "commander": "^12.1.0"
+    "yaml": "^2.6.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",
+    "ajv": "^8.17.1",
     "tsup": "^8.3.5",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
