@@ -38,7 +38,7 @@ import {
   type GitWorktreeRecord,
 } from './state.js';
 import { createSnapshot, snapshotPathFor } from './snapshot.js';
-import { resolveCheckpointLower } from './checkpoint.js';
+import { CHECKPOINT_MOUNT, resolveCheckpointLower } from './checkpoint.js';
 import { launchCtlDaemon } from './ctl.js';
 import { writeBoxEnvFile } from './box-env.js';
 import {
@@ -291,23 +291,22 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     lowerPath = snapshotDir;
   }
 
-  // Checkpoint restore: stack the captured layer dir(s) as additional
-  // lowerdirs (layered, over the /host-src base) or as the sole lower
-  // (merged, code frozen). The base bind is always `${lowerPath}:/host-src`.
+  // Checkpoint restore: mount the per-project checkpoint volume read-only
+  // ONCE at /agentbox-checkpoints; the overlay uses its `<name>` subdirs as
+  // lowerdirs (layered, over the /host-src base) or the sole lower (merged,
+  // code frozen). The base bind is always `${lowerPath}:/host-src`.
   let lowerDirs: string[] | undefined;
-  const checkpointLayerMounts: Array<{ containerPath: string; hostPath: string }> = [];
+  let checkpointVolume: string | undefined;
   let checkpointSource: BoxRecord['checkpointSource'];
   if (opts.checkpointRef) {
     const projectRootForCkpt = opts.projectRoot ?? workspace;
     const spec = await resolveCheckpointLower(projectRootForCkpt, opts.checkpointRef);
-    spec.hostLowerDirs.forEach((hostPath, i) => {
-      checkpointLayerMounts.push({ containerPath: `/checkpoint-layers/${String(i)}`, hostPath });
-    });
-    const layerPaths = checkpointLayerMounts.map((m) => m.containerPath);
-    lowerDirs = spec.type === 'merged' ? [...layerPaths] : [...layerPaths, '/host-src'];
+    checkpointVolume = spec.volume;
+    const layerDirs = spec.subpaths.map((s) => `${CHECKPOINT_MOUNT}/${s}`);
+    lowerDirs = spec.type === 'merged' ? layerDirs : [...layerDirs, '/host-src'];
     checkpointSource = { ref: opts.checkpointRef, type: spec.type, chain: spec.chain };
     log(
-      `starting from checkpoint ${opts.checkpointRef} (${spec.type}, ${String(spec.hostLowerDirs.length)} layer(s))`,
+      `starting from checkpoint ${opts.checkpointRef} (${spec.type}, ${String(spec.subpaths.length)} layer(s), volume ${spec.volume})`,
     );
   }
 
@@ -394,9 +393,10 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       extraVolumes.push(`${w.hostWorktreeDir}:/agentbox-worktrees/${w.relPathFromWorkspace}`);
     }
   }
-  // Checkpoint layer dirs as read-only lowerdir sources (see mountOverlay).
-  for (const m of checkpointLayerMounts) {
-    extraVolumes.push(`${m.hostPath}:${m.containerPath}:ro`);
+  // Per-project checkpoint volume, mounted read-only once; the overlay's
+  // lowerdirs are its `<name>` subdirs (see mountOverlay).
+  if (checkpointVolume) {
+    extraVolumes.push(`${checkpointVolume}:${CHECKPOINT_MOUNT}:ro`);
   }
   for (const v of extraVolumes) log(`mounting agent dir: ${v}`);
 
@@ -632,7 +632,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     projectRoot: opts.projectRoot,
     projectIndex,
     lowerDirs,
-    checkpointLayerMounts: checkpointLayerMounts.length > 0 ? checkpointLayerMounts : undefined,
+    checkpointVolume,
     checkpointSource,
     createdAt,
   };

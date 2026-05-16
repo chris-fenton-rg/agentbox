@@ -3,9 +3,27 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { hashProjectPath, setConfigValue } from '@agentbox/config';
+import { ensureVolume } from './docker.js';
+import { DEFAULT_BOX_IMAGE } from './image.js';
 import type { BoxRecord } from './state.js';
 
 export const CHECKPOINTS_ROOT = join(homedir(), '.agentbox', 'checkpoints');
+
+/** All per-project checkpoint volumes share this prefix (prune allowlist). */
+export const CHECKPOINT_VOLUME_PREFIX = 'agentbox-ckpt-';
+
+/** Read-only mount point of the per-project checkpoint volume inside a box. */
+export const CHECKPOINT_MOUNT = '/agentbox-checkpoints';
+
+/**
+ * One Docker volume per project; each checkpoint is a `<name>` subdir inside
+ * it. Deterministic from the project root (same hash the per-project config
+ * dir uses), so it survives box destroy and is shared read-only across boxes.
+ * Pure — unit-tested directly.
+ */
+export function checkpointVolumeName(projectRoot: string): string {
+  return `${CHECKPOINT_VOLUME_PREFIX}${hashProjectPath(projectRoot)}`;
+}
 
 export type CheckpointType = 'layered' | 'merged';
 
@@ -23,23 +41,29 @@ export interface CheckpointManifest {
   base: 'worktree' | 'workspace';
   sourceBoxId: string;
   sourceBoxName: string;
+  /** Per-project Docker volume the captured tree lives in (subdir = `name`). */
+  volume: string;
   createdAt: string;
 }
 
 export interface CheckpointInfo {
   name: string;
-  /** Host dir `~/.agentbox/checkpoints/<project-hash>/<name>`. */
+  /** Host dir holding `manifest.json` (`~/.agentbox/checkpoints/<hash>/<name>`). */
   dir: string;
-  /** Host dir `<dir>/fs` — the captured layer (layered) or full tree (merged). */
-  fsDir: string;
   manifest: CheckpointManifest;
 }
 
 /** Resolved lower spec a new box should mount when starting from a checkpoint. */
 export interface CheckpointLowerSpec {
   type: CheckpointType;
-  /** Host fs dirs, upper-most first. For `layered` the base lower is appended by the caller. */
-  hostLowerDirs: string[];
+  /** The single per-project checkpoint volume (mounted ro once at CHECKPOINT_MOUNT). */
+  volume: string;
+  /**
+   * Checkpoint subdir names within `volume`, upper-most first. For `layered`
+   * the caller appends the base lower (`/host-src`) after these; for `merged`
+   * this is the sole lower (single entry).
+   */
+  subpaths: string[];
   /** Checkpoint refs composing the chain, base-most last (for BoxRecord.checkpointSource). */
   chain: string[];
 }
@@ -77,7 +101,7 @@ export async function listCheckpoints(projectRoot: string): Promise<CheckpointIn
   for (const name of entries) {
     const dir = join(root, name);
     const manifest = await readManifest(dir);
-    if (manifest) out.push({ name, dir, fsDir: join(dir, 'fs'), manifest });
+    if (manifest) out.push({ name, dir, manifest });
   }
   out.sort((a, b) => a.manifest.createdAt.localeCompare(b.manifest.createdAt));
   return out;
@@ -90,13 +114,22 @@ export async function resolveCheckpoint(
   const dir = checkpointDir(projectRoot, ref);
   const manifest = await readManifest(dir);
   if (!manifest) return null;
-  return { name: ref, dir, fsDir: join(dir, 'fs'), manifest };
+  return { name: ref, dir, manifest };
 }
 
 export async function removeCheckpoint(projectRoot: string, ref: string): Promise<boolean> {
   const dir = checkpointDir(projectRoot, ref);
-  if (!(await readManifest(dir))) return false;
+  const manifest = await readManifest(dir);
+  if (!manifest) return false;
   await rm(dir, { recursive: true, force: true });
+  // Delete only this checkpoint's subdir; the per-project volume stays for the
+  // project's other checkpoints. Best-effort (volume may already be gone).
+  const volume = manifest.volume || checkpointVolumeName(projectRoot);
+  await execa(
+    'docker',
+    ['run', '--rm', '--user', '0:0', '-v', `${volume}:/dst`, DEFAULT_BOX_IMAGE, 'rm', '-rf', `/dst/${ref}`],
+    { reject: false },
+  );
   return true;
 }
 
@@ -127,6 +160,11 @@ function chainDepth(box: BoxRecord): number {
   return box.checkpointSource?.chain.length ?? 0;
 }
 
+/** Quote a string for safe single-quoted embedding in a bash -lc script. */
+function shq(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
 export interface CreateCheckpointOptions {
   box: BoxRecord;
   projectRoot: string;
@@ -139,13 +177,16 @@ export interface CreateCheckpointOptions {
 }
 
 /**
- * Capture a box's accumulated state as a project checkpoint.
+ * Capture a box's accumulated state as a project checkpoint, into a `<name>`
+ * subdir of the per-project Docker volume.
  *
  *  - `layered`: copy the box's overlay write delta (`/upper/upper`, which now
- *    holds node_modules/build caches/env files) via a throwaway root container
- *    so overlay whiteouts/device nodes survive the copy onto the host fs.
- *  - `merged`: tar the box's merged `/workspace` (everything) into one flat
- *    tree, used later as a single sole lower.
+ *    holds node_modules/build caches/env files) volume→volume in a throwaway
+ *    root container. The destination is ext4, so overlay char-device whiteouts
+ *    survive `cp -a` natively (no `.wh.` translation needed) and the copy
+ *    never crosses the VM↔host bridge.
+ *  - `merged`: tar the box's merged `/workspace` (everything) into the subdir,
+ *    used later as a single sole lower.
  *
  * Merged is chosen when `--merged` is passed or the source box's checkpoint
  * chain is already `>= maxLayers` deep (caps the lowerdir stack).
@@ -158,30 +199,25 @@ export async function createCheckpoint(opts: CreateCheckpointOptions): Promise<C
     opts.merged === true || chainDepth(box) >= opts.maxLayers ? 'merged' : 'layered';
   const name = opts.name ?? (await nextCheckpointName(opts.projectRoot, box.name));
   const dir = checkpointDir(opts.projectRoot, name);
-  const fsDir = join(dir, 'fs');
-  await mkdir(fsDir, { recursive: true });
+  if (await readManifest(dir)) {
+    throw new CheckpointError(`checkpoint ${name} already exists (rm it first)`, '', '');
+  }
+  const volume = checkpointVolumeName(opts.projectRoot);
+  await ensureVolume(volume);
+  await mkdir(dir, { recursive: true });
+  const qn = shq(name);
 
   if (type === 'layered') {
-    log(`capturing upper delta of ${box.container} -> ${name} (layered)`);
-    // Run the copy as root inside a throwaway container mounting the box's
-    // upper volume. fuse-overlayfs records file deletions as char-device 0:0
-    // whiteouts; a host fs (APFS via the Docker bind) can't hold those, so we
-    // translate them to AUFS-style `.wh.<name>` marker files, which
-    // fuse-overlayfs equally honors when the dir is used as a lowerdir.
-    // Opaque-dir markers are already `.wh..wh..opq` regular files (copied
-    // as-is). cp's char-device failures are expected and ignored.
+    log(`capturing upper delta of ${box.container} -> ${volume}/${name} (layered)`);
+    // Volume→volume copy in a throwaway root container: all VM-local ext4, no
+    // virtiofs bridge crossing, and overlay char-device whiteouts are
+    // preserved as-is (fuse-overlayfs honors them in a lowerdir).
     const script = [
       'set -u',
-      'cp -a /src/upper/. /dst/ 2>/dev/null || true',
-      'cd /src/upper',
-      'find . -type c 2>/dev/null | while IFS= read -r p; do',
-      '  if [ "$(stat -c %t "$p")" = "0" ] && [ "$(stat -c %T "$p")" = "0" ]; then',
-      '    d=$(dirname "$p"); b=$(basename "$p");',
-      '    mkdir -p "/dst/$d"; rm -f "/dst/$p" 2>/dev/null || true;',
-      '    : > "/dst/$d/.wh.$b";',
-      '  fi',
-      'done',
-      'ls -A /dst >/dev/null',
+      `rm -rf /dst/${qn}`,
+      `mkdir -p /dst/${qn}`,
+      `cp -a /src/upper/. /dst/${qn}/ 2>/dev/null || true`,
+      `ls -A /dst/${qn} >/dev/null`,
     ].join('\n');
     const r = await execa(
       'docker',
@@ -193,7 +229,7 @@ export async function createCheckpoint(opts: CreateCheckpointOptions): Promise<C
         '-v',
         `${box.upperVolume}:/src:ro`,
         '-v',
-        `${fsDir}:/dst`,
+        `${volume}:/dst`,
         box.image,
         'bash',
         '-lc',
@@ -205,7 +241,7 @@ export async function createCheckpoint(opts: CreateCheckpointOptions): Promise<C
       throw new CheckpointError(`failed to copy upper layer for ${box.name}`, r.stdout, r.stderr);
     }
   } else {
-    log(`capturing merged /workspace of ${box.container} -> ${name} (merged)`);
+    log(`capturing merged /workspace of ${box.container} -> ${volume}/${name} (merged)`);
     const packed = await execa(
       'docker',
       ['exec', '--user', 'root', box.container, 'tar', '-C', '/workspace', '-cf', '-', '.'],
@@ -220,12 +256,29 @@ export async function createCheckpoint(opts: CreateCheckpointOptions): Promise<C
           : (packed.stderr as Buffer).toString('utf8'),
       );
     }
-    const extract = await execa('tar', ['-xf', '-', '-C', fsDir], {
-      input: packed.stdout as Buffer,
-      reject: false,
-    });
+    const extract = await execa(
+      'docker',
+      [
+        'run',
+        '-i',
+        '--rm',
+        '--user',
+        '0:0',
+        '-v',
+        `${volume}:/dst`,
+        box.image,
+        'bash',
+        '-lc',
+        `set -u; rm -rf /dst/${qn}; mkdir -p /dst/${qn}; tar -xf - -C /dst/${qn}`,
+      ],
+      { input: packed.stdout as Buffer, reject: false },
+    );
     if (extract.exitCode !== 0) {
-      throw new CheckpointError('tar extract on host failed', extract.stdout, extract.stderr);
+      throw new CheckpointError(
+        'tar extract into checkpoint volume failed',
+        extract.stdout,
+        extract.stderr,
+      );
     }
   }
 
@@ -240,6 +293,7 @@ export async function createCheckpoint(opts: CreateCheckpointOptions): Promise<C
     base,
     sourceBoxId: box.id,
     sourceBoxName: box.name,
+    volume,
     createdAt: new Date().toISOString(),
   };
   await writeFile(join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
@@ -249,14 +303,15 @@ export async function createCheckpoint(opts: CreateCheckpointOptions): Promise<C
     log(`set project default checkpoint -> ${name}`);
   }
 
-  return { name, dir, fsDir, manifest };
+  return { name, dir, manifest };
 }
 
 /**
- * Resolve the ordered host lower dirs a new box should stack when starting
- * from checkpoint `ref`. For `layered` the caller appends the base lower
- * (fresh worktree/workspace) after these; for `merged` these are the sole
- * lower.
+ * Resolve the lower spec a new box should stack when starting from checkpoint
+ * `ref`. All layers in a chain live in the one per-project volume, so the box
+ * mounts it once; `subpaths` are the per-layer subdir names (upper-most
+ * first). For `layered` the caller appends the base lower after these; for
+ * `merged` `subpaths` is the sole lower.
  */
 export async function resolveCheckpointLower(
   projectRoot: string,
@@ -264,12 +319,20 @@ export async function resolveCheckpointLower(
 ): Promise<CheckpointLowerSpec> {
   const head = await resolveCheckpoint(projectRoot, ref);
   if (!head) throw new CheckpointError(`checkpoint not found: ${ref}`, '', '');
+  if (!head.manifest.volume) {
+    throw new CheckpointError(
+      `checkpoint ${ref} is a legacy host-dir checkpoint; recreate it`,
+      '',
+      '',
+    );
+  }
+  const volume = head.manifest.volume;
 
   if (head.manifest.type === 'merged') {
-    return { type: 'merged', hostLowerDirs: [head.fsDir], chain: [head.name] };
+    return { type: 'merged', volume, subpaths: [head.name], chain: [head.name] };
   }
 
-  const hostLowerDirs = [head.fsDir];
+  const subpaths = [head.name];
   const chain = [head.name];
   for (const parentRef of head.manifest.parents) {
     const p = await resolveCheckpoint(projectRoot, parentRef);
@@ -280,10 +343,10 @@ export async function resolveCheckpointLower(
         '',
       );
     }
-    hostLowerDirs.push(p.fsDir);
+    subpaths.push(p.name);
     chain.push(p.name);
   }
-  return { type: 'layered', hostLowerDirs, chain };
+  return { type: 'layered', volume, subpaths, chain };
 }
 
 export class CheckpointError extends Error {

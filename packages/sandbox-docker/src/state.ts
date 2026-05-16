@@ -126,12 +126,13 @@ export interface BoxRecord {
    */
   lowerDirs?: string[];
   /**
-   * Host paths bind-mounted read-only into the container as the checkpoint
-   * layer dirs referenced by `lowerDirs` (containerPath → hostPath). Empty/
-   * absent on non-checkpoint boxes. `startBox` revalidates these exist (Docker
-   * bakes binds at create time) before re-mounting.
+   * The per-project checkpoint Docker volume mounted read-only at
+   * `/agentbox-checkpoints` when this box was created from a checkpoint (the
+   * `lowerDirs` reference subdirs of that mount). Absent on non-checkpoint
+   * boxes. `startBox` revalidates this volume still exists (Docker bakes the
+   * mount at create time) before re-mounting.
    */
-  checkpointLayerMounts?: Array<{ containerPath: string; hostPath: string }>;
+  checkpointVolume?: string;
   /**
    * Lineage of the checkpoint this box was created from. Drives chain-depth
    * (auto-merge threshold) and `agentbox inspect`. Absent when the box was not

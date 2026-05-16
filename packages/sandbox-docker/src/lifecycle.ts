@@ -36,6 +36,7 @@ import {
   startContainer,
   stopContainer,
   unpauseContainer,
+  volumeExists,
 } from './docker.js';
 import {
   DEFAULT_LOWER_DIRS,
@@ -44,6 +45,7 @@ import {
   type NestedWorktreeBind,
   type OverlayCheck,
 } from './overlay.js';
+import { CHECKPOINT_VOLUME_PREFIX } from './checkpoint.js';
 import { launchCtlDaemon } from './ctl.js';
 import { launchDockerdDaemon, SHARED_DOCKER_CACHE_VOLUME } from './dockerd.js';
 import { launchVncDaemon, VNC_CONTAINER_PORT } from './vnc.js';
@@ -167,15 +169,14 @@ export async function startBox(idOrName: string): Promise<StartedBox> {
       );
     }
   }
-  // Checkpoint layer dirs are bind-mounted read-only at create time, same
-  // baked-in story as worktrees — a deleted layer dir can't be recovered by
-  // restart, so fail loudly up front.
-  for (const m of box.checkpointLayerMounts ?? []) {
-    if (!(await pathExists(m.hostPath))) {
-      throw new Error(
-        `box checkpoint layer missing on host: ${m.hostPath} (recreate the box)`,
-      );
-    }
+  // The per-project checkpoint volume is mounted read-only at create time,
+  // same baked-in story as worktrees — if it was removed we can't recover by
+  // restart, so fail loudly up front. (A removed checkpoint *subdir* instead
+  // surfaces as a loud mountOverlay failure, same as a missing worktree dir.)
+  if (box.checkpointVolume && !(await volumeExists(box.checkpointVolume))) {
+    throw new Error(
+      `box checkpoint volume missing: ${box.checkpointVolume} (recreate the box)`,
+    );
   }
   await startContainer(box.container);
   const nestedWorktrees: NestedWorktreeBind[] = (box.gitWorktrees ?? [])
@@ -540,7 +541,13 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
     );
     const expectedBoxDirs = new Set(survivingBoxes.map((b) => boxRunDirFor(b.id)));
     orphanContainers = liveContainers.filter((c) => !expectedContainers.has(c));
-    orphanVolumes = liveVolumes.filter((v) => !expectedVolumes.has(v));
+    // Per-project checkpoint volumes (`agentbox-ckpt-<project-hash>`) are
+    // durable project assets — they outlive every box that referenced them
+    // (the whole point of a checkpoint). Same reasoning as SHARED_CLAUDE_VOLUME
+    // but prefix-scoped since there is one per project.
+    orphanVolumes = liveVolumes.filter(
+      (v) => !expectedVolumes.has(v) && !v.startsWith(CHECKPOINT_VOLUME_PREFIX),
+    );
     orphanSnapshots = liveSnapshotDirs.filter((d) => !expectedSnapshots.has(d));
     orphanBoxDirs = liveBoxDirs.filter((d) => !expectedBoxDirs.has(d));
   }

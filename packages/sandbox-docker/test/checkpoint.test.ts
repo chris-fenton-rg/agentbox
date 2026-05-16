@@ -1,5 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { computeNextCheckpointName } from '../src/checkpoint.js';
+import {
+  CHECKPOINT_VOLUME_PREFIX,
+  checkpointVolumeName,
+  computeNextCheckpointName,
+} from '../src/checkpoint.js';
+
+describe('checkpointVolumeName', () => {
+  it('is deterministic, prefixed, and one volume per project', () => {
+    const a = checkpointVolumeName('/Users/x/proj-a');
+    const b = checkpointVolumeName('/Users/x/proj-b');
+    expect(a).toBe(checkpointVolumeName('/Users/x/proj-a')); // deterministic
+    expect(a).not.toBe(b); // scoped per project root
+    expect(a.startsWith(CHECKPOINT_VOLUME_PREFIX)).toBe(true);
+  });
+
+  it('produces a Docker-volume-name-safe string (no path separators)', () => {
+    const v = checkpointVolumeName('/Users/x/My Project (weird)/sub');
+    expect(v).toMatch(/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/);
+  });
+});
 
 describe('computeNextCheckpointName', () => {
   it('starts at 1 when no checkpoints exist for the box', () => {

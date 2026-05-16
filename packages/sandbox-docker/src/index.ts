@@ -56,7 +56,10 @@ export {
 export { EXCLUDE_DIRS, SNAPSHOTS_ROOT, snapshotPathFor } from './snapshot.js';
 export {
   CHECKPOINTS_ROOT,
+  CHECKPOINT_MOUNT,
+  CHECKPOINT_VOLUME_PREFIX,
   CheckpointError,
+  checkpointVolumeName,
   computeNextCheckpointName,
   createCheckpoint,
   listCheckpoints,
