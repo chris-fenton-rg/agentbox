@@ -149,7 +149,16 @@ function renderPersisted(s: BoxStatus, state: string): string {
   if (s.ports.length === 0) {
     out.push('  (none listening)');
   } else {
-    out.push(...s.ports.map((p) => `  :${String(p.port)}${p.service ? `  (${p.service})` : ''}`));
+    const other = s.ports
+      .filter((p) => !p.service)
+      .map((p) => p.port)
+      .sort((a, b) => a - b);
+    out.push(
+      ...s.ports
+        .filter((p) => p.service)
+        .map((p) => `  :${String(p.port)}  (${p.service})`),
+    );
+    if (other.length > 0) out.push(`  other (${other.length}): ${other.join(', ')}`);
   }
   return out.join('\n');
 }

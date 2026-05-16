@@ -31,9 +31,26 @@ export function renderTaskTable(rows: TaskStatus[]): string {
 
 export function renderPortsTable(rows: BoxStatusPort[]): string {
   if (rows.length === 0) return '(no ports listening)';
-  const headers = ['PORT', 'SERVICE'];
-  const data: string[][] = rows.map((r) => [`:${String(r.port)}`, r.service ?? '-']);
-  return renderTable(headers, data);
+  const named = rows.filter((r) => r.service);
+  const other = rows
+    .filter((r) => !r.service)
+    .map((r) => r.port)
+    .sort((a, b) => a - b);
+  const lines: string[] = [];
+  if (named.length > 0) {
+    lines.push(
+      renderTable(
+        ['PORT', 'SERVICE'],
+        named.map((r) => [`:${String(r.port)}`, r.service ?? '-']),
+      ),
+    );
+  }
+  // Collapse the unattributed ports (VNC, dev-tool worker IPC, multi-port
+  // services like inngest) into one line so they don't drown the real services.
+  if (other.length > 0) {
+    lines.push(`other (${other.length}): ${other.join(', ')}`);
+  }
+  return lines.join('\n');
 }
 
 function renderTable(headers: string[], data: string[][]): string {
