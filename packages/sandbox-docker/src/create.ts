@@ -15,7 +15,13 @@ import {
 import { dockerVolumeName, launchDockerdDaemon } from './dockerd.js';
 import { generateVncPassword, launchVncDaemon, VNC_CONTAINER_PORT } from './vnc.js';
 import { createBoxWorktree, detectGitRepos } from './git-worktree.js';
-import { CONTAINER_EXPORT_MERGED, CONTAINER_EXPORT_UPPER, boxRunDirFor } from './host-export.js';
+import {
+  CONTAINER_EXPORT_MERGED,
+  CONTAINER_EXPORT_UPPER,
+  DEFAULT_ENV_PATTERNS,
+  boxRunDirFor,
+  copyHostEnvFilesToBox,
+} from './host-export.js';
 import { DEFAULT_BOX_IMAGE, ensureImage } from './image.js';
 import {
   mountOverlay,
@@ -67,6 +73,14 @@ export interface CreateBoxOptions {
    * flag adds the Playwright CLI on top for boxes that need it.
    */
   withPlaywright?: boolean;
+  /**
+   * When true, copy the host's env/config files (DEFAULT_ENV_PATTERNS basename
+   * globs — `.env*`, `secrets.toml`, `agentbox.yaml`, ...) into the box's
+   * /workspace after the overlay is mounted, bypassing gitignore. The reverse
+   * of `pull env`. One-shot at create time; the files persist in the writable
+   * upper layer across pause/stop/start.
+   */
+  withEnv?: boolean;
   /**
    * VNC stack (Xvnc on :1 + websockify serving noVNC on container :6080).
    * Defaults to enabled. The CLI exposes `--no-vnc` for opt-out. Disabling
@@ -518,6 +532,17 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     log('@playwright/cli installed');
   }
 
+  if (opts.withEnv) {
+    log('copying host env/config files into /workspace (--with-env)');
+    const { copied } = await copyHostEnvFilesToBox({
+      container: containerName,
+      workspaceDir: workspace,
+      patterns: DEFAULT_ENV_PATTERNS,
+      onLog: log,
+    });
+    log(copied > 0 ? `copied ${String(copied)} env/config file(s)` : 'no env/config files found');
+  }
+
   // VNC daemon (Xvnc + websockify). Best-effort, like launchCtlDaemon. The
   // host port mapping was wired into runBox above (hostPort=0 → random); we
   // resolve the assigned port here for storage. If the daemon fails to come
@@ -549,6 +574,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     relayToken: relayUp ? relayToken : undefined,
     gitWorktrees: gitWorktreeRecords.length > 0 ? gitWorktreeRecords : undefined,
     withPlaywright: opts.withPlaywright ? true : undefined,
+    withEnv: opts.withEnv ? true : undefined,
     vncEnabled: vncEnabled ? true : undefined,
     vncContainerPort: vncEnabled ? VNC_CONTAINER_PORT : undefined,
     vncHostPort: vncHostPort ?? undefined,

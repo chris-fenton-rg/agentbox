@@ -27,6 +27,7 @@ const VALID: Fixture[] = [
 box:
   snapshot: false
   withPlaywright: true
+  withEnv: true
   vnc: true
   isolateClaudeConfig: false
   image: agentbox/box:dev

@@ -43,9 +43,10 @@ docker exec -it agentbox-<id> bash
 ## Commands
 
 ```sh
-agentbox create [-w <path>] [-n <name>] [--snapshot | --no-snapshot] [--attach] [-y]
+agentbox create [-w <path>] [-n <name>] [--snapshot | --no-snapshot] [--with-env] [--attach] [-y]
+                                    # --with-env copies host .env*/secrets.toml/agentbox.yaml into /workspace
 agentbox claude [-w <path>] [-n <name>] [--snapshot | --no-snapshot] [--isolate-claude-config]
-                [--session-name <name>] [-y] [-- <claude-args>...]
+                [--with-env] [--session-name <name>] [-y] [-- <claude-args>...]
                                     # create + start Claude Code in detached tmux + attach
 agentbox claude attach <box> [--session-name <name>]   # reattach to the running session
 agentbox list                       # alias: ls

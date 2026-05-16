@@ -467,6 +467,124 @@ describe('pullToHost', () => {
   });
 });
 
+describe('buildHostEnvFindArgs', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it('roots at "." with -print0 and includes prune dirs + name globs', async () => {
+    const { buildHostEnvFindArgs, DEFAULT_ENV_PATTERNS } = await import('../src/host-export.js');
+    const argv = buildHostEnvFindArgs(DEFAULT_ENV_PATTERNS);
+    expect(argv[0]).toBe('find');
+    expect(argv[1]).toBe('.'); // relative root → run with cwd = host workspace
+    expect(argv).toContain('node_modules'); // a pruned dir
+    expect(argv).toContain('-prune');
+    expect(argv).toContain('.env'); // a default pattern
+    expect(argv).toContain('agentbox.yaml');
+    // macOS BSD find has no -printf; we must use -print0
+    expect(argv).toContain('-print0');
+    expect(argv).not.toContain('-printf');
+    // patterns are OR-joined under the -name group
+    expect(argv).toContain('-o');
+  });
+});
+
+describe('copyHostEnvFilesToBox', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.resetModules();
+    vi.doUnmock('execa');
+  });
+
+  interface Call {
+    cmd: string;
+    args: string[];
+    opts?: { input?: unknown };
+  }
+
+  it('pipes find -> tar -> docker exec tar -x and returns the file count', async () => {
+    const calls: Call[] = [];
+    vi.doMock('execa', () => ({
+      execa: vi.fn(async (cmd: string, args: readonly string[], opts?: { input?: unknown }) => {
+        const a = [...args];
+        calls.push({ cmd, args: a, opts });
+        if (cmd === 'find') {
+          return { stdout: Buffer.from('./.env\0./apps/web/.env.local\0'), stderr: '', exitCode: 0 };
+        }
+        if (cmd === 'tar') return { stdout: Buffer.from('TARDATA'), stderr: '', exitCode: 0 };
+        if (cmd === 'docker') return { stdout: '', stderr: '', exitCode: 0 };
+        return { stdout: '', stderr: '', exitCode: 0 };
+      }),
+    }));
+    const { copyHostEnvFilesToBox } = await import('../src/host-export.js');
+
+    const res = await copyHostEnvFilesToBox({
+      container: 'agentbox-x',
+      workspaceDir: '/host/ws',
+      patterns: ['.env', '.env.*'],
+    });
+
+    expect(res.copied).toBe(2);
+    const find = calls.find((c) => c.cmd === 'find');
+    expect(find?.cmd).toBe('find');
+    const tar = calls.find((c) => c.cmd === 'tar');
+    expect(tar?.args).toEqual(['-C', '/host/ws', '--null', '-T', '-', '-cf', '-']);
+    const dx = calls.find((c) => c.cmd === 'docker');
+    expect(dx?.args).toEqual([
+      'exec',
+      '-i',
+      '--user',
+      '1000:1000',
+      'agentbox-x',
+      'tar',
+      '-xf',
+      '-',
+      '-C',
+      '/workspace',
+    ]);
+  });
+
+  it('returns {copied:0} without throwing when no files match', async () => {
+    vi.doMock('execa', () => ({
+      execa: vi.fn(async (cmd: string) => {
+        if (cmd === 'find') return { stdout: Buffer.from(''), stderr: '', exitCode: 0 };
+        return { stdout: '', stderr: '', exitCode: 0 };
+      }),
+    }));
+    const { copyHostEnvFilesToBox } = await import('../src/host-export.js');
+    const res = await copyHostEnvFilesToBox({
+      container: 'agentbox-y',
+      workspaceDir: '/host/ws',
+      patterns: ['.env'],
+    });
+    expect(res.copied).toBe(0);
+  });
+
+  it('best-effort: a docker exec failure logs and returns {copied:0}, no throw', async () => {
+    vi.doMock('execa', () => ({
+      execa: vi.fn(async (cmd: string) => {
+        if (cmd === 'find') return { stdout: Buffer.from('./.env\0'), stderr: '', exitCode: 0 };
+        if (cmd === 'tar') return { stdout: Buffer.from('T'), stderr: '', exitCode: 0 };
+        if (cmd === 'docker') return { stdout: '', stderr: 'no such container', exitCode: 1 };
+        return { stdout: '', stderr: '', exitCode: 0 };
+      }),
+    }));
+    const { copyHostEnvFilesToBox } = await import('../src/host-export.js');
+    const logs: string[] = [];
+    const res = await copyHostEnvFilesToBox({
+      container: 'agentbox-z',
+      workspaceDir: '/host/ws',
+      patterns: ['.env'],
+      onLog: (l) => logs.push(l),
+    });
+    expect(res.copied).toBe(0);
+    expect(logs.some((l) => l.includes('copy into box failed'))).toBe(true);
+  });
+});
+
 describe('BOXES_ROOT / boxRunDirFor', () => {
   const originalHome = process.env['HOME'];
 

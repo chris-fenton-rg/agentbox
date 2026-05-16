@@ -40,6 +40,7 @@ function renderText(i: InspectedBox): string {
     `claude activity ${renderClaudeActivity(i)}`,
     `persisted     ${renderPersisted(i)}`,
     `playwright    ${i.record.withPlaywright ? 'yes' : 'no'}`,
+    `env files     ${i.record.withEnv ? 'yes' : 'no'}`,
     'endpoints',
     ...renderEndpoints(i),
     `snapshot dir  ${i.record.snapshotDir ?? '(none — live workspace mount)'}`,

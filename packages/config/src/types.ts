@@ -16,6 +16,7 @@ export interface UserConfig {
   box?: {
     snapshot?: boolean;
     withPlaywright?: boolean;
+    withEnv?: boolean;
     vnc?: boolean;
     isolateClaudeConfig?: boolean;
     image?: string;
@@ -68,6 +69,7 @@ export interface EffectiveConfig {
   box: {
     snapshot: boolean | undefined;
     withPlaywright: boolean;
+    withEnv: boolean;
     vnc: boolean;
     isolateClaudeConfig: boolean;
     image: string;
@@ -140,6 +142,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   box: {
     snapshot: undefined,
     withPlaywright: false,
+    withEnv: false,
     vnc: true,
     isolateClaudeConfig: false,
     image: 'agentbox/box:dev',
@@ -209,6 +212,12 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'box.withPlaywright',
     type: 'bool',
     description: 'Install @playwright/cli@latest in the box at create time.',
+  },
+  {
+    key: 'box.withEnv',
+    type: 'bool',
+    description:
+      'Copy host env/config files (.env*, secrets.toml, agentbox.yaml, ...) into /workspace at box create time (gitignore-bypassing).',
   },
   {
     key: 'box.vnc',

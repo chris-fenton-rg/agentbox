@@ -38,6 +38,7 @@ interface ClaudeCreateOptions {
   yes?: boolean;
   isolateClaudeConfig?: boolean;
   withPlaywright?: boolean;
+  withEnv?: boolean;
   vnc?: boolean; // commander: --no-vnc => false; default true (undefined treated as true)
   sharedDockerCache?: boolean;
   sessionName?: string;
@@ -48,6 +49,7 @@ function buildClaudeCliOverrides(opts: ClaudeCreateOptions): Partial<UserConfig>
   if (opts.snapshot !== undefined) box.snapshot = opts.snapshot;
   if (opts.image !== undefined) box.image = opts.image;
   if (opts.withPlaywright === true) box.withPlaywright = true;
+  if (opts.withEnv === true) box.withEnv = true;
   if (opts.vnc === false) box.vnc = false;
   if (opts.isolateClaudeConfig === true) box.isolateClaudeConfig = true;
   if (opts.sharedDockerCache === true) box.dockerCacheShared = true;
@@ -121,6 +123,10 @@ export const claudeCommand = new Command('claude')
     'use a per-box ~/.claude volume instead of the shared agentbox-claude-config',
   )
   .option('--with-playwright', 'also install @playwright/cli@latest globally inside the box')
+  .option(
+    '--with-env',
+    'copy host env/config files (.env*, secrets.toml, agentbox.yaml, ...) into /workspace at create time (gitignore-bypassing)',
+  )
   .option('--no-vnc', 'disable the per-box Xvnc + noVNC web client (on by default)')
   .option(
     '--shared-docker-cache',
@@ -190,6 +196,7 @@ export const claudeCommand = new Command('claude')
         claudeConfig: { isolate: cfg.effective.box.isolateClaudeConfig },
         claudeEnv: resolved.env,
         withPlaywright,
+        withEnv: cfg.effective.box.withEnv,
         vnc: { enabled: cfg.effective.box.vnc },
         docker: { sharedCache: cfg.effective.box.dockerCacheShared },
         projectRoot,

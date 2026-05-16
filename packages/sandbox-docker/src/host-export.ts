@@ -330,6 +330,109 @@ function buildEnvFindArgs(patterns: string[]): string[] {
   ];
 }
 
+/**
+ * Host-side mirror of `buildEnvFindArgs` for the reverse direction (host →
+ * box). Rooted at `.` (run with cwd = the host workspace) and uses `-print0`
+ * instead of `-printf '%P\0'` because macOS's BSD `find` has no `-printf`;
+ * `./relpath` entries feed `tar -C <workspace> --null -T -` directly, exactly
+ * like the untracked-file pipe in git-worktree.ts.
+ */
+export function buildHostEnvFindArgs(patterns: string[]): string[] {
+  const nameGroup = (names: string[]): string[] => {
+    const out: string[] = [];
+    names.forEach((n, i) => {
+      if (i > 0) out.push('-o');
+      out.push('-name', n);
+    });
+    return out;
+  };
+  return [
+    'find',
+    '.',
+    '(',
+    '-type',
+    'd',
+    '(',
+    ...nameGroup(ENV_PRUNE_DIRS),
+    ')',
+    '-prune',
+    ')',
+    '-o',
+    '(',
+    '-type',
+    'f',
+    '(',
+    ...nameGroup(patterns),
+    ')',
+    '-print0',
+    ')',
+  ];
+}
+
+export interface CopyHostEnvOptions {
+  /** Target container name (must be running with the overlay mounted). */
+  container: string;
+  /** Absolute host workspace dir — the same dir that maps to /workspace. */
+  workspaceDir: string;
+  /** Basename globs to copy (normally DEFAULT_ENV_PATTERNS). */
+  patterns: string[];
+  onLog?: (line: string) => void;
+}
+
+/**
+ * Copy the host's env/config files (selected by `patterns`, gitignore ignored)
+ * into the running box's `/workspace`. The reverse of `pullToHost`'s env
+ * segment. Writes land in the overlay's writable upper layer (the container is
+ * up + mounted at call time), so they survive pause/stop/start.
+ *
+ * Best-effort: a tar/exec failure or an empty match set logs and returns the
+ * count rather than throwing — a missing secret shouldn't abort an otherwise
+ * healthy box. Files extract as uid 1000 so they're owned by `vscode` like the
+ * rest of /workspace.
+ */
+export async function copyHostEnvFilesToBox(
+  opts: CopyHostEnvOptions,
+): Promise<{ copied: number }> {
+  const log = opts.onLog ?? (() => {});
+
+  // Default (utf8) encoding: `find` output is NUL-delimited path text, and
+  // `encoding:'buffer'` would hand back a Uint8Array whose .toString() is
+  // comma-joined byte codes, not the paths.
+  const found = await execa('find', buildHostEnvFindArgs(opts.patterns).slice(1), {
+    cwd: opts.workspaceDir,
+    reject: false,
+  });
+  if (found.exitCode !== 0) {
+    log(`warning: env-file scan failed: ${String(found.stderr).slice(0, 300)}`);
+    return { copied: 0 };
+  }
+  const list = String(found.stdout)
+    .split('\0')
+    .filter((p) => p.length > 0);
+  if (list.length === 0) return { copied: 0 };
+
+  // Same fork-and-stream as the untracked-file carry-over in git-worktree.ts.
+  const packed = await execa('tar', ['-C', opts.workspaceDir, '--null', '-T', '-', '-cf', '-'], {
+    input: list.join('\0'),
+    encoding: 'buffer',
+    reject: false,
+  });
+  if (packed.exitCode !== 0) {
+    log(`warning: env-file tar pack failed: ${String(packed.stderr).slice(0, 300)}`);
+    return { copied: 0 };
+  }
+  const extract = await execa(
+    'docker',
+    ['exec', '-i', '--user', '1000:1000', opts.container, 'tar', '-xf', '-', '-C', '/workspace'],
+    { input: packed.stdout as Buffer, reject: false },
+  );
+  if (extract.exitCode !== 0) {
+    log(`warning: env-file copy into box failed: ${String(extract.stderr).slice(0, 300)}`);
+    return { copied: 0 };
+  }
+  return { copied: list.length };
+}
+
 export interface PullOptions {
   /** Default true. When false, skip git ls-files and use the static exclude-list. */
   respectGitignore?: boolean;

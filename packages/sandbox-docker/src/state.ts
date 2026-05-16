@@ -64,6 +64,13 @@ export interface BoxRecord {
    */
   withPlaywright?: boolean;
   /**
+   * True when the box was created with --with-env. The host's env/config files
+   * (DEFAULT_ENV_PATTERNS) were copied into /workspace once at create time,
+   * bypassing gitignore; recorded for `agentbox inspect` visibility. Absent on
+   * boxes created before this field existed (treated as false).
+   */
+  withEnv?: boolean;
+  /**
    * VNC stack (Xvnc + websockify + noVNC) is enabled for this box. Absent on
    * boxes created before VNC support landed → treated as disabled.
    */
