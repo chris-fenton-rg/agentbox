@@ -361,18 +361,19 @@ describe('Supervisor', () => {
         [
           taskSpec({
             name: 't1',
-            command: [NODE, '-e', 'setTimeout(()=>process.exit(0), 200)'],
+            command: [NODE, '-e', 'setTimeout(()=>process.exit(0), 400)'],
           }),
           taskSpec({
             name: 't2',
-            command: [NODE, '-e', 'setTimeout(()=>process.exit(0), 200)'],
+            command: [NODE, '-e', 'setTimeout(()=>process.exit(0), 400)'],
           }),
         ],
       ),
     );
     await waitFor(() => sup.listTasks().every((t) => t.state === 'done') || null, 3000);
     const elapsed = Date.now() - start;
-    // Sequential would be ~400ms; parallel should be well under 350ms.
-    expect(elapsed).toBeLessThan(350);
+    // Sequential would be ~800ms; parallel is ~400ms plus spawn overhead.
+    // The wide margin keeps this from flaking on slow CI while still proving concurrency.
+    expect(elapsed).toBeLessThan(700);
   });
 });
