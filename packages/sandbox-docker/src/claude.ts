@@ -780,11 +780,26 @@ export function buildShellArgv(container: string): string[] {
   return ['exec', '-it', '-e', `TERM=${term}`, '--user', CONTAINER_USER, container, 'bash', '-l'];
 }
 
-export function attachClaudeSession(container: string, sessionName?: string): never {
+export function formatDetachNotice(ref: string): string {
+  return `Session detached. Reattach with: agentbox claude attach ${ref}`;
+}
+
+export function attachClaudeSession(
+  container: string,
+  sessionName?: string,
+  reattachRef?: string,
+): never {
   const child = spawnSync('docker', buildClaudeAttachArgv(container, sessionName), {
     stdio: 'inherit',
   });
-  process.exit(child.status ?? 0);
+  const code = child.status ?? 0;
+  if (reattachRef && code === 0) {
+    // Overwrite tmux's own `[detached (from session …)]` line (printed just
+    // above the cursor on a clean detach). Best-effort cosmetics: if the
+    // terminal ignores the cursor moves, our line still prints below it.
+    process.stdout.write('\x1b[1A\x1b[2K\r' + formatDetachNotice(reattachRef) + '\n');
+  }
+  process.exit(code);
 }
 
 export interface ClaudeSessionInfo {

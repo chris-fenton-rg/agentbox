@@ -31,6 +31,12 @@ import { resolveLimits } from '../limits.js';
 import { maybeRunSetupWizard } from '../wizard.js';
 import { handleLifecycleError } from './_errors.js';
 
+/** Ref shown in the detach notice: the per-project index `n` when set
+ *  (resolves from inside the project dir), else the globally-unique name. */
+function reattachRef(r: { projectIndex?: number; name: string }): string {
+  return typeof r.projectIndex === 'number' ? String(r.projectIndex) : r.name;
+}
+
 interface ClaudeCreateOptions {
   workspace: string;
   name?: string;
@@ -224,45 +230,38 @@ export const claudeCommand = new Command('claude')
         onLog: (line) => s.message(clampSpinnerLine(line)),
       });
       containerName = result.record.container;
-      s.stop(`box ${result.record.container} ready`);
-
-      log.info(`id:        ${result.record.id}`);
-      if (typeof result.record.projectIndex === 'number') {
-        log.info(`n:         ${String(result.record.projectIndex)}   (in ${projectRoot})`);
-      }
-      log.info(`container: ${result.record.container}`);
-      log.info(`claude volume: ${result.record.claudeConfigVolume ?? '(none)'}`);
 
       // Plugin native deps: the sync excludes `node_modules` (host darwin
       // binaries don't run on linux/amd64). First claude session in a fresh
       // box pays the npm-install cost for each plugin that ships a
       // package.json; subsequent attaches see node_modules already present
-      // and exit immediately.
-      s.start('checking plugin native deps');
+      // and exit immediately. Keep the same spinner alive — every phase
+      // overwrites the one line instead of leaving a scroll of `●`/`◇` rows.
+      s.message('checking plugin native deps');
       const rebuild = await rebuildPluginNativeDeps(result.record.container, {
         volume: result.record.claudeConfigVolume ?? SHARED_CLAUDE_VOLUME,
         onProgress: (line) => s.message(clampSpinnerLine(line)),
       });
-      if (rebuild.rebuilt.length > 0) {
-        s.stop(`plugins ready (rebuilt ${String(rebuild.rebuilt.length)})`);
-      } else {
-        s.stop('plugins ready');
-      }
-      for (const f of rebuild.failed) {
-        log.warn(`plugin install failed for ${f.dir}; claude may still load it. stderr:\n${f.stderr.trim()}`);
-      }
 
-      s.start('starting claude session');
+      s.message('starting claude session');
       await startClaudeSession({
         container: result.record.container,
         claudeArgs: effectiveClaudeArgs,
         sessionName,
         boxName: result.record.name,
       });
-      s.stop(`tmux session "${sessionName}" started`);
+
+      const nSuffix =
+        typeof result.record.projectIndex === 'number'
+          ? `  ·  n ${String(result.record.projectIndex)}`
+          : '';
+      s.stop(`box ${result.record.container} ready${nSuffix}`);
+      for (const f of rebuild.failed) {
+        log.warn(`plugin install failed for ${f.dir}; claude may still load it. stderr:\n${f.stderr.trim()}`);
+      }
 
       outro('attaching — Ctrl-b d to detach, leaves claude running');
-      attachClaudeSession(result.record.container, sessionName);
+      attachClaudeSession(result.record.container, sessionName, reattachRef(result.record));
     } catch (err) {
       s.stop('failed');
       if (err instanceof ClaudeSessionError) {
@@ -299,13 +298,7 @@ async function startOrAttachClaude(
   // `startBox` re-mounts the FUSE overlay and relaunches ctl/vnc/dockerd
   // because those processes die with the container.
   const insp = await inspectBox(box.id);
-  if (insp.state === 'paused') {
-    log.info('box is paused; unpausing');
-    await unpauseBox(box.id);
-  } else if (insp.state === 'stopped') {
-    log.info('box is stopped; starting (remounting overlay)');
-    await startBox(box.id);
-  } else if (insp.state === 'missing') {
+  if (insp.state === 'missing') {
     throw new Error(`box ${box.name} has no container; was it destroyed?`);
   }
 
@@ -314,11 +307,24 @@ async function startOrAttachClaude(
   const existing = await claudeSessionInfo(box.container, sessionName);
   if (existing.running) {
     outro(`session "${sessionName}" already running — attaching (Ctrl-b d to detach)`);
-    attachClaudeSession(box.container, sessionName);
+    attachClaudeSession(box.container, sessionName, reattachRef(box));
     return;
   }
 
+  // One spinner for the whole prepare→attach sequence: every phase overwrites
+  // the single line instead of leaving a scroll of `●`/`◇` rows.
   const s = spinner();
+  s.start('preparing box');
+
+  // Auto-unpause/start. `startBox` re-mounts the FUSE overlay and relaunches
+  // ctl/vnc/dockerd because those processes die with the container.
+  if (insp.state === 'paused') {
+    s.message('unpausing box');
+    await unpauseBox(box.id);
+  } else if (insp.state === 'stopped') {
+    s.message('starting box (remounting overlay)');
+    await startBox(box.id);
+  }
 
   // Default: re-sync the host's ~/.claude into the box volume so any
   // updates the user made on the host (new MCP servers, refreshed
@@ -326,11 +332,11 @@ async function startOrAttachClaude(
   // first sync; opt out with --no-sync-config to skip.
   const syncConfig = opts.syncConfig !== false;
   if (syncConfig) {
-    s.start('syncing ~/.claude into box volume');
+    s.message('syncing ~/.claude into box volume');
     // Use the box's recorded volume so isolated boxes hit their own
     // agentbox-claude-config-<id>, not the shared one.
     const volume = box.claudeConfigVolume ?? SHARED_CLAUDE_VOLUME;
-    const synced = await ensureClaudeVolume(
+    await ensureClaudeVolume(
       { volume },
       {
         syncFromHost: true,
@@ -338,37 +344,31 @@ async function startOrAttachClaude(
         hostWorkspace: box.workspacePath,
       },
     );
-    if (synced.synced) s.stop(`synced ${volume} from ~/.claude`);
-    else s.stop(`nothing to sync (no host ~/.claude)`);
   }
 
   // Plugin native deps: idempotent — gated by a per-plugin marker. No-op
   // on subsequent starts unless a new plugin was synced just now.
-  s.start('checking plugin native deps');
+  s.message('checking plugin native deps');
   const rebuild = await rebuildPluginNativeDeps(box.container, {
     volume: box.claudeConfigVolume ?? SHARED_CLAUDE_VOLUME,
     onProgress: (line) => s.message(clampSpinnerLine(line)),
   });
-  if (rebuild.rebuilt.length > 0) {
-    s.stop(`plugins ready (rebuilt ${String(rebuild.rebuilt.length)})`);
-  } else {
-    s.stop('plugins ready');
-  }
-  for (const f of rebuild.failed) {
-    log.warn(`plugin install failed for ${f.dir}; claude may still load it. stderr:\n${f.stderr.trim()}`);
-  }
 
-  s.start('starting claude session');
+  s.message('starting claude session');
   await startClaudeSession({
     container: box.container,
     claudeArgs,
     sessionName,
     boxName: box.name,
   });
-  s.stop(`tmux session "${sessionName}" started`);
+
+  s.stop(`box ${box.container} ready`);
+  for (const f of rebuild.failed) {
+    log.warn(`plugin install failed for ${f.dir}; claude may still load it. stderr:\n${f.stderr.trim()}`);
+  }
 
   outro('attaching — Ctrl-b d to detach, leaves claude running');
-  attachClaudeSession(box.container, sessionName);
+  attachClaudeSession(box.container, sessionName, reattachRef(box));
 }
 
 const claudeAttachCommand = new Command('attach')

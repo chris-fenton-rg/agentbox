@@ -125,9 +125,8 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
     return { action: 'proceed' };
   }
 
-  log.info(`no agentbox.yaml found in ${proj.root}`);
   const go = await confirm({
-    message: 'Want me to launch Claude to generate one for you?',
+    message: 'Set up a new Agentbox environment?',
     initialValue: true,
   });
   if (isCancel(go) || !go) return { action: 'proceed' };

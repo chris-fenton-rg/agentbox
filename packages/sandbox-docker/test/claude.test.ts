@@ -6,6 +6,7 @@ import {
   buildClaudeDashboardAttachArgv,
   buildClaudeMounts,
   buildClaudeStatusBarArgs,
+  formatDetachNotice,
   DEFAULT_CLAUDE_SESSION,
   resolveClaudeVolume,
   scanPluginCacheForRebuild,
@@ -67,6 +68,19 @@ describe('buildClaudeDashboardAttachArgv', () => {
     // never attaches directly to the original session (would show its footer)
     const attachIdx = argv.lastIndexOf('attach');
     expect(argv[attachIdx + 2]).toBe('codex-dash');
+  });
+});
+
+describe('formatDetachNotice', () => {
+  it('tells the user how to reattach by numeric index', () => {
+    expect(formatDetachNotice('3')).toBe(
+      'Session detached. Reattach with: agentbox claude attach 3',
+    );
+  });
+  it('falls back to a box name ref', () => {
+    expect(formatDetachNotice('my-box')).toBe(
+      'Session detached. Reattach with: agentbox claude attach my-box',
+    );
   });
 });
 
