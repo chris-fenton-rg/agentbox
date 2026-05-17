@@ -1,0 +1,56 @@
+import { execInBox } from './docker.js';
+
+export interface BoxBrowserResult {
+  up: boolean;
+  /** True when a session was already active, so we left the agent's browser untouched. */
+  alreadyRunning?: boolean;
+  reason?: string;
+}
+
+/**
+ * Decide whether `agent-browser session list` reports a live session. Pure so
+ * it can be unit-tested without docker. `agent-browser` exits 0 and prints
+ * "No active sessions" when nothing is running; any other exit-0 output lists
+ * one or more sessions (a persistent Chromium is up).
+ */
+export function browserSessionActive(stdout: string, exitCode: number): boolean {
+  return exitCode === 0 && !/no active sessions/i.test(stdout);
+}
+
+/**
+ * Ensure the box's in-box browser (agent-browser's persistent default-session
+ * Chromium) is running, so the VNC view shows a browser instead of a blank X
+ * screen. Idempotent: if a session is already active we do nothing — the agent
+ * may be mid-task and we must not navigate its page away. Otherwise we open a
+ * neutral page **headed** (agent-browser defaults to headless — a headless
+ * Chromium renders nothing on the VNC display, defeating the whole point), so
+ * the agent's subsequent `agent-browser open <url>` reuses the same visible
+ * window (it just navigates it).
+ *
+ * Best-effort, mirroring {@link import('./vnc.js').launchVncDaemon} — the
+ * caller warns on failure but never aborts (the noVNC client still connects).
+ * `DISPLAY=:1` + `AGENT_BROWSER_EXECUTABLE_PATH` are image-baked env so the
+ * exec inherits them; runs as `vscode` like the other in-box launches.
+ */
+export async function ensureBoxBrowser(
+  container: string,
+  timeoutMs = 8000,
+): Promise<BoxBrowserResult> {
+  const list = await execInBox(container, ['agent-browser', 'session', 'list'], {
+    user: 'vscode',
+    timeoutMs,
+  });
+  if (browserSessionActive(list.stdout, list.exitCode)) {
+    return { up: true, alreadyRunning: true };
+  }
+
+  const open = await execInBox(container, ['agent-browser', 'open', '--headed', 'about:blank'], {
+    user: 'vscode',
+    timeoutMs,
+  });
+  if (open.exitCode === 0) return { up: true };
+  return {
+    up: false,
+    reason: `agent-browser open failed: ${open.stderr || open.stdout || `exit ${String(open.exitCode)}`}`,
+  };
+}

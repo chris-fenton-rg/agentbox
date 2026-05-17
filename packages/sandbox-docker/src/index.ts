@@ -4,6 +4,7 @@ export {
   attachClaudeSession,
   buildClaudeAttachArgv,
   buildClaudeMounts,
+  buildShellArgv,
   ClaudeSessionError,
   claudeSessionInfo,
   CONTAINER_USER,
@@ -190,6 +191,7 @@ export {
   type VncLaunchResult,
   type VncUrls,
 } from './vnc.js';
+export { browserSessionActive, ensureBoxBrowser, type BoxBrowserResult } from './browser.js';
 export {
   dockerVolumeName,
   launchDockerdDaemon,

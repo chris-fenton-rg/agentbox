@@ -4,6 +4,7 @@ import { Command } from 'commander';
 import {
   buildVncUrls,
   detectEngine,
+  ensureBoxBrowser,
   inspectBox,
   startBox,
   unpauseBox,
@@ -42,6 +43,10 @@ export const browserCommand = new Command('browser')
       } else if (insp.state === 'missing') {
         throw new Error(`box ${box.name} has no container; was it destroyed?`);
       }
+
+      const br = await ensureBoxBrowser(box.container);
+      if (br.up && !br.alreadyRunning) log.info('started in-box browser');
+      else if (!br.up) log.warn(`could not start in-box browser: ${br.reason ?? 'unknown'}`);
 
       const engine = await detectEngine();
       const urls = buildVncUrls(box, engine);

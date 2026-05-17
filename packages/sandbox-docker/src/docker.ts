@@ -128,13 +128,16 @@ export async function dockerStorageDriver(): Promise<string> {
 export async function execInBox(
   container: string,
   cmd: string[],
-  opts: { user?: string; detach?: boolean } = {},
+  opts: { user?: string; detach?: boolean; timeoutMs?: number } = {},
 ): Promise<DockerExecResult> {
   const args: string[] = ['exec'];
   if (opts.detach) args.push('-d');
   if (opts.user) args.push('--user', opts.user);
   args.push(container, ...cmd);
-  const result = await execa('docker', args, { reject: false });
+  const result = await execa('docker', args, {
+    reject: false,
+    ...(opts.timeoutMs ? { timeout: opts.timeoutMs } : {}),
+  });
   return {
     exitCode: result.exitCode ?? -1,
     stdout: result.stdout ?? '',

@@ -8,10 +8,11 @@ import {
   type PtySpawn,
   type TerminalCtor,
 } from './pty-session.js';
-import { sidebarLines, statusLine, type SidebarBox } from './sidebar.js';
+import { sidebarLines, statusLine, menuLines, type SidebarBox } from './sidebar.js';
 
 export type RightTarget =
-  | { kind: 'attach'; argv: string[] }
+  | { kind: 'attach'; argv: string[]; mode?: 'claude' | 'shell' }
+  | { kind: 'menu' }
   | { kind: 'placeholder'; lines: string[] };
 
 export interface CompositorDeps {
@@ -19,8 +20,16 @@ export interface CompositorDeps {
   termCtor: TerminalCtor;
   /** Scoped + sorted candidate boxes (same order the sidebar renders). */
   listCandidates: () => Promise<SidebarBox[]>;
-  /** What the right pane should show for a box (attach argv or a message). */
+  /** What the right pane should show for a box (attach argv / menu / message). */
   resolveTarget: (boxId: string) => Promise<RightTarget>;
+  /** Start a proper Claude tmux session in the box, then resolve to attach. */
+  startClaude: (boxId: string) => Promise<RightTarget>;
+  /** Open an interactive shell in the box, resolve to attach. */
+  openShell: (boxId: string) => Promise<RightTarget>;
+  /** Host-side actions for the selected box; return a short status message. */
+  openVnc: (boxId: string) => Promise<string>;
+  openCode: (boxId: string) => Promise<string>;
+  openWeb: (boxId: string) => Promise<string>;
 }
 
 const POLL_MS = 1000;
@@ -44,6 +53,13 @@ export class Compositor {
   private selectedId: string;
   private session: PtySession | null = null;
   private placeholder: string[] | null = null;
+  private menu: { boxName: string } | null = null;
+  private activeMode: 'claude' | 'shell' = 'claude';
+  private flashMsg: string | null = null;
+  private flashTimer: ReturnType<typeof setTimeout> | null = null;
+  /** True while a start-Claude / open-shell action is in flight (suppresses
+   * the poll respawn so it can't interrupt the transition). */
+  private busy = false;
   private layout: DashboardLayout;
   private prevRows: string[] | null = null;
   private renderTimer: ReturnType<typeof setTimeout> | null = null;
@@ -72,9 +88,11 @@ export class Compositor {
     this.layout = computeLayout(this.out.columns ?? 100, this.out.rows ?? 30);
     this.parser = new InputParser({
       onEvent: (e) => {
-        if (e.type === 'forward') this.session?.write(e.bytes);
-        else if (e.type === 'quit') this.onSig();
-        else this.switchBox(e.dir);
+        if (e.type === 'quit') this.onSig();
+        else if (e.type === 'switch') this.switchBox(e.dir);
+        else if (e.type === 'action') void this.doAction(e.name);
+        else if (this.menu) this.handleMenuKey(e.bytes);
+        else this.session?.write(e.bytes);
       },
       // Absolute 1-based host coords → right-pane-local 1-based; null = the
       // pointer is over the sidebar/status, so Claude shouldn't see it.
@@ -130,17 +148,22 @@ export class Compositor {
   private async poll(): Promise<void> {
     const before = JSON.stringify(this.boxes.map((b) => [b.id, b.state, b.claudeActivity]));
     await this.refreshBoxes();
-    if (!this.boxes.some((b) => b.id === this.selectedId) && this.boxes[0]) {
+    if (this.busy) {
+      // A start/shell action is mid-flight — don't yank the right pane.
+    } else if (!this.boxes.some((b) => b.id === this.selectedId) && this.boxes[0]) {
       this.selectedId = this.boxes[0].id;
       await this.spawnActive();
     } else {
-      // Selected box stopped while attached, or came back while showing a
-      // placeholder → re-resolve. Never respawn a healthy running attach.
+      // Re-resolve when: an attached box died; a not-running placeholder
+      // recovered; or the menu's box stopped. The menu itself is a stable
+      // state while its box runs — never respawn it (would reset the screen).
       const box = this.selectedBox();
       const running = box?.state === 'running';
-      if ((this.session && !running) || (this.placeholder && running)) {
-        await this.spawnActive();
-      }
+      const reresolve =
+        (this.session && !running) ||
+        (this.placeholder && running) ||
+        (this.menu && !running);
+      if (reresolve) await this.spawnActive();
     }
     if (JSON.stringify(this.boxes.map((b) => [b.id, b.state, b.claudeActivity])) !== before) {
       this.drawChrome();
@@ -156,11 +179,23 @@ export class Compositor {
   private async spawnActive(): Promise<void> {
     this.disposeSession();
     this.placeholder = null;
+    this.menu = null;
     // Wipe the old agent now (synchronous, before the async resolve gap) so it
     // can't bleed through while the new attach redraws. Also resets prevRows.
     this.clearRightPane();
-    const target = await this.deps.resolveTarget(this.selectedId);
+    const id = this.selectedId;
+    const target = await this.deps.resolveTarget(id);
+    if (this.selectedId !== id || this.tornDown) return; // user switched away
+    this.applyTarget(target);
+  }
+
+  /** Turn a resolved/started target into the right-pane state. */
+  private applyTarget(target: RightTarget): void {
+    this.disposeSession();
+    this.placeholder = null;
+    this.menu = null;
     if (target.kind === 'attach') {
+      this.activeMode = target.mode ?? 'claude';
       this.session = new PtySession(
         this.deps.ptySpawn,
         this.deps.termCtor,
@@ -170,10 +205,91 @@ export class Compositor {
         () => this.scheduleRender(),
         () => this.onSessionExit(),
       );
+    } else if (target.kind === 'menu') {
+      this.menu = { boxName: this.selectedBox()?.name ?? this.selectedId };
     } else {
       this.placeholder = target.lines;
     }
+    this.prevRows = null;
+    this.drawChrome();
     this.scheduleRender();
+  }
+
+  private handleMenuKey(bytes: Buffer): void {
+    for (const b of bytes) {
+      if (b === 0x63 || b === 0x0d || b === 0x0a) {
+        void this.chooseAction('claude');
+        return;
+      }
+      if (b === 0x73) {
+        void this.chooseAction('shell');
+        return;
+      }
+    }
+  }
+
+  private async chooseAction(which: 'claude' | 'shell'): Promise<void> {
+    if (this.busy) return;
+    const id = this.selectedId;
+    const name = this.selectedBox()?.name ?? id;
+    this.busy = true;
+    this.menu = null;
+    this.placeholder = ['', which === 'claude' ? '  Starting Claude…' : '  Opening shell…'];
+    this.prevRows = null;
+    this.drawChrome();
+    this.scheduleRender();
+    try {
+      const target =
+        which === 'claude'
+          ? await this.deps.startClaude(id)
+          : await this.deps.openShell(id);
+      if (this.selectedId !== id || this.tornDown) return; // switched away
+      this.applyTarget(target);
+    } catch (err) {
+      if (this.selectedId !== id || this.tornDown) return;
+      const msg = err instanceof Error ? err.message : String(err);
+      this.placeholder = [
+        '',
+        `  Failed to ${which === 'claude' ? 'start Claude' : 'open a shell'} in ${name}:`,
+        `  ${msg}`,
+        '',
+        which === 'claude'
+          ? `  Try from a shell: agentbox claude start ${name}`
+          : `  Try from a shell: agentbox shell ${name}`,
+      ];
+      this.prevRows = null;
+      this.scheduleRender();
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  private async doAction(name: 'vnc' | 'code' | 'web'): Promise<void> {
+    const id = this.selectedId;
+    let msg: string;
+    try {
+      msg =
+        name === 'vnc'
+          ? await this.deps.openVnc(id)
+          : name === 'code'
+            ? await this.deps.openCode(id)
+            : await this.deps.openWeb(id);
+    } catch (err) {
+      msg = err instanceof Error ? err.message : String(err);
+    }
+    this.flash(msg);
+  }
+
+  /** Briefly show `msg` in the status row, then revert. */
+  private flash(msg: string): void {
+    this.flashMsg = msg;
+    if (this.flashTimer) clearTimeout(this.flashTimer);
+    this.flashTimer = setTimeout(() => {
+      this.flashTimer = null;
+      this.flashMsg = null;
+      this.drawChrome();
+    }, 2500);
+    this.drawChrome();
   }
 
   private onSessionExit(): void {
@@ -228,6 +344,11 @@ export class Compositor {
       const { out, rows } = diffFrame(this.prevRows, this.session.snapshot(), r);
       this.prevRows = rows;
       if (out) this.out.write(SYNC_BEGIN + out + SYNC_END);
+    } else if (this.menu) {
+      const lines = menuLines(this.menu.boxName, r.w, r.h);
+      let s = SYNC_BEGIN + '\x1b[?25l';
+      for (let i = 0; i < r.h; i++) s += cursorTo(r.x, r.y + i) + '\x1b[0m' + (lines[i] ?? '');
+      this.out.write(s + SYNC_END);
     } else if (this.placeholder) {
       let s = SYNC_BEGIN + '\x1b[?25l';
       for (let i = 0; i < r.h; i++) {
@@ -245,7 +366,20 @@ export class Compositor {
     let s = SYNC_BEGIN + '\x1b[0m';
     for (let i = 0; i < lines.length; i++) s += cursorTo(0, i) + lines[i];
     for (let y = 0; y < sidebar.h; y++) s += cursorTo(sepX, y) + '│';
-    s += cursorTo(0, statusY) + statusLine(this.selectedBox(), this.layout.cols);
+    let status: string;
+    if (this.flashMsg) {
+      const w = this.layout.cols;
+      const txt = ` ${this.flashMsg} `.slice(0, w).padEnd(w);
+      status = `\x1b[7m${txt}\x1b[0m`;
+    } else {
+      const stateLabel = this.menu
+        ? 'menu'
+        : this.session && this.activeMode === 'shell'
+          ? 'shell'
+          : undefined;
+      status = statusLine(this.selectedBox(), this.layout.cols, stateLabel);
+    }
+    s += cursorTo(0, statusY) + status;
     this.out.write(s + SYNC_END);
   }
 
@@ -271,6 +405,7 @@ export class Compositor {
     if (this.renderTimer) clearTimeout(this.renderTimer);
     if (this.pollTimer) clearInterval(this.pollTimer);
     if (this.resizeTimer) clearTimeout(this.resizeTimer);
+    if (this.flashTimer) clearTimeout(this.flashTimer);
     this.parser.dispose();
     this.disposeSession();
     this.inp.off('data', this.onData);

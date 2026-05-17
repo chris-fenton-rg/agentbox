@@ -683,6 +683,16 @@ export function buildClaudeAttachArgv(container: string, sessionName?: string): 
   ];
 }
 
+/**
+ * The `docker` argv for an interactive login shell in a box — the same shape
+ * `agentbox shell` uses (vscode user, image WORKDIR `/workspace`, `bash -l`).
+ * Handed to node-pty by the dashboard's "open a shell" action.
+ */
+export function buildShellArgv(container: string): string[] {
+  const term = process.env['TERM'] ?? 'xterm-256color';
+  return ['exec', '-it', '-e', `TERM=${term}`, '--user', CONTAINER_USER, container, 'bash', '-l'];
+}
+
 export function attachClaudeSession(container: string, sessionName?: string): never {
   const child = spawnSync('docker', buildClaudeAttachArgv(container, sessionName), {
     stdio: 'inherit',

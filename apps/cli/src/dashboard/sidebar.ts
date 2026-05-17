@@ -48,12 +48,40 @@ export function sidebarLines(
   return lines.slice(0, h);
 }
 
-/** Inverse-video status line, exactly `w` columns. */
-export function statusLine(box: SidebarBox | undefined, w: number): string {
-  const left = box
-    ? ` agentbox ▸ ${box.name} (${box.state === 'running' ? (box.claudeActivity ?? 'unknown') : box.state})`
-    : ' agentbox';
-  const right = 'Ctrl-a ↑/↓ switch · Ctrl-a q quit ';
+/**
+ * Centered action menu for a running box with no Claude session.
+ * Exactly `h` lines, each exactly `w` columns. Pure.
+ */
+export function menuLines(boxName: string, w: number, h: number): string[] {
+  const body = [
+    '',
+    `  No Claude session in ${boxName}.`,
+    '',
+    '   [c]  Start Claude here',
+    '   [s]  Open a shell',
+    '',
+    '  Ctrl+Option+↑/↓ switch · Ctrl-a then v/c/w/q (vnc/code/web/quit)',
+  ];
+  const top = Math.max(0, Math.floor((h - body.length) / 2));
+  const out: string[] = [];
+  for (let i = 0; i < h; i++) out.push(fit(body[i - top] ?? '', w));
+  return out;
+}
+
+/**
+ * Inverse-video status line, exactly `w` columns. `stateLabel` overrides the
+ * box's activity text (used for `shell` / `menu` panes where claudeActivity
+ * would otherwise show a misleading `unknown`).
+ */
+export function statusLine(
+  box: SidebarBox | undefined,
+  w: number,
+  stateLabel?: string,
+): string {
+  const state =
+    stateLabel ?? (box ? (box.state === 'running' ? (box.claudeActivity ?? 'unknown') : box.state) : '');
+  const left = box ? ` agentbox ▸ ${box.name} (${state})` : ' agentbox';
+  const right = '^⌥↑↓ switch · ^a v vnc · ^a c code · ^a w web · ^a q quit ';
   const gap = Math.max(1, w - left.length - right.length);
   const text =
     left.length + right.length + 1 > w

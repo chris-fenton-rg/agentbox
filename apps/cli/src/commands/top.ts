@@ -15,7 +15,7 @@ import { watchRender } from '../watch.js';
 import { handleLifecycleError } from './_errors.js';
 
 interface TopOptions {
-  all?: boolean;
+  project?: boolean;
   once?: boolean;
   json?: boolean;
   interval?: string;
@@ -54,7 +54,15 @@ async function selectBoxes(
   opts: TopOptions,
 ): Promise<ListedBox[]> {
   const boxes = await listBoxes();
-  if (opts.all) {
+  if (idOrName === undefined) {
+    // Default: every box on the host. --project narrows to the cwd's project.
+    if (!opts.project) {
+      if (boxes.length === 0) {
+        log.error('no boxes');
+        process.exit(2);
+      }
+      return boxes;
+    }
     const project = await findProjectRoot(process.cwd());
     const scoped = boxes.filter((b) => b.projectRoot === project.root);
     if (scoped.length === 0) {
@@ -92,12 +100,12 @@ async function renderProjectFooters(): Promise<string> {
 }
 
 export const topCommand = new Command('top')
-  .description('Live resource monitor (cpu/mem/pids/disk) for a box or the whole project')
+  .description('Live resource monitor (cpu/mem/pids/disk) for a box, the project, or every box')
   .argument(
     '[box]',
-    'box ref (default: the only box in this project; use --all for every project box)',
+    "box ref (default: every box on the host; --project narrows to the cwd's project)",
   )
-  .option('-a, --all', "show every box in the cwd's project")
+  .option('-p, --project', "show only boxes in the cwd's project")
   .option('--once', 'print a single snapshot instead of watching')
   .option('-j, --json', 'machine-readable JSON (implies --once)')
   .option('--interval <seconds>', 'refresh interval', '2')
