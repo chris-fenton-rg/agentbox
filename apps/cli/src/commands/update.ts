@@ -17,7 +17,7 @@ interface UpdateOptions {
 }
 
 /** The published npm package name (apps/cli/package.json `name`). */
-const PKG = 'agentbox';
+const PKG = '@madarco/agentbox';
 
 function selfUpdateCommand(method: ExecMethod): { cmd: string; args: string[] } | null {
   if (method === 'npm') return { cmd: 'npm', args: ['install', '-g', `${PKG}@latest`] };
@@ -28,9 +28,9 @@ function selfUpdateCommand(method: ExecMethod): { cmd: string; args: string[] } 
 function describeSelfUpdate(method: ExecMethod): string {
   switch (method) {
     case 'npm':
-      return 'self-update: npm install -g agentbox@latest';
+      return 'self-update: npm install -g @madarco/agentbox@latest';
     case 'pnpm':
-      return 'self-update: pnpm add -g agentbox@latest';
+      return 'self-update: pnpm add -g @madarco/agentbox@latest';
     case 'npx':
       return 'self-update: skipped (running via npx — always the latest version)';
     case 'direct':

@@ -1,5 +1,5 @@
 {
-  "name": "@madarco/agent-box",
+  "name": "@madarco/agentbox",
   "version": "0.1.0",
   "description": "Launch Claude Code, Codex, and other coding agents in isolated sandboxes",
   "license": "MIT",

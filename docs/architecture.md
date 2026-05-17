@@ -1,4 +1,4 @@
-# agent-box — Architecture Handoff
+# agentbox — Architecture Handoff
 
 ## Goal
 
@@ -21,7 +21,7 @@ Tools: `fuse-overlayfs`, `rsync`. Container needs `/dev/fuse` + `SYS_ADMIN`.
 1. Build base image with `node`, `pnpm`, `fuse3`, `fuse-overlayfs`, `rsync`, `openssh-server`.
 2. Run one-time "seed box" that executes `pnpm install` against the project, populating a **shared `pnpm_store` named volume** (content-addressable, reused by all future boxes).
 3. Prompt user: _"Create a frozen base snapshot of the workspace? (Recommended — lets you keep editing the host while agents run against a stable copy.)"_
-   - If yes: APFS clone via `cp -c project/ ~/.agent-box/base/<workspace-hash>/` (instant on APFS, CoW). Future boxes bind this path as `/host-src` instead of the live project. Re-snapshot on demand.
+   - If yes: APFS clone via `cp -c project/ ~/.agentbox/base/<workspace-hash>/` (instant on APFS, CoW). Future boxes bind this path as `/host-src` instead of the live project. Re-snapshot on demand.
    - If no: boxes bind the live project. Cheaper, but host edits during the rsync window leak into the snapshot.
 
 ## Per-box volumes
@@ -55,7 +55,7 @@ Inactive boxes are **`docker pause`d**, not stopped.
 Host-side switcher (sketch):
 
 ```bash
-agent-box switch <id>
+agentbox switch <id>
   → docker pause $(other boxes)
   → docker unpause <id>
   → open "vscode://vscode-remote/attached-container+<id>/workspace"
