@@ -402,9 +402,44 @@ export interface RebuildPluginNativeDepsResult {
 /** Per-plugin sentinel written inside the cache dir after a successful install. */
 const PLUGIN_INSTALLED_MARKER = '.agentbox-installed';
 
+/**
+ * Per-plugin sentinel written (mtime = failure time) when an install fails. A
+ * plugin with a *recent* fail marker is skipped instead of retried on every
+ * launch; once the marker ages past {@link PLUGIN_INSTALL_BACKOFF_MS} it's
+ * retried. Cleared on a later success.
+ */
+const PLUGIN_FAILED_MARKER = '.agentbox-install-failed';
+
+/** How long a failed plugin install is skipped before it's retried. */
+const PLUGIN_INSTALL_BACKOFF_MS = 6 * 60 * 60 * 1000;
+
+/** Backoff window in whole minutes, for the in-box `find -mmin` recency test. */
+const PLUGIN_INSTALL_BACKOFF_MIN = Math.round(PLUGIN_INSTALL_BACKOFF_MS / 60000);
+
+/**
+ * Persistent npm cache, kept inside the claude-config volume so a given
+ * package@version is fetched from the registry once *globally* and reused by
+ * every later box and plugin version. Shared across boxes with the default
+ * shared volume; per-box only under `--isolate-claude-config`. Not named
+ * `node_modules`, so the one-time node_modules cleanup migration leaves it
+ * alone; the host->volume rsync is additive (won't delete it) and `pull claude`
+ * only pulls skills/plugins/agents/commands (won't drag it to the host).
+ */
+const NPM_CACHE_DIR = '/home/vscode/.claude/.agentbox-npm-cache';
+
 async function isFile(p: string): Promise<boolean> {
   try {
     return (await stat(p)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/** True when `p` exists and its mtime is within the install-backoff window. */
+async function isRecentFailMarker(p: string): Promise<boolean> {
+  try {
+    const st = await stat(p);
+    return Date.now() - st.mtimeMs < PLUGIN_INSTALL_BACKOFF_MS;
   } catch {
     return false;
   }
@@ -420,11 +455,11 @@ async function isDir(p: string): Promise<boolean> {
 
 /**
  * Pure host-side scan of a plugin `cache/<m>/<p>/<v>/` tree. Returns true iff
- * at least one version dir has a `package.json` but no install marker — i.e.
- * the in-box rebuild would actually do npm work. A missing/empty cache root
- * means nothing to do (false). Mirrors the in-box script's accept/skip rules
- * (`packages/sandbox-docker/src/claude.ts` rebuild script) so the host
- * pre-check and the container never disagree.
+ * at least one version dir has a `package.json`, no install marker, and no
+ * *recent* failure marker — i.e. the in-box rebuild would actually do npm
+ * work. A missing/empty cache root means nothing to do (false). Mirrors the
+ * in-box script's accept/skip rules (`packages/sandbox-docker/src/claude.ts`
+ * rebuild script) so the host pre-check and the container never disagree.
  */
 export async function scanPluginCacheForRebuild(cacheRoot: string): Promise<boolean> {
   let marketplaces;
@@ -456,6 +491,7 @@ export async function scanPluginCacheForRebuild(cacheRoot: string): Promise<bool
         const vPath = join(pPath, v.name);
         if (!(await isFile(join(vPath, 'package.json')))) continue;
         if (await isFile(join(vPath, PLUGIN_INSTALLED_MARKER))) continue;
+        if (await isRecentFailMarker(join(vPath, PLUGIN_FAILED_MARKER))) continue;
         return true;
       }
     }
@@ -478,14 +514,21 @@ async function resolveClaudeCacheLiveOnHost(volume: string): Promise<string | nu
 
 /**
  * Walk `/home/vscode/.claude/plugins/cache/<m>/<p>/<v>/` inside the box and run
- * `npm install` (or `npm ci` when a lockfile is present) for any plugin
- * whose `package.json` exists but `node_modules` is missing. Idempotent —
- * subsequent calls are no-ops once node_modules exists.
+ * `npm install` (or `npm ci` when a lockfile is present) for any plugin that
+ * ships a `package.json` but hasn't been installed yet. Marker-gated (not
+ * node_modules — plugins with empty dep lists install cleanly without ever
+ * creating a node_modules dir, so a dir check would loop forever).
  *
  * This exists because the host→volume rsync excludes `node_modules` (host
  * darwin-arm64 native binaries like fsevents.node / @esbuild/darwin-arm64
  * are useless on the linux/amd64 box). The first claude session in a fresh
  * box pays the install cost; subsequent attaches don't.
+ *
+ * Three things keep this fast: installs run **in parallel** (bounded), npm
+ * shares a **persistent cache in the claude-config volume** ({@link
+ * NPM_CACHE_DIR}) with `--prefer-offline` so a package@version is fetched once
+ * globally, and a failed plugin records {@link PLUGIN_FAILED_MARKER} so it's
+ * skipped (not retried) until {@link PLUGIN_INSTALL_BACKOFF_MS} elapses.
  *
  * Failures on individual plugins are reported but don't throw — most
  * plugins still load with a partial dependency graph, and we prefer
@@ -510,33 +553,71 @@ export async function rebuildPluginNativeDeps(
       return { rebuilt: [], failed: [], skipped: true };
     }
   }
-  // Marker (not node_modules) gates re-runs: some plugins have empty
-  // dependency lists, so npm install completes successfully without
-  // creating node_modules — checking only the directory would loop.
+  // The host parser below expects the REBUILD_START / REBUILD_OK /
+  // REBUILD_FAIL..REBUILD_FAIL_END protocol; parallel jobs write per-dir
+  // result+stderr files and we replay them in that protocol after `wait`.
   const script = `set -u
 PLUGINS_DIR=/home/vscode/.claude/plugins/cache
-MARKER=.agentbox-installed
-if [ ! -d "$PLUGINS_DIR" ]; then exit 0; fi
+MARKER=${PLUGIN_INSTALLED_MARKER}
+FAILMARKER=${PLUGIN_FAILED_MARKER}
+NPM_CACHE=${NPM_CACHE_DIR}
+BACKOFF_MIN=${PLUGIN_INSTALL_BACKOFF_MIN}
+MAX=4
+[ -d "$PLUGINS_DIR" ] || exit 0
+mkdir -p "$NPM_CACHE"
+WORK=\$(mktemp -d)
+relkey() { printf '%s' "\${1#$PLUGINS_DIR/}" | tr '/' '_'; }
+# Run one plugin's install. $1 is frozen by value at call time, so it's safe
+# to read from the backgrounded subshell; the rest are set-once constants.
+do_one() {
+  d=\$1
+  key=\$(relkey "$d")
+  if (cd "$d" && \\
+      if [ -f package-lock.json ]; then \\
+        npm ci --no-audit --no-fund --silent --prefer-offline --cache "$NPM_CACHE"; \\
+      else \\
+        npm install --no-audit --no-fund --silent --no-package-lock --prefer-offline --cache "$NPM_CACHE"; \\
+      fi) >"$WORK/$key.out" 2>"$WORK/$key.err"; then
+    touch "$d/$MARKER"
+    rm -f "$d/$FAILMARKER"
+    printf 'OK\\n' > "$WORK/$key.res"
+  else
+    : > "$d/$FAILMARKER"
+    printf 'FAIL\\n' > "$WORK/$key.res"
+  fi
+}
+n=0
 for dir in "$PLUGINS_DIR"/*/*/*/; do
   [ -d "$dir" ] || continue
   [ -f "$dir/package.json" ] || continue
   [ -f "$dir/$MARKER" ] && continue
-  rel="\${dir#$PLUGINS_DIR/}"
-  echo "REBUILD_START $rel"
-  if (cd "$dir" && \\
-      if [ -f package-lock.json ]; then \\
-        npm ci --no-audit --no-fund --silent; \\
-      else \\
-        npm install --no-audit --no-fund --silent --no-package-lock; \\
-      fi) 2>/tmp/agentbox-npm.err; then
-    touch "$dir/$MARKER"
+  [ -n "\$(find "$dir" -maxdepth 1 -name "$FAILMARKER" -mmin -\$BACKOFF_MIN 2>/dev/null)" ] && continue
+  echo "REBUILD_START \${dir#$PLUGINS_DIR/}"
+  n=\$((n+1))
+  printf '%s\\n' "$dir" >> "$WORK/dirs"
+done
+if [ "$n" -eq 0 ]; then rm -rf "$WORK"; exit 0; fi
+running=0
+while IFS= read -r dir; do
+  do_one "$dir" &
+  running=\$((running+1))
+  if [ "$running" -ge "$MAX" ]; then wait; running=0; fi
+done < "$WORK/dirs"
+wait
+while IFS= read -r dir; do
+  key=\$(relkey "$dir")
+  rel=\${dir#$PLUGINS_DIR/}
+  [ -f "$WORK/$key.res" ] || continue
+  read -r st < "$WORK/$key.res"
+  if [ "$st" = OK ]; then
     echo "REBUILD_OK $rel"
   else
     echo "REBUILD_FAIL $rel"
-    sed 's/^/  /' /tmp/agentbox-npm.err
+    sed 's/^/  /' "$WORK/$key.err"
     echo "REBUILD_FAIL_END"
   fi
-done
+done < "$WORK/dirs"
+rm -rf "$WORK"
 `;
   const result = await execa(
     'docker',

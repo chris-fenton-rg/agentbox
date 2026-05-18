@@ -4,6 +4,7 @@ import {
   sidebarLines,
   statusLine,
   menuLines,
+  lifecycleMenuLines,
   createMenuLines,
   SIDEBAR_HEADER_LINES,
   NEW_BOX_ID,
@@ -127,6 +128,43 @@ describe('menuLines', () => {
 
   it('clamps content when the pane is short', () => {
     const lines = menuLines('b', 30, 3);
+    expect(lines).toHaveLength(3);
+    for (const l of lines) expect(l).toHaveLength(30);
+  });
+});
+
+describe('lifecycleMenuLines', () => {
+  it('paused: offers Unpause + Destroy, exactly h × w', () => {
+    const lines = lifecycleMenuLines('api-1', 'paused', false, 44, 18);
+    expect(lines).toHaveLength(18);
+    for (const l of lines) expect(l).toHaveLength(44);
+    const joined = lines.join('\n');
+    expect(joined).toContain('Box api-1 is paused.');
+    expect(joined).toContain('[u]  Unpause');
+    expect(joined).toContain('[d]  Destroy');
+    expect(joined).not.toContain('[s]  Start');
+  });
+
+  it('stopped: offers Start instead of Unpause', () => {
+    const joined = lifecycleMenuLines('web', 'stopped', false, 44, 18).join('\n');
+    expect(joined).toContain('Box web is stopped.');
+    expect(joined).toContain('[s]  Start');
+    expect(joined).not.toContain('[u]  Unpause');
+  });
+
+  it('confirmDestroy swaps to the y/cancel confirm body', () => {
+    const lines = lifecycleMenuLines('api-1', 'paused', true, 44, 18);
+    expect(lines).toHaveLength(18);
+    for (const l of lines) expect(l).toHaveLength(44);
+    const joined = lines.join('\n');
+    expect(joined).toContain('Destroy api-1?');
+    expect(joined).toContain('[y]  Yes, destroy');
+    expect(joined).toContain('Cancel');
+    expect(joined).not.toContain('[u]  Unpause');
+  });
+
+  it('clamps content when the pane is short', () => {
+    const lines = lifecycleMenuLines('b', 'stopped', false, 30, 3);
     expect(lines).toHaveLength(3);
     for (const l of lines) expect(l).toHaveLength(30);
   });

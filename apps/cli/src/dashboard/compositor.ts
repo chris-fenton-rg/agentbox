@@ -12,6 +12,7 @@ import {
   sidebarLines,
   statusLine,
   menuLines,
+  lifecycleMenuLines,
   createMenuLines,
   SIDEBAR_HEADER_LINES,
   NEW_BOX_ID,
@@ -31,6 +32,7 @@ const SGR_RESET = '\x1b[0m';
 export type RightTarget =
   | { kind: 'attach'; argv: string[]; mode?: 'claude' | 'shell' }
   | { kind: 'menu' }
+  | { kind: 'lifecycle-menu'; state: 'paused' | 'stopped' }
   | { kind: 'create-menu'; where: string }
   | { kind: 'placeholder'; lines: string[] };
 
@@ -51,6 +53,10 @@ export interface CompositorDeps {
     withClaude: boolean,
     onProgress: (line: string) => void,
   ) => Promise<{ boxId: string; attach?: RightTarget }>;
+  /** Resume a non-running box (unpause if paused, start if stopped). */
+  resumeBox: (boxId: string) => Promise<void>;
+  /** Destroy a box (container + volumes + record). Irreversible. */
+  destroyBox: (boxId: string) => Promise<void>;
   /** Host-side actions for the selected box; return a short status message. */
   openVnc: (boxId: string) => Promise<string>;
   openCode: (boxId: string) => Promise<string>;
@@ -79,6 +85,11 @@ export class Compositor {
   private session: PtySession | null = null;
   private placeholder: string[] | null = null;
   private menu: { boxName: string } | null = null;
+  private lifecycleMenu: {
+    boxName: string;
+    state: 'paused' | 'stopped';
+    confirmDestroy: boolean;
+  } | null = null;
   private createMenu: { where: string } | null = null;
   private activeMode: 'claude' | 'shell' = 'claude';
   private flashMsg: string | null = null;
@@ -118,6 +129,7 @@ export class Compositor {
         else if (e.type === 'switch') this.switchBox(e.dir);
         else if (e.type === 'action') void this.doAction(e.name);
         else if (this.createMenu) this.handleCreateMenuKey(e.bytes);
+        else if (this.lifecycleMenu) this.handleLifecycleMenuKey(e.bytes);
         else if (this.menu) this.handleMenuKey(e.bytes);
         else this.session?.write(e.bytes);
       },
@@ -189,7 +201,8 @@ export class Compositor {
       const reresolve =
         (this.session && !running) ||
         (this.placeholder && running) ||
-        (this.menu && !running);
+        (this.menu && !running) ||
+        (this.lifecycleMenu != null && box?.state !== this.lifecycleMenu.state);
       if (reresolve) await this.spawnActive();
     }
     if (JSON.stringify(this.boxes.map((b) => [b.id, b.state, b.claudeActivity])) !== before) {
@@ -207,6 +220,7 @@ export class Compositor {
     this.disposeSession();
     this.placeholder = null;
     this.menu = null;
+    this.lifecycleMenu = null;
     this.createMenu = null;
     // Wipe the old agent now (synchronous, before the async resolve gap) so it
     // can't bleed through while the new attach redraws. Also resets prevRows.
@@ -222,6 +236,7 @@ export class Compositor {
     this.disposeSession();
     this.placeholder = null;
     this.menu = null;
+    this.lifecycleMenu = null;
     this.createMenu = null;
     if (target.kind === 'attach') {
       this.activeMode = target.mode ?? 'claude';
@@ -236,6 +251,12 @@ export class Compositor {
       );
     } else if (target.kind === 'menu') {
       this.menu = { boxName: this.selectedBox()?.name ?? this.selectedId };
+    } else if (target.kind === 'lifecycle-menu') {
+      this.lifecycleMenu = {
+        boxName: this.selectedBox()?.name ?? this.selectedId,
+        state: target.state,
+        confirmDestroy: false,
+      };
     } else if (target.kind === 'create-menu') {
       this.createMenu = { where: target.where };
     } else {
@@ -288,6 +309,82 @@ export class Compositor {
         which === 'claude'
           ? `  Try from a shell: agentbox claude start ${name}`
           : `  Try from a shell: agentbox shell ${name}`,
+      ];
+      this.prevRows = null;
+      this.scheduleRender();
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  private handleLifecycleMenuKey(bytes: Buffer): void {
+    const m = this.lifecycleMenu;
+    if (!m) return;
+    for (const b of bytes) {
+      if (m.confirmDestroy) {
+        if (b === 0x79 || b === 0x0d || b === 0x0a) {
+          void this.choosePaused('destroy');
+        } else {
+          // Any other key cancels the confirm and returns to the menu.
+          m.confirmDestroy = false;
+          this.drawChrome();
+          this.scheduleRender();
+        }
+        return;
+      }
+      const resumeKey = m.state === 'paused' ? 0x75 /* u */ : 0x73 /* s */;
+      if (b === resumeKey) {
+        void this.choosePaused('resume');
+        return;
+      }
+      if (b === 0x64 /* d */) {
+        m.confirmDestroy = true;
+        this.drawChrome();
+        this.scheduleRender();
+        return;
+      }
+    }
+  }
+
+  private async choosePaused(which: 'resume' | 'destroy'): Promise<void> {
+    if (this.busy) return;
+    const id = this.selectedId;
+    const name = this.selectedBox()?.name ?? id;
+    const resumeVerb = this.lifecycleMenu?.state === 'stopped' ? 'start' : 'unpause';
+    this.busy = true;
+    this.menu = null;
+    this.lifecycleMenu = null;
+    this.createMenu = null;
+    this.placeholder = ['', which === 'resume' ? '  Resuming…' : '  Destroying…'];
+    this.prevRows = null;
+    this.drawChrome();
+    this.scheduleRender();
+    try {
+      if (which === 'resume') {
+        await this.deps.resumeBox(id);
+        if (this.selectedId !== id || this.tornDown) return; // switched away
+        await this.refreshBoxes();
+        await this.spawnActive();
+      } else {
+        await this.deps.destroyBox(id);
+        if (this.tornDown) return;
+        await this.refreshBoxes();
+        // The box is gone from the list; fall back to the first entry (the
+        // synthetic "+ New box", always boxes[0] via listCandidates).
+        if (this.boxes[0]) this.selectedId = this.boxes[0].id;
+        await this.spawnActive();
+        this.flash(`destroyed ${name}`);
+      }
+    } catch (err) {
+      if (this.selectedId !== id || this.tornDown) return;
+      const msg = err instanceof Error ? err.message : String(err);
+      const verb = which === 'resume' ? resumeVerb : 'destroy';
+      this.placeholder = [
+        '',
+        `  Failed to ${verb} ${name}:`,
+        `  ${msg}`,
+        '',
+        `  Try from a shell: agentbox ${verb} ${name}`,
       ];
       this.prevRows = null;
       this.scheduleRender();
@@ -432,6 +529,17 @@ export class Compositor {
       if (out) this.out.write(SYNC_BEGIN + out + SYNC_END);
     } else if (this.menu) {
       const lines = menuLines(this.menu.boxName, r.w, r.h);
+      let s = SYNC_BEGIN + '\x1b[?25l';
+      for (let i = 0; i < r.h; i++) s += cursorTo(r.x, r.y + i) + '\x1b[0m' + (lines[i] ?? '');
+      this.out.write(s + SYNC_END);
+    } else if (this.lifecycleMenu) {
+      const lines = lifecycleMenuLines(
+        this.lifecycleMenu.boxName,
+        this.lifecycleMenu.state,
+        this.lifecycleMenu.confirmDestroy,
+        r.w,
+        r.h,
+      );
       let s = SYNC_BEGIN + '\x1b[?25l';
       for (let i = 0; i < r.h; i++) s += cursorTo(r.x, r.y + i) + '\x1b[0m' + (lines[i] ?? '');
       this.out.write(s + SYNC_END);

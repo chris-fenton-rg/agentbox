@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -202,5 +202,17 @@ describe('scanPluginCacheForRebuild', () => {
   it('ignores skill-only plugins that ship no package.json', async () => {
     await seed('mkt', 'skill-only', 'unknown', ['SKILL.md']);
     expect(await scanPluginCacheForRebuild(root)).toBe(false);
+  });
+
+  it('skips a plugin with a recent install-failure marker (backoff)', async () => {
+    await seed('mkt', 'flaky', '1.0.0', ['package.json', '.agentbox-install-failed']);
+    expect(await scanPluginCacheForRebuild(root)).toBe(false);
+  });
+
+  it('retries a plugin whose failure marker has aged past the backoff window', async () => {
+    await seed('mkt', 'flaky', '1.0.0', ['package.json', '.agentbox-install-failed']);
+    const stale = new Date(Date.now() - 7 * 60 * 60 * 1000); // > 6h backoff
+    await utimes(versionDir('mkt', 'flaky', '1.0.0') + '/.agentbox-install-failed', stale, stale);
+    expect(await scanPluginCacheForRebuild(root)).toBe(true);
   });
 });

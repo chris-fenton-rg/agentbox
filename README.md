@@ -10,7 +10,7 @@ Run multiple agents in parallel, with a single command, on your PC, self-hosted
 
 <p align="center">
 
-![AgentBox](./docs/cover.png)
+![AgentBox](./docs/cover.jpg)
 </p>
 
 ## How it works
@@ -40,6 +40,10 @@ agentbox claude
 # See status and quickly switch between agents:
 agentbox dashboard
 ```
+
+## Demo
+
+![AgentBox demo](docs/demo.gif)
 
 ## Install
 

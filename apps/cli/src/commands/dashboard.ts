@@ -7,10 +7,13 @@ import {
   buildShellArgv,
   claudeSessionInfo,
   createBox,
+  destroyBox,
   ensureBoxBrowser,
   listBoxes,
   rebuildPluginNativeDeps,
+  startBox,
   startClaudeSession,
+  unpauseBox,
   type ListedBox,
 } from '@agentbox/sandbox-docker';
 import { resolveBoxOrExit } from '../box-ref.js';
@@ -117,6 +120,9 @@ export const dashboardCommand = new Command('dashboard')
         if (boxId === NEW_BOX_ID) return { kind: 'create-menu', where: project.root };
         const box = (await listBoxes()).find((b) => b.id === boxId);
         if (!box) return { kind: 'placeholder', lines: ['', '  box not found'] };
+        if (box.state === 'paused' || box.state === 'stopped') {
+          return { kind: 'lifecycle-menu', state: box.state };
+        }
         if (box.state !== 'running') {
           return {
             kind: 'placeholder',
@@ -267,6 +273,17 @@ export const dashboardCommand = new Command('dashboard')
         return 'Launching VS Code / Cursor…';
       };
 
+      const resumeBox = async (boxId: string): Promise<void> => {
+        const box = (await listBoxes()).find((b) => b.id === boxId);
+        if (!box) throw new Error('box not found');
+        if (box.state === 'paused') await unpauseBox(box.id);
+        else await startBox(box.id);
+      };
+
+      const destroyBoxAction = async (boxId: string): Promise<void> => {
+        await destroyBox(boxId);
+      };
+
       const compositor = new Compositor(
         {
           ptySpawn,
@@ -276,6 +293,8 @@ export const dashboardCommand = new Command('dashboard')
           startClaude,
           openShell,
           createNewBox,
+          resumeBox,
+          destroyBox: destroyBoxAction,
           openVnc,
           openCode,
           openWeb,

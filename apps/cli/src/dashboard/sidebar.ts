@@ -93,6 +93,42 @@ export function menuLines(boxName: string, w: number, h: number): string[] {
 }
 
 /**
+ * Centered action menu for a non-running box (paused/stopped): resume +
+ * destroy, with a two-step destroy confirm (the TUI can't show a prompt).
+ * Exactly `h` lines, each exactly `w` columns. Pure.
+ */
+export function lifecycleMenuLines(
+  boxName: string,
+  state: 'paused' | 'stopped',
+  confirmDestroy: boolean,
+  w: number,
+  h: number,
+): string[] {
+  const body = confirmDestroy
+    ? [
+        '',
+        `  Destroy ${boxName}?`,
+        '  This removes the container and its volumes.',
+        '',
+        '   [y]  Yes, destroy',
+        '   [any other key]  Cancel',
+      ]
+    : [
+        '',
+        `  Box ${boxName} is ${state}.`,
+        '',
+        state === 'paused' ? '   [u]  Unpause' : '   [s]  Start',
+        '   [d]  Destroy',
+        '',
+        '  Ctrl+Option+↑/↓ switch · Ctrl-a then q quit',
+      ];
+  const top = Math.max(0, Math.floor((h - body.length) / 2));
+  const out: string[] = [];
+  for (let i = 0; i < h; i++) out.push(fit(body[i - top] ?? '', w));
+  return out;
+}
+
+/**
  * Centered menu for the synthetic "+ New box" entry. Exactly `h` lines, each
  * exactly `w` columns. Pure.
  */
