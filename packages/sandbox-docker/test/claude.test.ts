@@ -117,12 +117,23 @@ describe('buildClaudeStatusBarArgs', () => {
     expect(args[rightIdx + 1]).toContain(': detach');
     expect(args[rightIdx + 1]).toContain('#[fg=colour255]');
 
-    // prefix remapped to Ctrl+a with `q` bound to detach (matches dashboard quit chord)
+    // primary prefix Ctrl+a (dashboard parity); tmux's default Ctrl+b kept as
+    // a secondary prefix so existing muscle memory + integrations keep working
     expect(args).toContain('prefix');
     expect(args[args.indexOf('prefix') + 1]).toBe('C-a');
+    expect(args).toContain('prefix2');
+    expect(args[args.indexOf('prefix2') + 1]).toBe('C-b');
+    // never explicitly unbinds C-b — the secondary prefix needs it live
+    expect(args).not.toContain('unbind-key');
     const bindIdxs = args.flatMap((a, i) => (a === 'bind-key' ? [i] : []));
     expect(bindIdxs.some((i) => args[i + 1] === 'q' && args[i + 2] === 'detach-client')).toBe(true);
+    // C-a C-a -> literal Ctrl+a; C-b C-b -> literal Ctrl+b (send-prefix -2)
     expect(bindIdxs.some((i) => args[i + 1] === 'C-a' && args[i + 2] === 'send-prefix')).toBe(true);
+    expect(
+      bindIdxs.some(
+        (i) => args[i + 1] === 'C-b' && args[i + 2] === 'send-prefix' && args[i + 3] === '-2',
+      ),
+    ).toBe(true);
 
     // the noisy window list is emptied
     expect(args).toContain('window-status-format');

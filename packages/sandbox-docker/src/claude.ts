@@ -874,15 +874,16 @@ export function buildClaudeDashboardAttachArgv(
  * ` Control+a q: detach ` on the right (white chord, gray label — exact parity
  * with the dashboard's `statusLine()`), dark bar, no window-list clutter.
  *
- * The prefix is remapped from tmux's default `Ctrl-b` to `Ctrl+a` and `q` is
- * bound to `detach-client`, so `Ctrl+a q` detaches — matching the dashboard's
- * `Ctrl+a q` quit chord so the two surfaces feel like one product. `Ctrl+a`
- * `Ctrl+a` sends a literal `Ctrl+a` through to Claude (`send-prefix`), the
- * same screen-style escape hatch the dashboard's input parser uses for its
- * double-leader. `prefix`/`bind-key` are tmux server-global (no `-t`); that's
- * fine because each box's tmux server hosts only the claude session. Applied
- * here (not in the image) so existing boxes pick it up on the next fresh
- * session with no rebuild.
+ * `Ctrl+a` is the **primary** prefix (matches the dashboard's quit chord), and
+ * tmux's default `Ctrl+b` is kept as a **secondary** prefix (`prefix2 C-b`) so
+ * existing tmux muscle memory + integrations that send `Ctrl+b <key>` keep
+ * working. Either prefix triggers the same key table — so `Ctrl+a q` *and*
+ * `Ctrl+b q` both detach. `Ctrl+a Ctrl+a` sends a literal `Ctrl+a` through to
+ * Claude (`send-prefix`); `Ctrl+b Ctrl+b` does the same for `Ctrl+b` via
+ * `send-prefix -2`. `prefix`/`bind-key` are tmux server-global (no `-t`);
+ * that's fine because each box's tmux server hosts only the claude session.
+ * Applied here (not in the image) so existing boxes pick it up on the next
+ * fresh session with no rebuild.
  *
  * Appended after `tmux new-session …` in {@link startClaudeSession}; the bare
  * `;` elements are tmux's command separator (execa array args, no host shell,
@@ -900,13 +901,16 @@ export function buildClaudeStatusBarArgs(sessionName: string, boxName: string): 
   const s = sessionName;
   const name = boxName;
   return [
-    // Server-global (no -t): remap prefix Ctrl-b -> Ctrl+a, bind `q` to detach
-    // so Ctrl+a q matches the dashboard's quit chord. `send-prefix` makes a
-    // double Ctrl+a reach Claude as a literal Ctrl+a.
+    // Server-global (no -t): primary prefix Ctrl+a (dashboard parity), keep
+    // tmux's default Ctrl+b as a secondary prefix so users with existing
+    // muscle memory / integrations aren't broken. `q` is the same key under
+    // both prefixes (single key table) -> Ctrl+a q AND Ctrl+b q both detach.
+    // `send-prefix` / `send-prefix -2` let a double-tap of either prefix
+    // reach Claude as that literal key.
     ';', 'set', '-g', 'prefix', 'C-a',
-    ';', 'set', '-g', 'prefix2', 'None',
-    ';', 'unbind-key', 'C-b',
+    ';', 'set', '-g', 'prefix2', 'C-b',
     ';', 'bind-key', 'C-a', 'send-prefix',
+    ';', 'bind-key', 'C-b', 'send-prefix', '-2',
     ';', 'bind-key', 'q', 'detach-client',
     ';', 'set', '-t', s, 'status-interval', '60',
     ';', 'set', '-t', s, 'status-justify', 'left',
