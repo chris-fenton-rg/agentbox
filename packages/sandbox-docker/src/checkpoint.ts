@@ -114,6 +114,45 @@ export async function resolveCheckpoint(
   return { name: ref, dir, manifest };
 }
 
+/**
+ * Walk every per-project checkpoint manifest under CHECKPOINTS_ROOT and
+ * return the union of their `image` tags. Used by `pruneBoxes({ all: true })`
+ * to keep an image alive as long as any manifest on disk points at it —
+ * destroy leaves the checkpoint behind by design, and the user expects to
+ * still be able to start a new box from it long after the source box is gone.
+ *
+ * Best-effort, matching listSnapshotDirs / listBoxDirs in lifecycle.ts:
+ * missing root, unreadable / non-schema-2 manifests, and non-directory
+ * entries at any level are all skipped silently.
+ */
+export async function listAllCheckpointImages(): Promise<string[]> {
+  let projectDirs: string[];
+  try {
+    projectDirs = (await readdir(CHECKPOINTS_ROOT, { withFileTypes: true }))
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name);
+  } catch {
+    return [];
+  }
+  const out = new Set<string>();
+  for (const proj of projectDirs) {
+    const projPath = join(CHECKPOINTS_ROOT, proj);
+    let names: string[];
+    try {
+      names = (await readdir(projPath, { withFileTypes: true }))
+        .filter((e) => e.isDirectory())
+        .map((e) => e.name);
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      const manifest = await readManifest(join(projPath, name));
+      if (manifest) out.add(manifest.image);
+    }
+  }
+  return Array.from(out);
+}
+
 export async function removeCheckpoint(projectRoot: string, ref: string): Promise<boolean> {
   const dir = checkpointDir(projectRoot, ref);
   const manifest = await readManifest(dir);

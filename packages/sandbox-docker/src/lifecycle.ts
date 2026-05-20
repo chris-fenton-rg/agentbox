@@ -37,7 +37,7 @@ import {
   stopContainer,
   unpauseContainer,
 } from './docker.js';
-import { CHECKPOINT_IMAGE_PREFIX } from './checkpoint.js';
+import { CHECKPOINT_IMAGE_PREFIX, listAllCheckpointImages } from './checkpoint.js';
 import { launchCtlDaemon } from './ctl.js';
 import { launchDockerdDaemon, SHARED_DOCKER_CACHE_VOLUME } from './dockerd.js';
 import { launchVncDaemon, VNC_CONTAINER_PORT } from './vnc.js';
@@ -461,10 +461,14 @@ async function listBoxDirs(): Promise<string[]> {
 
 /**
  * Local Docker image *tags* that look like checkpoint images
- * (`agentbox-ckpt-<projectHash>:<name>`). Used by `prune --all` to reap
- * checkpoint images whose host-side manifest dir has been deleted (or that
- * were never tracked in any project's checkpoints dir). Best-effort: returns
- * empty on docker errors.
+ * (`agentbox-ckpt-<projectHash>:<name>`). Used by `prune --all` to find
+ * candidates for reaping. An image is reapable only when **both** of these
+ * are true: no surviving box's `checkpointImage` points at it, **and** no
+ * on-disk manifest under `~/.agentbox/checkpoints/<projectHash>/<name>/`
+ * names it as its `image` (see `listAllCheckpointImages`) — otherwise a
+ * `destroy` + `prune --all` would silently break checkpoints the user still
+ * intends to start new boxes from. Best-effort: returns empty on docker
+ * errors.
  */
 async function listCheckpointImageTags(): Promise<string[]> {
   const r = await execa(
@@ -505,6 +509,11 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
     const liveSnapshotDirs = await listSnapshotDirs();
     const liveBoxDirs = await listBoxDirs();
     const liveCheckpointImages = await listCheckpointImageTags();
+    // Manifests on disk are the durable source of truth for "this checkpoint
+    // exists" — `destroyBox` leaves them alone on purpose, so an image whose
+    // source box was destroyed is still pinned as long as its manifest is
+    // there.
+    const manifestPinnedImages = await listAllCheckpointImages();
     // The state we'd have AFTER step 1 runs: missing-state records gone.
     const survivingBoxes = boxes.filter((b) => !missingRecords.some((m) => m.id === b.id));
     const expectedContainers = new Set<string>([
@@ -543,13 +552,19 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
         .map((b) => b.snapshotDir),
     );
     const expectedBoxDirs = new Set(survivingBoxes.map((b) => boxRunDirFor(b.id)));
-    // Checkpoint images: keep any tag that a surviving box's `checkpointImage`
-    // points at. Everything else under the prefix is fair game.
-    const expectedCheckpointImages = new Set(
-      survivingBoxes
+    // Checkpoint images: keep any tag that either a surviving box's
+    // `checkpointImage` points at, or that any on-disk manifest still claims
+    // as its `image`. The manifest case is the one that matters most after
+    // destroy: the source box is gone but the user still wants to seed new
+    // boxes from the checkpoint. The surviving-box case stays as a fallback
+    // for the edge where someone `rm -rf`'d a manifest dir while a box
+    // restored from it is still running.
+    const expectedCheckpointImages = new Set<string>([
+      ...survivingBoxes
         .map((b) => b.checkpointImage)
         .filter((v): v is string => typeof v === 'string'),
-    );
+      ...manifestPinnedImages,
+    ]);
     orphanContainers = liveContainers.filter((c) => !expectedContainers.has(c));
     orphanVolumes = liveVolumes.filter((v) => !expectedVolumes.has(v));
     orphanSnapshots = liveSnapshotDirs.filter((d) => !expectedSnapshots.has(d));

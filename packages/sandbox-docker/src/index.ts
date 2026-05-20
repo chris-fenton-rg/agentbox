@@ -84,6 +84,7 @@ export {
   checkpointImageTag,
   computeNextCheckpointName,
   createCheckpoint,
+  listAllCheckpointImages,
   listCheckpoints,
   projectCheckpointsDir,
   removeCheckpoint,
