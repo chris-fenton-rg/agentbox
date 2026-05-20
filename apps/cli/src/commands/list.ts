@@ -159,7 +159,11 @@ async function buildListText(all: boolean): Promise<string> {
     }
     return 'no boxes — run `agentbox create` to make one';
   }
-  return renderTable(boxes, process.stdout);
+  const table = renderTable(boxes, process.stdout);
+  if (!scoped) return table;
+  // basename of projectRoot — matches dashboard sidebar's projectLabel().
+  const name = projectRoot.split('/').filter(Boolean).pop() ?? projectRoot;
+  return `Project: ${name}\n${table}`;
 }
 
 export const listCommand = withWatchOptions(
