@@ -391,10 +391,12 @@ async function startOrAttachClaude(
     await startBox(box.id);
   }
 
-  // Default: re-sync the host's ~/.claude into the box volume so any
-  // updates the user made on the host (new MCP servers, refreshed
-  // OAuth state in _claude.json, …) reach the in-box claude. Slow on
-  // first sync; opt out with --no-sync-config to skip.
+  // Re-sync the host's ~/.claude into the box volume so any updates the user
+  // made on the host (new MCP servers, refreshed OAuth state in _claude.json,
+  // …) reach the in-box claude. This runs for `claude start` (default; opt out
+  // with --no-sync-config) — NOT for `claude attach`, which always passes
+  // syncConfig: false: a plain reattach must never clobber the in-box claude's
+  // accumulated _claude.json (prompt history) with the host copy.
   const syncConfig = opts.syncConfig !== false;
   if (syncConfig) {
     s.message('syncing ~/.claude into box volume');
@@ -452,17 +454,13 @@ async function startOrAttachClaude(
 
 const claudeAttachCommand = new Command('attach')
   .description(
-    'Attach to a Claude Code tmux session in a box, starting one if none is running (auto-unpause/start)',
+    'Attach to a Claude Code tmux session in a box, starting one if none is running (auto-unpause/start; never re-syncs ~/.claude — use `claude start` for that)',
   )
   .argument(
     '[box]',
     'box ref: project index, id, id prefix, name, or container (default: the only box in this project)',
   )
   .option('--session-name <name>', 'tmux session name (default from config; built-in: claude)')
-  .option(
-    '--no-sync-config',
-    "when starting a fresh session, skip rsyncing the host's ~/.claude into the box's volume (faster)",
-  )
   .action(async function (this: Command, idOrName: string | undefined) {
     // optsWithGlobals merges parent + own options — the parent `claude`
     // command also defines `--session-name`.
@@ -470,7 +468,10 @@ const claudeAttachCommand = new Command('attach')
     intro('Attaching to Claude session...');
     try {
       const box = await resolveBoxOrExit(idOrName);
-      await startOrAttachClaude(box, [], opts);
+      // A plain reattach must never touch host config. Force syncConfig off so
+      // the no-session path starts a fresh session without the host->volume
+      // rsync (which would overwrite the in-box _claude.json / prompt history).
+      await startOrAttachClaude(box, [], { ...opts, syncConfig: false });
     } catch (err) {
       if (err instanceof ClaudeSessionError) {
         log.error(err.message);
