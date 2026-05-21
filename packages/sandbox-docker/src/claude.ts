@@ -324,10 +324,11 @@ export async function ensureClaudeVolume(
  * install path: the skill is intentionally never written to the host's
  * ~/.claude (so `agentbox claude` doesn't pollute the user's machine).
  *
- * Idempotent and independent of `ensureClaudeVolume`'s host rsync — it runs
- * even when the host has no ~/.claude or `syncFromHost` was false. `[ ! -e ]`
- * means a pre-existing skill always wins: a user-customized copy, or a legacy
- * host-installed one carried in by the rsync, is never clobbered.
+ * Independent of `ensureClaudeVolume`'s host rsync — it runs even when the
+ * host has no ~/.claude or `syncFromHost` was false. The skill is
+ * agentbox-owned and image-versioned (not user-customizable, excluded from
+ * the host<->box sync), so we re-copy it unconditionally: a stale copy in a
+ * long-lived shared volume must not pin an old skill after an image upgrade.
  *
  * Best-effort: a failure here must not fail box creation.
  */
@@ -346,10 +347,11 @@ export async function seedSetupSkillIntoVolume(
       image,
       'sh',
       '-c',
-      // Prints SEEDED only when it actually copies, so the caller can log
-      // accurately. The whole thing is `|| true` so an already-present skill
-      // (or missing image asset) is a clean no-op, never a non-zero exit.
-      `{ [ ! -e /dst/skills/agentbox-setup ] && [ -f ${IN_BOX_SETUP_GUIDE_PATH} ] && ` +
+      // Always overwrite from the image so an image upgrade propagates. Prints
+      // SEEDED on success; the whole thing is `|| true` so a missing image
+      // asset is a clean no-op, never a non-zero exit.
+      `{ [ -f ${IN_BOX_SETUP_GUIDE_PATH} ] && ` +
+        `rm -rf /dst/skills/agentbox-setup && ` +
         `mkdir -p /dst/skills/agentbox-setup && ` +
         `cp -a ${IN_BOX_SETUP_GUIDE_PATH} ${SETUP_SKILL_DST} && ` +
         `chown -R 1000:1000 /dst/skills/agentbox-setup && echo SEEDED; } || true`,

@@ -412,7 +412,7 @@ async function startOrAttachClaude(
   }
 
   // Box-only: ensure /agentbox-setup is in the volume (image-seeded, never
-  // on the host). Idempotent — skipped when a copy already exists.
+  // on the host). Re-copied every run so an image upgrade propagates.
   const claudeVolume = box.claudeConfigVolume ?? SHARED_CLAUDE_VOLUME;
   await seedSetupSkillIntoVolume(claudeVolume, box.image);
 

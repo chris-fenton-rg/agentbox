@@ -419,9 +419,10 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     log(`reusing volume ${claudeSpec.volume} (no host ~/.claude to sync)`);
   }
   // Box-only: seed /agentbox-setup into the volume from the image. Never
-  // touches the host's ~/.claude. Skipped if a copy already exists.
+  // touches the host's ~/.claude. Re-copied every run so an image upgrade
+  // propagates to a long-lived shared volume.
   const seeded = await seedSetupSkillIntoVolume(claudeSpec.volume, ensureRef);
-  if (seeded.seeded) log(`seeded /agentbox-setup skill into ${claudeSpec.volume}`);
+  if (seeded.seeded) log(`refreshed /agentbox-setup skill into ${claudeSpec.volume}`);
   // Mirror the in-box OAuth credentials with the host backup: extract a
   // box-written `.credentials.json` out to ~/.agentbox, or seed a fresh
   // volume from a previous box's login. Best-effort.

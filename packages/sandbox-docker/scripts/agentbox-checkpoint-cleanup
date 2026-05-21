@@ -22,8 +22,14 @@ set +e
 apt-get clean 2>/dev/null
 rm -rf /var/lib/apt/lists/* 2>/dev/null
 
-# Throwaway scratch dirs.
-rm -rf /tmp/* /tmp/.[!.]* /var/tmp/* /var/tmp/.[!.]* 2>/dev/null
+# Throwaway scratch dirs. Preserve /tmp/claude-* — that is the live in-box
+# Claude Code session's working tree (its per-task stdout/stderr files). The
+# agent that triggered this checkpoint *is* that session; deleting its task
+# output mid-run makes its harness see ENOENT, treat the command as failed,
+# and retry the checkpoint (observed: 5 duplicate auto-named checkpoints).
+# Stale claude-* dirs baked into the image are tiny and Claude Code prunes
+# them itself on the next session start.
+find /tmp /var/tmp -mindepth 1 -maxdepth 1 ! -name 'claude-*' -exec rm -rf {} + 2>/dev/null
 
 # Logs: truncate (don't delete) so the original file modes / ownerships stay
 # intact for the next run. Targets common rotated archives too.

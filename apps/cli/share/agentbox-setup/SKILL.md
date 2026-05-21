@@ -160,7 +160,8 @@ services:
 
 ## 8. Checkpoint the warm state (do this at the very end)
 
-Checkpoint (snapshot) this box writable layer: once the box is warmed up (deps installed, services ready), checkpoint it with `agentbox-ctl checkpoint --set-default` so future boxes start ready. 
+Checkpoint (snapshot) this box writable layer: once the box is warmed up (deps installed, services ready), checkpoint it with `agentbox-ctl checkpoint --name setup --replace --set-default` so future boxes start ready.
+Run this command exactly once. The `--name setup --replace` makes it idempotent — if it ever needs to run again it overwrites the existing `setup` checkpoint instead of stacking duplicates.
 This doesn't need to be confirmed by the user.
 It will pause the container for several seconds so warn the user about it and write Done when it's done.
 
