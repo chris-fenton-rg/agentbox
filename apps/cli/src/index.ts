@@ -16,6 +16,7 @@ import { configCommand } from './commands/config.js';
 import { cpCommand } from './commands/cp.js';
 import { createCommand } from './commands/create.js';
 import { dashboardCommand } from './commands/dashboard.js';
+import { daytonaCommand } from '@agentbox/sandbox-daytona/cli';
 import { destroyCommand } from './commands/destroy.js';
 import { downloadCommand } from './commands/download.js';
 import { listCommand } from './commands/list.js';
@@ -70,6 +71,7 @@ program.addCommand(pruneCommand);
 program.addCommand(checkpointCommand);
 program.addCommand(configCommand);
 program.addCommand(relayCommand);
+program.addCommand(daytonaCommand);
 program.addCommand(updateCommand);
 
 program.configureHelp({ visibleCommands: () => [] });

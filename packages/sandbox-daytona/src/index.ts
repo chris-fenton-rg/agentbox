@@ -14,3 +14,10 @@ export const daytonaProvider: Provider = createCloudProvider(daytonaBackend, {
 
 export { daytonaBackend, DEFAULT_BOX_IMAGE_REF };
 export { resolveDockerfileContext, type DockerfileContext } from './dockerfile-context.js';
+export { ensureDaytonaEnvLoaded } from './env-loader.js';
+// Called by the CLI provider registry to gate first-run interactive setup.
+// Plain async function — no commander surface — so adding it here doesn't
+// pull commander/clack into consumers' type graphs. The full CLI command
+// lives at the `./cli` subpath export.
+export { ensureDaytonaCredentials } from './credentials.js';
+export type { EnsureDaytonaCredentialsOptions } from './credentials.js';

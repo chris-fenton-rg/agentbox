@@ -115,7 +115,7 @@ function agentSummary(b: ListedBox): string {
 }
 
 function renderTable(boxes: ListedBox[], stream: NodeJS.WriteStream): string {
-  const header = ['N', 'NAME', 'STATE', 'AGENT', 'SHELLS', 'URL', 'WORKSPACE'];
+  const header = ['N', 'NAME', 'STATE', 'AGENT', 'SHELLS', 'PROVIDER', 'URL', 'WORKSPACE'];
   const wsCol = header.length - 1;
   const lead: Cell[][] = boxes.map((b) => [
     plain(typeof b.projectIndex === 'number' ? String(b.projectIndex) : ''),
@@ -126,6 +126,7 @@ function renderTable(boxes: ListedBox[], stream: NodeJS.WriteStream): string {
     // Live shell-session count; `-` for none (or a non-running box). Detail
     // lives in `agentbox shell ls <box>`.
     plain(b.shellSessions.length > 0 ? String(b.shellSessions.length) : '-'),
+    plain(b.provider ?? 'docker'),
     urlCell(b, stream),
   ]);
   const leadHeader = header.slice(0, wsCol).map(plain);

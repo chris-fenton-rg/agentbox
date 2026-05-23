@@ -23,7 +23,13 @@ export async function getProvider(name: ProviderName): Promise<Provider> {
       return mod.dockerProvider;
     }
     case 'daytona': {
+      // Single lazy import covers both the first-run prompt gate and the
+      // provider itself — keeps the Daytona SDK off the Docker hot path.
+      // The prompt is a no-op when env is already configured or stdin isn't
+      // a TTY (scripted callers get the SDK's "not configured" error instead
+      // of a hung prompt).
       const mod = await import('@agentbox/sandbox-daytona');
+      await mod.ensureDaytonaCredentials();
       return mod.daytonaProvider;
     }
     default:

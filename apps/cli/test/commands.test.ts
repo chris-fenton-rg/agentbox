@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { checkpointCommand } from '../src/commands/checkpoint.js';
 import { claudeCommand } from '../src/commands/claude.js';
 import { createCommand } from '../src/commands/create.js';
+import { daytonaCommand } from '@agentbox/sandbox-daytona/cli';
 import { destroyCommand } from '../src/commands/destroy.js';
 import { statusCommand } from '../src/commands/status.js';
 import { runInspect } from '../src/commands/inspect.js';
@@ -89,6 +90,14 @@ describe('lifecycle CLI surface', () => {
     expect(subs).toEqual(expect.arrayContaining(['status', 'stop', 'start', 'restart']));
     const status = relayCommand.commands.find((c) => c.name() === 'status');
     expect(status!.options.map((o) => o.long)).toContain('--json');
+  });
+
+  it('daytona has a login (default) subcommand with --status', () => {
+    expect(daytonaCommand.name()).toBe('daytona');
+    const subs = daytonaCommand.commands.map((c) => c.name());
+    expect(subs).toContain('login');
+    const login = daytonaCommand.commands.find((c) => c.name() === 'login')!;
+    expect(login.options.map((o) => o.long)).toContain('--status');
   });
 
   it('checkpoint has ls (default) / create / set-default / rm subcommands, aliased as checkpoints', () => {

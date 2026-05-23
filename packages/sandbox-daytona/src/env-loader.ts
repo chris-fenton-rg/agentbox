@@ -1,20 +1,21 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, resolve } from 'node:path';
+import { resolve } from 'node:path';
 
 /**
  * Daytona env auto-loader. The SDK reads `DAYTONA_API_KEY` /
- * `DAYTONA_JWT_TOKEN` + `DAYTONA_ORGANIZATION_ID` from `process.env`, but most
- * users keep those in a `.env.local` next to their code, not in their shell
- * rc — so `agentbox create --provider daytona` from a fresh terminal fails
- * with "Organization ID is required when using JWT token". This loader pulls
- * the relevant keys in from conventional places so the SDK Just Works.
+ * `DAYTONA_JWT_TOKEN` + `DAYTONA_ORGANIZATION_ID` from `process.env`. We pull
+ * those keys in from `~/.agentbox/secrets.env` so the SDK Just Works after
+ * the user runs `agentbox daytona login` once.
  *
  * Lookup order (first wins; process.env is never overwritten):
  *   1. `process.env` (already set in the shell).
- *   2. `<cwd>/.env.local`, `<cwd>/.env`, walking up to the filesystem root.
- *   3. `~/.agentbox/secrets.env` — a global fallback the user can populate
- *      once and forget.
+ *   2. `~/.agentbox/secrets.env` — written by `agentbox daytona login`.
+ *
+ * Project-level `.env` / `.env.local` are intentionally NOT consulted: those
+ * files belong to the app code being developed, and a `DAYTONA_API_KEY`
+ * there is typically meant for in-box code execution, not for the host CLI
+ * to harvest and provision sandboxes with.
  *
  * Only Daytona-prefixed keys are imported; the rest of the file is left
  * alone. The loader is idempotent and side-effect-free after the first call.
@@ -29,24 +30,9 @@ const DAYTONA_KEYS = [
 
 let loaded = false;
 
-export function ensureDaytonaEnvLoaded(startDir: string = process.cwd()): void {
+export function ensureDaytonaEnvLoaded(): void {
   if (loaded) return;
   loaded = true;
-
-  // 1. Walk up from cwd; load `.env.local` then `.env` at each level. First
-  //    file that defines a key wins (cwd's overrides ancestors').
-  let dir = resolve(startDir);
-  const visited = new Set<string>();
-  while (!visited.has(dir)) {
-    visited.add(dir);
-    importDaytonaFromFile(resolve(dir, '.env.local'));
-    importDaytonaFromFile(resolve(dir, '.env'));
-    const parent = dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-
-  // 2. Global agentbox secrets fallback.
   importDaytonaFromFile(resolve(homedir(), '.agentbox', 'secrets.env'));
 }
 

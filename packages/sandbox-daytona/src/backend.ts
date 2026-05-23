@@ -38,14 +38,12 @@ function getClient(): Daytona {
       client = new Daytona();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      // The interactive prompt in `agentbox daytona login` handles first-run
+      // setup; this error path is for non-TTY callers (CI, scripts) where the
+      // prompt was skipped.
       throw new Error(
-        `Failed to initialize Daytona client: ${msg}\n\n` +
-          `Set the missing credentials in one of:\n` +
-          `  - your shell (export DAYTONA_API_KEY=…)\n` +
-          `  - ~/.agentbox/secrets.env  (key=value, one per line; auto-loaded for every cloud command)\n` +
-          `  - <cwd>/.env.local or .env  (also auto-loaded; useful for per-project keys)\n\n` +
-          `Get an API key at https://app.daytona.io/dashboard/keys\n` +
-          `If you use a JWT token, you also need DAYTONA_ORGANIZATION_ID (Daytona dashboard → Organization settings).`,
+        `Daytona credentials not configured: ${msg}\n` +
+          `Run \`agentbox daytona login\` interactively, or set DAYTONA_API_KEY in the environment.`,
       );
     }
   }

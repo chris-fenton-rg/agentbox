@@ -9,7 +9,7 @@ Status legend:
 
 ## Already landed (for context — not in backlog)
 
-`create --provider daytona` · `list` · `status` · `inspect` · `url --print` · `pause`/`unpause`/`stop`/`start` · `destroy` (with sync stop+delete) · `shell` (incl. `-- <cmd>` one-shot) · `claude attach`/`start`, `codex attach`/`start`, `opencode attach`/`start` (via SSH + tmux) · `cp` both directions (file + dir, via `provider.uploadPath`/`downloadPath`) · `download` bulk workspace pull (via `provider.downloadDirContents`) · in-box `agentbox-ctl git push` (host bundle pull-back executor with `askPrompt` gate) · `relay restart` rehydrates cloud pollers from persisted state.
+`create --provider daytona` · `list` (with `PROVIDER` column distinguishing `docker` / `daytona` rows) · `status` · `inspect` · `url --print` · `pause`/`unpause`/`stop`/`start` · `destroy` (with sync stop+delete) · `shell` (incl. `-- <cmd>` one-shot) · `claude attach`/`start`, `codex attach`/`start`, `opencode attach`/`start` (via SSH + tmux) · `cp` both directions (file + dir, via `provider.uploadPath`/`downloadPath`) · `download` bulk workspace pull (via `provider.downloadDirContents`) · in-box `agentbox-ctl git push` (host bundle pull-back executor with `askPrompt` gate) · `relay restart` rehydrates cloud pollers from persisted state · `agentbox daytona login` interactive credential setup (auto-prompts on first `--provider daytona`, persists to `~/.agentbox/secrets.env`, never harvests creds from project `.env` files).
 
 ---
 
@@ -26,7 +26,7 @@ Docker boxes get host `~/.claude`, `~/.codex`, `~/.config/opencode` rsync'd into
 **Fix:** extract the host-side filtering ("what to sync") from `claude.ts` / `codex.ts` / `opencode.ts` into provider-neutral helpers in `@agentbox/sandbox-core/agent-config/`. Cloud impl: stage the filtered tree to a host tmpdir, tar, upload via `backend.uploadFile`, extract into the right HOME paths. Handle the `_claude.json` write-once rule across sandbox restarts.
 
 ### 1.3 🟡 Workspace bundle is full-history `--all`
-`packages/sandbox-cloud/src/workspace-seed.ts` does `git bundle create --all`, which is fine for small repos but slow + big upload for monorepos with deep history.
+`packages/sandbox-cloud/src/workspace-seed.ts` does `git bundle create --all`, which is fine for small repos but slow + big upload for monorepos with deep history. (eg use range export from the start of the current branch)
 
 **Fix:** add a depth knob (`AGENTBOX_BUNDLE_DEPTH` env or config key); default to full history, allow `--depth N` for shallow seeding.
 
@@ -189,10 +189,7 @@ The `CloudBackend` interface is provider-neutral; adding a new backend means a n
 ### 8.1 🔴 README + `docs/architecture.md` don't mention cloud
 Plan called out updating `docs/architecture.md`, `docs/host-relay.md`, `docs/state.md`, `docs/features.md`, and adding `docs/cloud-providers.md`. Currently the docs all describe the Docker-only world.
 
-### 8.2 🟡 Daytona setup quickstart missing
-No guide for: get DAYTONA_API_KEY → put it in `~/.agentbox/secrets.env` → `agentbox create --provider daytona`. The error message in `backend.ts` covers it but a 10-line walkthrough would be nicer.
-
-### 8.3 🟡 CLAUDE.md doesn't mention the cloud path
+### 8.2 🟡 CLAUDE.md doesn't mention the cloud path
 Project's `CLAUDE.md` describes the Docker box model. Should mention `--provider daytona` and link to this backlog + `docs/cloud-providers.md` (8.1).
 
 ---
