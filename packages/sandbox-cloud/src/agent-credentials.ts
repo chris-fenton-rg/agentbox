@@ -240,17 +240,27 @@ async function seedOne(
     process.stderr.write(`[agent-creds] ${spec.kind}: upload done in ${upDt}s\n`);
     log(`${spec.kind}: upload done in ${upDt}s`);
 
-    // Extract into the volume's mount point. Daytona's volumes are
-    // S3-backed FUSE mounts that reject chmod/utime — the `--no-same-*` +
-    // `-m` flags make tar skip those metadata ops so the extract doesn't
-    // abort with "Operation not permitted". `--no-same-owner` falls back to
-    // the current process UID (Daytona's exec runs as the box's default user,
-    // typically uid 1000 on the agentbox image), so we don't need a separate
-    // chown step — which would itself fail on the FUSE mount.
+    // Daytona's volumes are S3-backed FUSE mounts that reject chmod/utime.
+    // tar's `--no-same-permissions` / `--no-same-owner` only affect *which*
+    // mode/owner is restored — tar still calls chmod on every directory it
+    // creates during the delayed-set-stat pass, so extracting straight into
+    // the mount aborts with "./<dir>: Cannot change mode … Operation not
+    // permitted".
+    //
+    // Two-step instead: tar into a local-fs staging dir (chmod works there),
+    // then `cp -r` the contents into the mount. Plain `cp` (no `-p`, no
+    // `--preserve`) creates files/dirs via `open(O_CREAT, mode)` / `mkdir`
+    // and never calls chmod/utime, so the FUSE rejection never trips. UID
+    // defaults to the exec user (uid 1000 on the agentbox image), so no
+    // chown is needed — which would also fail on the FUSE mount.
+    const stageDir = `/tmp/agentbox-seed-${spec.kind}`;
     const extractCmd =
       `set -e; ` +
-      `cd /tmp; ` +
-      `tar -xzf ${remoteTar} -C ${spec.mountPath} --no-same-permissions --no-same-owner -m; ` +
+      `rm -rf ${stageDir}; ` +
+      `mkdir -p ${stageDir}; ` +
+      `tar -xzf ${remoteTar} -C ${stageDir}; ` +
+      `cp -r ${stageDir}/. ${spec.mountPath}/; ` +
+      `rm -rf ${stageDir}; ` +
       `date -u +%FT%TZ > ${spec.mountPath}/${SEED_MARKER}; ` +
       `rm -f ${remoteTar}`;
     const extract = await backend.exec(handle, extractCmd);
