@@ -70,6 +70,9 @@ Same as 2.1 — host-side `agentbox download <cloud-box>` is wired. The in-box `
 ### 2.3 🟡 `checkpoint.create` cloud executor stubbed
 v1 deferred checkpoints for cloud (Daytona can't snapshot a live sandbox's FS). For long-term: implement via `sb.archive()` + naming, or via image rebuild. Until then the in-box `agentbox-ctl checkpoint` returns "not yet supported".
 
+### 2.3.1 🟡 defaultCheckpoint should be provider specific
+Today `box.defaultCheckpoint` is global — `agentbox checkpoint set-default <name>` sets it for all providers. Daytona needs a per-provider default checkpoint — `agentbox checkpoint set-default --provider daytona <name>` sets it for Daytona only and in future other providers too.
+
 ### 2.4 🟡 `askPrompt` host-confirm gate needs SSE mirror for cloud `git.push`
 `executeCloudAction` calls `askPrompt(deps.prompts, deps.subscribers, …)` for `git.push`. This pushes the prompt event on the host relay's `subscribers` (PromptSubscribers) — only consumed by an *attached* `agentbox claude` wrapper via `/admin/prompts/stream` SSE. If no wrapper is attached and `AGENTBOX_PROMPT` ≠ `'off'`, the executor blocks indefinitely waiting for an answer.
 

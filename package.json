@@ -21,7 +21,8 @@
     "clean": "turbo run clean && rm -rf node_modules .turbo",
     "changeset": "changeset",
     "register": "src=\"$PWD/apps/cli/dist/index.js\"; test -x \"$src\" || { echo 'build first: pnpm build' >&2; exit 1; }; for d in /opt/homebrew/bin /usr/local/bin \"$HOME/.local/bin\"; do test -w \"$d\" && ln -sf \"$src\" \"$d/agentbox\" && echo \"linked $d/agentbox -> $src\" && exit 0; done; echo 'no writable bin dir found in /opt/homebrew/bin, /usr/local/bin, ~/.local/bin' >&2; exit 1",
-    "unregister": "src=\"$PWD/apps/cli/dist/index.js\"; removed=0; for d in /opt/homebrew/bin /usr/local/bin \"$HOME/.local/bin\"; do f=\"$d/agentbox\"; if test -L \"$f\" && test \"$(readlink \"$f\")\" = \"$src\"; then rm \"$f\" && echo \"removed $f\" && removed=1; fi; done; test \"$removed\" = 1 || { echo 'no matching symlink found'; exit 1; }"
+    "unregister": "src=\"$PWD/apps/cli/dist/index.js\"; removed=0; for d in /opt/homebrew/bin /usr/local/bin \"$HOME/.local/bin\"; do f=\"$d/agentbox\"; if test -L \"$f\" && test \"$(readlink \"$f\")\" = \"$src\"; then rm \"$f\" && echo \"removed $f\" && removed=1; fi; done; test \"$removed\" = 1 || { echo 'no matching symlink found'; exit 1; }",
+    "drive": "tsx apps/cli/test/_harness/drive.ts"
   },
   "devDependencies": {
     "@changesets/cli": "^2.27.10",
@@ -30,6 +31,7 @@
     "eslint-config-prettier": "^9.1.0",
     "prettier": "^3.4.1",
     "tsup": "^8.3.5",
+    "tsx": "^4.19.2",
     "turbo": "^2.3.3",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.18.0",
