@@ -85,6 +85,16 @@ export interface BuildAttachOptions {
   service?: string;
   tail?: number;
   follow?: boolean;
+  /**
+   * For `agent`/`shell`: the inner command tmux should spawn when no session
+   * is running yet. E.g. `'/home/vscode/.local/bin/claude'` for the claude
+   * agent attach, `'bash -l'` for a plain shell. Cloud `buildAttach` runs it
+   * via `tmux new-session -A -s <sessionName> '<command>'` so an existing
+   * session attaches and a fresh one starts the right program.
+   */
+  command?: string;
+  /** Plain (non-tmux) attach: skip the tmux wrap, just run `command` directly. */
+  noTmux?: boolean;
 }
 
 /** Optional checkpoint capability — not every provider supports it. */

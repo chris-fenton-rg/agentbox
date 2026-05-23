@@ -14,9 +14,12 @@
 import { randomBytes } from 'node:crypto';
 import { basename } from 'node:path';
 import type {
+  AttachKind,
+  AttachSpec,
   BoxRecord,
   BoxResourceStats,
   BoxRuntimeState,
+  BuildAttachOptions,
   CloudBackend,
   CloudHandle,
   CreateBoxRequest,
@@ -396,6 +399,32 @@ export function createCloudProvider(
       return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr };
     },
 
+    async buildAttach(
+      box: BoxRecord,
+      kind: AttachKind,
+      opts?: BuildAttachOptions,
+    ): Promise<AttachSpec> {
+      if (!backend.attachArgv) {
+        throw new Error(
+          `cloud backend '${backend.name}' does not implement attachArgv — interactive attach not supported`,
+        );
+      }
+      const handle = handleFor(box);
+      const baseArgv = await backend.attachArgv(handle);
+      const inner = renderInnerCommand(kind, opts);
+      // -t forces TTY allocation on the remote side (the SSH default of
+      // skipping TTY when a command is provided would break tmux + readline).
+      const argv = [...baseArgv.slice(1), '-t', inner];
+      // Keep argv[0] = the program name (ssh) so callers can split.
+      const fullArgv = [baseArgv[0]!, ...argv];
+      const cleanup = backend.revokeAttachToken
+        ? async (): Promise<void> => {
+            await backend.revokeAttachToken!(handle, baseArgv);
+          }
+        : undefined;
+      return { argv: fullArgv, cleanup };
+    },
+
     async resolveUrl(box: BoxRecord): Promise<string> {
       const h = handleFor(box);
       const webPort = box.cloud?.webPort ?? CLOUD_WEB_PROXY_PORT;
@@ -410,6 +439,64 @@ export function createCloudProvider(
     // stats is provider-optional; cloud backends without a metrics API just
     // omit it. Backends that have one can decorate the returned provider.
   };
+}
+
+/**
+ * Build the inner shell command tmux runs inside the cloud sandbox for an
+ * attach. The string is later embedded in `ssh ... -t '<cmd>'`, so it must
+ * be a single shell-safe phrase (the SSH client passes it to the remote
+ * `sshd` which feeds it to the user's login shell).
+ *
+ * `tmux new-session -A` attaches if a session with the given name exists,
+ * otherwise creates a fresh one running the fallback command. Matches the
+ * Docker shell command's tmux semantics so the UX feels the same.
+ */
+function renderInnerCommand(kind: AttachKind, opts?: BuildAttachOptions): string {
+  const sessionName = opts?.sessionName ?? defaultSessionName(kind);
+  const fallback = opts?.command ?? defaultCommand(kind, opts);
+  if (kind === 'logs') {
+    // logs always tails; tmux makes no sense here.
+    return fallback;
+  }
+  if (opts?.noTmux) {
+    return fallback;
+  }
+  // Single-quote the inner cmd so tmux gets exactly one argv element. Use
+  // `command -v tmux` so a missing tmux fails fast with a clear error.
+  return `command -v tmux >/dev/null || { echo "tmux not installed in sandbox"; exit 127; }; exec tmux new-session -A -s ${shellSingle(sessionName)} ${shellSingle(fallback)}`;
+}
+
+function defaultSessionName(kind: AttachKind): string {
+  switch (kind) {
+    case 'shell':
+      return 'shell';
+    case 'agent':
+      return 'agent';
+    case 'logs':
+      return 'logs';
+  }
+}
+
+function defaultCommand(kind: AttachKind, opts?: BuildAttachOptions): string {
+  switch (kind) {
+    case 'shell':
+      return 'bash -l';
+    case 'agent':
+      // Caller didn't tell us which agent — fall back to a login shell;
+      // claude/codex/opencode wrappers pass an explicit `command`.
+      return 'bash -l';
+    case 'logs':
+      // Caller MUST pass service + a real command for logs; this is a safe
+      // placeholder when neither is set.
+      return opts?.service
+        ? `tail -F ${opts.follow !== false ? '' : '-n 0 '}/var/log/agentbox/${opts.service}.log`
+        : 'echo "no service specified — set BuildAttachOptions.service"';
+  }
+}
+
+/** Wrap an arbitrary string in single quotes for embedding in a shell command. */
+function shellSingle(s: string): string {
+  return "'" + s.replace(/'/g, "'\\''") + "'";
 }
 
 /** Helper: returns a BoxResourceStats stub so callers needn't unwrap optional. */

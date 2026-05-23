@@ -21,11 +21,17 @@ import {
   type ShellSessionSummary,
 } from '@agentbox/sandbox-docker';
 import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
+import { providerForBox } from '../provider/registry.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { handleLifecycleError } from './_errors.js';
 import { requireDockerProvider } from './_provider-guard.js';
 
 const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
+
+/** Wrap a string in single quotes for safe embedding in a shell command. */
+function shellSingle(s: string): string {
+  return "'" + s.replace(/'/g, "'\\''") + "'";
+}
 
 interface ShellOptions {
   user?: string;
@@ -168,7 +174,6 @@ export const shellCommand = new Command('shell')
       // binds "ls" to [box], which doesn't resolve; if auto-pick succeeds we
       // treat "ls" as the first cmd token instead.
       const { box, shifted } = await resolveBoxOrShift(idOrName);
-      requireDockerProvider(box, 'shell');
       const effectiveCmd = shifted && idOrName ? [idOrName, ...cmd] : cmd;
 
       const cfg = await loadEffectiveConfig(box.workspacePath, {
@@ -177,6 +182,45 @@ export const shellCommand = new Command('shell')
       const user = cfg.effective.shell.user;
       const login = cfg.effective.shell.login;
       const tmux = cfg.effective.shell.tmux;
+
+      // Cloud boxes: attach via SSH (provider.buildAttach), not docker exec.
+      // The flow keeps the same options (tmux session, one-shot cmd, etc.)
+      // but goes over the SSH token Daytona mints per attach.
+      if ((box.provider ?? 'docker') !== 'docker') {
+        const provider = await providerForBox(box);
+        if (!provider.buildAttach) {
+          throw new Error(`provider '${provider.name}' does not support interactive attach`);
+        }
+        const innerCmd =
+          effectiveCmd.length > 0
+            ? (login ? `bash -l -c ${shellSingle(effectiveCmd.join(' '))}` : `bash -c ${shellSingle(effectiveCmd.join(' '))}`)
+            : (login ? 'bash -l' : 'bash');
+        const oneShot = effectiveCmd.length > 0;
+        const sessionName = opts.name ?? 'shell';
+        const spec = await provider.buildAttach(box, 'shell', {
+          sessionName,
+          user,
+          command: innerCmd,
+          // One-shot exec or `--no-tmux` skips the tmux wrap.
+          noTmux: oneShot || !tmux,
+        });
+        try {
+          const code = await runWrappedAttach({
+            container: box.name,
+            command: spec.argv[0],
+            dockerArgv: spec.argv.slice(1),
+            relayBaseUrl: RELAY_HOST_URL,
+            boxId: box.id,
+            boxName: box.name,
+            projectIndex: box.projectIndex,
+            mode: 'shell',
+            detachable: !oneShot && tmux,
+          });
+          process.exit(code);
+        } finally {
+          if (spec.cleanup) await spec.cleanup();
+        }
+      }
 
       await ensureBoxRunning(box);
 

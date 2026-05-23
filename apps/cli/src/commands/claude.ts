@@ -28,13 +28,13 @@ import { Command } from 'commander';
 import { resolveClaudeAuth, type ResolvedClaudeAuth } from '../auth.js';
 import { resolveAgentLauncher } from '@agentbox/core';
 import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
+import { cloudAgentAttach } from './_cloud-attach.js';
 import { clampSpinnerLine } from '../spinner-line.js';
 import { resolveLimits } from '../limits.js';
 import { maybePromptPortless } from '../portless-prompt.js';
 import { maybeRunSetupWizard } from '../wizard.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { handleLifecycleError } from './_errors.js';
-import { requireDockerProvider } from './_provider-guard.js';
 
 /** Ref shown in the detach notice: the per-project index `n` when set
  *  (resolves from inside the project dir), else the globally-unique name. */
@@ -525,7 +525,15 @@ const claudeAttachCommand = new Command('attach')
     intro('Attaching to Claude session...');
     try {
       const box = await resolveBoxOrExit(idOrName);
-      requireDockerProvider(box, 'claude');
+      if ((box.provider ?? 'docker') !== 'docker') {
+        await cloudAgentAttach({
+          box,
+          binary: 'claude',
+          sessionName: opts.sessionName ?? 'claude',
+          mode: 'claude',
+        });
+        return;
+      }
       // A plain reattach must never touch host config. Force syncConfig off so
       // the no-session path starts a fresh session without the host->volume
       // rsync (which would overwrite the in-box _claude.json / prompt history).
@@ -565,8 +573,17 @@ const claudeStartCommand = new Command('start')
       // detects that, auto-picks the project's single box, and tells us to
       // treat the bound `idOrName` as the first claude-args token instead.
       const { box, shifted } = await resolveBoxOrShift(idOrName);
-      requireDockerProvider(box, 'claude');
       const effectiveClaudeArgs = shifted && idOrName ? [idOrName, ...claudeArgs] : claudeArgs;
+      if ((box.provider ?? 'docker') !== 'docker') {
+        await cloudAgentAttach({
+          box,
+          binary: 'claude',
+          sessionName: opts.sessionName ?? 'claude',
+          mode: 'claude',
+          extraArgs: effectiveClaudeArgs,
+        });
+        return;
+      }
       await startOrAttachClaude(box, effectiveClaudeArgs, opts);
     } catch (err) {
       if (err instanceof ClaudeSessionError) {

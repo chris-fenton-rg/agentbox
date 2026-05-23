@@ -23,6 +23,12 @@ export interface WrappedAttachOptions {
   container: string;
   /** Full docker argv (e.g. result of buildClaudeAttachArgv). */
   dockerArgv: string[];
+  /**
+   * The program to spawn for the PTY. Defaults to `'docker'` (the historical
+   * behavior; `dockerArgv` is then the docker subcommand argv). Cloud boxes
+   * pass `'ssh'` with the Daytona SSH argv instead.
+   */
+  command?: string;
   /** Relay base URL — http://127.0.0.1:8787 in normal use. */
   relayBaseUrl: string;
   boxId: string;
@@ -79,10 +85,11 @@ const ACTION_CMD: Record<
  * Returns the pty's exit code; caller `process.exit`s with it.
  */
 export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<number> {
+  const command = opts.command ?? 'docker';
   if (!process.stdout.isTTY || !process.stdin.isTTY) {
     // Non-interactive path: piping / scripts. Don't wrap — preserves
     // machine-readable stdout, no footer corruption.
-    return runFallback(opts.dockerArgv);
+    return runFallback(command, opts.dockerArgv);
   }
   const backend = await loadPtyBackend();
   if (!backend) {
@@ -90,14 +97,14 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     process.stderr.write(
       'agentbox: permission prompts disabled (node-pty backend unavailable)\n',
     );
-    return runFallback(opts.dockerArgv);
+    return runFallback(command, opts.dockerArgv);
   }
 
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
   const innerRows = Math.max(1, rows - FOOTER_ROWS);
 
-  const pty = backend.ptySpawn('docker', opts.dockerArgv, {
+  const pty = backend.ptySpawn(command, opts.dockerArgv, {
     name: 'xterm-256color',
     cols,
     rows: innerRows,
@@ -431,7 +438,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
  * Fallback when node-pty is unavailable or stdio isn't a TTY. Identical to
  * today's call: blocking spawnSync with inherited stdio.
  */
-function runFallback(argv: string[]): number {
-  const child = spawnSync('docker', argv, { stdio: 'inherit' });
+function runFallback(command: string, argv: string[]): number {
+  const child = spawnSync(command, argv, { stdio: 'inherit' });
   return child.status ?? 0;
 }

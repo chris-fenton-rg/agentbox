@@ -80,8 +80,15 @@ export interface CloudBackend {
   previewUrl(h: CloudHandle, port: number): Promise<CloudPreviewUrl>;
 
   /**
-   * Optional: argv for an interactive attach (SSH). When absent,
-   * `@agentbox/sandbox-cloud` falls back to an exec-driven tmux pump.
+   * Optional: SSH connect argv for an interactive attach. Returns argv where
+   * `argv[0]` is the program (e.g. `'ssh'`) and the rest are connection args
+   * (user@host, options). `@agentbox/sandbox-cloud`'s `buildAttach` appends a
+   * `-t '<inner-command>'` to run the right thing inside the sandbox (a tmux
+   * session, a log tail, …). Async because most backends mint a short-lived
+   * SSH token per call. When absent, `sandbox-cloud` falls back to an
+   * exec-driven tmux pump.
    */
-  attachArgv?(h: CloudHandle): string[] | null;
+  attachArgv?(h: CloudHandle): Promise<string[]>;
+  /** Optional: best-effort cleanup of a token minted by `attachArgv`. */
+  revokeAttachToken?(h: CloudHandle, argv: string[]): Promise<void>;
 }

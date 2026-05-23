@@ -16,6 +16,7 @@ import type {
   CloudState,
 } from '@agentbox/core';
 import { resolveDockerfileContext } from './dockerfile-context.js';
+import { ensureDaytonaEnvLoaded } from './env-loader.js';
 
 /**
  * Sentinel image ref the cloud-provider hands to us when the user didn't pass
@@ -27,9 +28,26 @@ export const DEFAULT_BOX_IMAGE_REF = 'agentbox/box:dev';
 let client: Daytona | null = null;
 function getClient(): Daytona {
   if (!client) {
-    // Daytona() reads DAYTONA_API_KEY from env. Throws with a clear error if
-    // missing — the CLI surfaces that.
-    client = new Daytona();
+    // Pull DAYTONA_* keys from `.env.local` / `.env` / `~/.agentbox/secrets.env`
+    // into process.env first — the SDK reads from process.env and most users
+    // keep secrets in a project file rather than their shell rc.
+    ensureDaytonaEnvLoaded();
+    try {
+      // Daytona() reads DAYTONA_API_KEY / DAYTONA_JWT_TOKEN + DAYTONA_ORGANIZATION_ID
+      // from env.
+      client = new Daytona();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `Failed to initialize Daytona client: ${msg}\n\n` +
+          `Set the missing credentials in one of:\n` +
+          `  - your shell (export DAYTONA_API_KEY=…)\n` +
+          `  - ~/.agentbox/secrets.env  (key=value, one per line; auto-loaded for every cloud command)\n` +
+          `  - <cwd>/.env.local or .env  (also auto-loaded; useful for per-project keys)\n\n` +
+          `Get an API key at https://app.daytona.io/dashboard/keys\n` +
+          `If you use a JWT token, you also need DAYTONA_ORGANIZATION_ID (Daytona dashboard → Organization settings).`,
+      );
+    }
   }
   return client;
 }
@@ -215,5 +233,36 @@ export const daytonaBackend: CloudBackend = {
     // for every /bridge call. The user-facing CLI `url` currently surfaces
     // only `url` — embedding the token for a browser is a Phase 6 polish.
     return { url: p.url, token: p.token };
+  },
+
+  async attachArgv(h: CloudHandle): Promise<string[]> {
+    const sb = await getSandbox(h.sandboxId);
+    // 60 min default expiry matches the SDK default; an interactive session
+    // longer than that is rare. `sandbox-cloud`'s buildAttach appends
+    // `-t '<inner cmd>'` for the per-session tmux attach.
+    const ssh = await sb.createSshAccess(60);
+    return [
+      'ssh',
+      // First-connect to a never-seen host fingerprint should be silent in a
+      // PTY — the user already authenticated via Daytona's API.
+      '-o', 'StrictHostKeyChecking=accept-new',
+      // Daytona's SSH gateway terminates per-token; no key file, no port.
+      `${ssh.token}@ssh.app.daytona.io`,
+    ];
+  },
+
+  async revokeAttachToken(h: CloudHandle, argv: string[]): Promise<void> {
+    // argv[3] = `${token}@ssh.app.daytona.io`; pull the token off the front.
+    const userhost = argv[argv.length - 1] ?? '';
+    const atIdx = userhost.indexOf('@');
+    if (atIdx <= 0) return;
+    const token = userhost.slice(0, atIdx);
+    if (token.length === 0) return;
+    try {
+      const sb = await getSandbox(h.sandboxId);
+      await sb.revokeSshAccess(token);
+    } catch {
+      // Best-effort — tokens auto-expire after 60 min anyway.
+    }
   },
 };

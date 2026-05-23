@@ -155,19 +155,26 @@ export const createCommand = new Command('create')
     const projectRoot = (await findProjectRoot(opts.workspace)).root;
     const checkpointRef = resolveCheckpointRef(opts, cfg.effective.box.defaultCheckpoint);
 
-    // First-run Portless opt-in (Docker Desktop only). Persists the answer to
-    // the global config so it asks once per machine; the resolved flag is
-    // passed straight into createBox.
-    const portlessEnabled = await maybePromptPortless({
-      engine: await detectEngine(),
-      enabled: cfg.effective.portless.enabled,
-      yes: !!opts.yes,
-      cwd: opts.workspace,
-    });
+    // Cloud providers don't use the Docker-only Portless proxy and would
+    // hand off to `agentbox claude` (a Docker-only flow that ignores
+    // --provider) via the setup wizard — skip both for non-docker providers
+    // so `agentbox create --provider daytona` provisions a cloud box.
+    const providerName = opts.provider ?? cfg.effective.box.provider ?? 'docker';
+    const isDocker = providerName === 'docker';
+
+    const portlessEnabled = isDocker
+      ? await maybePromptPortless({
+          engine: await detectEngine(),
+          enabled: cfg.effective.portless.enabled,
+          yes: !!opts.yes,
+          cwd: opts.workspace,
+        })
+      : undefined;
 
     // First-run wizard: when no agentbox.yaml exists, optionally hand off to
-    // `agentbox claude` so the agent can interactively generate one. Skipped
-    // when starting from a checkpoint (it already carries the config).
+    // `agentbox claude` so the agent can interactively generate one. The
+    // wizard runs for every provider — it's the env-file picker + first-run
+    // claude offer, both of which are useful for cloud boxes too.
     const wiz = await maybeRunSetupWizard({
       workspace: opts.workspace,
       yes: !!opts.yes,
@@ -175,7 +182,11 @@ export const createCommand = new Command('create')
       checkpointRef,
       withEnv: cfg.effective.box.withEnv,
     });
-    if (wiz.action === 'switch-to-claude') {
+    if (wiz.action === 'switch-to-claude' && isDocker) {
+      // Docker: hand off to `agentbox claude` whose default action creates +
+      // attaches in one go. For non-docker providers we fall through to the
+      // normal create flow below and attach claude post-create, because
+      // `agentbox claude`'s default action ignores --provider.
       process.env[WIZARD_AUTOLAUNCH_ENV] = '1';
       const serialized = serializeEnvFilesForEnv(wiz.envFilesToImport);
       if (serialized !== undefined) process.env[WIZARD_ENV_FILES_ENV] = serialized;
@@ -187,6 +198,9 @@ export const createCommand = new Command('create')
       }
       return;
     }
+    // Cloud + switch-to-claude: provision the cloud box now, then attach
+    // claude via the cloud SSH path once the box is ready.
+    const attachClaudeAfter = wiz.action === 'switch-to-claude' && !isDocker;
 
     const useSnapshot = resolveUseSnapshot(opts, cfg.effective.box.hostSnapshot);
 
@@ -237,12 +251,21 @@ export const createCommand = new Command('create')
         );
       }
 
+      const tryLines = isDocker
+        ? [
+            `  docker exec -it ${result.record.container} bash`,
+            `  docker exec ${result.record.container} ls /workspace`,
+          ]
+        : [
+            `  agentbox shell ${result.record.name}`,
+            `  agentbox claude attach ${result.record.name}`,
+            `  agentbox url ${result.record.name}`,
+          ];
       log.message(
         [
           '',
           'Try it:',
-          `  docker exec -it ${result.record.container} bash`,
-          `  docker exec ${result.record.container} ls /workspace`,
+          ...tryLines,
           '',
           'Destroy:',
           `  agentbox destroy ${result.record.name}`,
@@ -275,6 +298,21 @@ export const createCommand = new Command('create')
       }
 
       outro('done');
+
+      // Cloud: when the wizard offered "switch to claude" and we accepted,
+      // attach claude over SSH now that the box is provisioned. Docker takes
+      // the redispatch-to-`agentbox claude` path above (which already
+      // attaches), so this branch only fires for cloud providers.
+      if (attachClaudeAfter) {
+        const { cloudAgentAttach } = await import('./_cloud-attach.js');
+        await cloudAgentAttach({
+          box: result.record,
+          binary: 'claude',
+          sessionName: 'claude',
+          mode: 'claude',
+        });
+        return;
+      }
 
       if (opts.attach) {
         await attachShell(result.record);
