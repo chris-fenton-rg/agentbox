@@ -6,7 +6,7 @@ import { handleLifecycleError } from './_errors.js';
 
 export const startCommand = new Command('start')
   .description(
-    'Start a stopped box. Docker: docker start + relaunch ctl/dockerd/vnc daemons. Cloud: backend.start, then re-resolve preview URLs/tokens, re-launch in-sandbox ctl daemon, and re-register with the host relay (so the CloudBoxPoller resumes).',
+    'Start a stopped box. Docker: docker start + relaunch ctl/dockerd/vnc daemons. Cloud: backend.start, then re-resolve preview URLs/tokens, re-launch in-sandbox ctl/dockerd daemons, and re-register with the host relay (so the CloudBoxPoller resumes).',
   )
   .argument(
     '[box]',

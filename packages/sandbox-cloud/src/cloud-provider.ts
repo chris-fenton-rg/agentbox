@@ -57,6 +57,7 @@ import {
   uploadToCloudBox,
 } from './cloud-cp.js';
 import { launchCloudCtlDaemon } from './ctl-launch.js';
+import { launchCloudDockerdDaemon } from './dockerd-launch.js';
 import { quoteShellArgv } from './shell.js';
 import { launchCloudVncDaemon } from './vnc-launch.js';
 import { seedCloudWorkspace } from './workspace-seed.js';
@@ -271,6 +272,20 @@ export function createCloudProvider(
           bridgeToken,
         });
 
+        // Always-on in-box dockerd, matching the Docker provider
+        // (packages/sandbox-docker/src/create.ts:788). The image already bakes
+        // /usr/local/bin/agentbox-dockerd-start; Daytona sandboxes ship with
+        // CAP_SYS_ADMIN so it starts cleanly. Best-effort — a slow or failed
+        // start shouldn't fail create; `agentbox start` re-launches it on
+        // resume because dockerd dies with the sandbox.
+        log('launching in-box dockerd');
+        try {
+          const dockerd = await launchCloudDockerdDaemon({ backend, handle, timeoutMs: 60_000 });
+          if (!dockerd.up) log(`dockerd did not become ready (continuing): ${dockerd.reason ?? 'unknown'}`);
+        } catch (err) {
+          log(`dockerd daemon launch failed (continuing): ${err instanceof Error ? err.message : String(err)}`);
+        }
+
         // Mint the per-box VNC password and start the in-sandbox VNC stack
         // when VNC is opted in (default-on, matching Docker). Best-effort —
         // a failure logs but doesn't fail create; `agentbox screen` will
@@ -482,6 +497,16 @@ export function createCloudProvider(
         relayToken: box.relayToken ?? '',
         bridgeToken: box.cloud?.bridgeToken,
       });
+      // Re-launch in-box dockerd — also dies with the sandbox. Best-effort,
+      // mirrors the docker provider's lifecycle.ts:276 relaunch.
+      try {
+        const dockerd = await launchCloudDockerdDaemon({ backend, handle: h, timeoutMs: 60_000 });
+        if (!dockerd.up) {
+          // swallowed; surface only on follow-up `docker info`
+        }
+      } catch {
+        // best-effort
+      }
       // Re-launch the VNC stack — Xvnc + websockify die with the sandbox.
       // Best-effort: a failure here shouldn't block start; `agentbox screen`
       // surfaces the missing daemon with a clear error.

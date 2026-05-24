@@ -168,6 +168,8 @@ The shared cache is preserved on `destroy` and allowlisted in `prune --all`. Cav
 
 `--privileged` is intentionally avoided so the same setup runs in cloud sandboxes (E2B, Modal, Vercel Sandbox, …) that accept the `cap_add` path but reject privileged. Tested on OrbStack; the same flags work on Docker Desktop (`--cgroupns=private` + the in-box remount of `/sys/fs/cgroup` and `/proc/sys` are the load-bearing bits — both engines bind those RO into containers under their default hardening, and the box does the remount itself with its `SYS_ADMIN` capability without affecting the host).
 
+**Cloud (`--provider daytona`) gets the same DinD setup out of the box** — `dockerd` is launched automatically at `create` and re-launched on `start`, so `agentbox shell <cloud-box> -- docker info` just works with no extra command. The data root is the sandbox's own filesystem (no separate volume), so it's wiped together with the box on `destroy`; the shared-cache option is docker-provider only.
+
 ## Layout
 
 ```

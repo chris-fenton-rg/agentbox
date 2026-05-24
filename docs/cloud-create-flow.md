@@ -47,8 +47,9 @@ Routed through `daytonaProvider` → `createCloudProvider(daytonaBackend)`
    (see [Snapshot bake](#snapshot-bake)).
 6. **Upload env/config files** (`uploadEnvFiles`) — the `.env`/`secrets.toml`/
    etc. the setup wizard collected.
-7. **Launch `agentbox-ctl`** (`launchCloudCtlDaemon`) and **VNC stack**
-   (`launchCloudVncDaemon`, best-effort).
+7. **Launch `agentbox-ctl`** (`launchCloudCtlDaemon`), **in-box dockerd**
+   (`launchCloudDockerdDaemon`, best-effort — mirrors the docker provider's
+   always-on dockerd), and **VNC stack** (`launchCloudVncDaemon`, best-effort).
 8. **Mint preview URLs** — webproxy (8080), per-`expose.port` service URLs
    from `agentbox.yaml`, and the **bridge URL on 8787** so the host's
    `CloudBoxPoller` can reach the in-box relay.

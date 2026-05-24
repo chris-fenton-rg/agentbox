@@ -40,8 +40,8 @@ For cloud backends the `Provider` is composed from a thin `CloudBackend`
 SDK shim (`packages/core/src/cloud-backend.ts`) by
 `createCloudProvider(backend)` (`packages/sandbox-cloud/src/cloud-provider.ts`).
 The cloud provider owns workspace seeding, ctl-daemon launch, agent
-credential sync, VNC daemon launch, signed preview URLs, snapshot
-manifests, and (eventually) per-service preview URLs. The `CloudBackend`
+credential sync, in-box dockerd launch, VNC daemon launch, signed preview URLs,
+snapshot manifests, and (eventually) per-service preview URLs. The `CloudBackend`
 just implements the SDK primitives (`provision`, `exec`, `uploadFile`,
 `previewUrl`, `attachArgv`, optionally `createSnapshot` / `list` / …).
 
@@ -224,9 +224,6 @@ that file; project `.env` is never harvested. First-time use of
   it includes Playwright + Chromium. Cached snapshot reuse is seconds.
   Future: ship a public snapshot to skip the cold build. Tracked as
   backlog 5.1.
-- **No DinD in cloud yet.** The Daytona PoC validated dockerd works
-  inside a sandbox, but our cloud provider doesn't launch it. Users
-  can `dockerd &` manually; we don't drive it. Backlog 5.2.
 - **Live stats** (`agentbox top` CPU/mem) aren't surfaced for cloud —
   Daytona's SDK doesn't expose per-sandbox metrics. We render `—` for
   every metric.
@@ -244,7 +241,7 @@ override per invocation.
 
 | Command | Cloud path |
 | --- | --- |
-| `create` | `provider.create` (workspace seed + ctl + VNC + agent volumes). |
+| `create` | `provider.create` (workspace seed + ctl + dockerd + VNC + agent volumes). |
 | `claude` / `codex` / `opencode` | `cloudAgentCreate` + `cloudAgentAttach` over SSH+tmux. |
 | `shell` (incl. `-- <cmd>`) | `provider.buildAttach('shell')` over SSH; `--name`/`--new` map sessions via `tmux ls`. |
 | `cp` / `download` | `provider.uploadPath` / `downloadPath` / `downloadDirContents`. |
