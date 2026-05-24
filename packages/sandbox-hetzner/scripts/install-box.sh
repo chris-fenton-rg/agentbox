@@ -189,6 +189,7 @@ done_ "baked config files (claude / codex / setup guide / tmux.conf)"
 step "credential pivot symlinks (vscode home)"
 sudo -u vscode -H mkdir -p \
   /home/vscode/.claude \
+  /home/vscode/.claude/skills/agentbox-setup \
   /home/vscode/.codex \
   /home/vscode/.local/share/opencode \
   /home/vscode/.agentbox-creds/claude \
@@ -201,6 +202,19 @@ sudo -u vscode -H ln -sf /home/vscode/.agentbox-creds/codex/auth.json \
 sudo -u vscode -H ln -sf /home/vscode/.agentbox-creds/opencode/auth.json \
   /home/vscode/.local/share/opencode/auth.json
 sudo -u vscode -H ln -sf /home/vscode/.claude/_claude.json /home/vscode/.claude.json
+
+# `/agentbox-setup` skill — the in-box-only first-run wizard the setup
+# prompt references. Docker's seedSetupSkillIntoVolume() (sandbox-docker/
+# src/claude.ts) does this at create time via a helper container with the
+# claude-config volume mounted. Hetzner doesn't have a shared volume — we
+# bake it directly into the snapshot here so every box has it. The same
+# content is also reachable as a static file at /usr/local/share/agentbox/
+# setup-guide.md (referenced as fallback in the wizard initial prompt).
+# `tar -xzf` of the host's ~/.claude in prepareHetzner extracts WITHOUT
+# removing pre-existing files in the dest, so this skill survives the
+# subsequent static-config bake.
+sudo -u vscode -H cp /usr/local/share/agentbox/setup-guide.md \
+  /home/vscode/.claude/skills/agentbox-setup/SKILL.md
 done_ "credential pivot symlinks (vscode home)"
 
 step "login-shell shim (/etc/profile.d/agentbox.sh)"
