@@ -36,6 +36,7 @@ import { cloudAgentAttach } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
 import { providerForCreate } from '../provider/registry.js';
 import { clampSpinnerLine } from '../spinner-line.js';
+import { makeProgressReporter } from '../lib/progress.js';
 import { openCommandLog } from '../lib/log-file.js';
 import { resolveLimits } from '../limits.js';
 import { maybePromptPortless } from '../portless-prompt.js';
@@ -106,6 +107,8 @@ interface CodexCreateOptions {
   disk?: string;
   /** Sandbox backend: `docker` (default) or `daytona`. */
   provider?: string;
+  /** -v / --verbose: bypass the spinner and stream raw provider output. */
+  verbose?: boolean;
 }
 
 function buildCodexCliOverrides(opts: CodexCreateOptions): Partial<UserConfig> {
@@ -227,6 +230,10 @@ export const codexCommand = new Command('codex')
     '--provider <name>',
     "sandbox backend: 'docker' (default) or 'daytona' for a cloud box",
   )
+  .option(
+    '-v, --verbose',
+    'bypass the spinner and stream raw provider output to stderr. The same content always lands in ~/.agentbox/logs/codex.log.',
+  )
   .argument(
     '[codex-args...]',
     "extra args passed to codex inside the box; place after `--`, e.g. `agentbox codex -- -m gpt-5.4`",
@@ -273,6 +280,7 @@ export const codexCommand = new Command('codex')
         sessionName: cfg.effective.codex.sessionName,
         mode: 'codex',
         extraArgs: codexArgs,
+        verbose: opts.verbose === true,
       });
       return;
     }
@@ -298,7 +306,7 @@ export const codexCommand = new Command('codex')
           : (cfg.effective.box.hostSnapshot ?? false);
     const sessionName = cfg.effective.codex.sessionName;
 
-    const s = spinner();
+    const s = makeProgressReporter(opts.verbose === true);
     s.start('creating box');
     let containerName = '';
     try {
@@ -320,7 +328,7 @@ export const codexCommand = new Command('codex')
         limits: resolveLimits(cfg.effective.box, opts),
         projectRoot,
         onLog: (line) => {
-          s.message(clampSpinnerLine(line));
+          s.message(line);
           cmdLog.write(line);
         },
       });
@@ -333,7 +341,7 @@ export const codexCommand = new Command('codex')
       cmdLog.write('checking codex');
       await ensureCodexInstalled(result.record.container, {
         onProgress: (line) => {
-          s.message(clampSpinnerLine(line));
+          s.message(line);
           cmdLog.write(line);
         },
       });

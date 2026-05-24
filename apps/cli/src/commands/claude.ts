@@ -37,6 +37,7 @@ import { cloudAgentAttach } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
 import { providerForCreate } from '../provider/registry.js';
 import { clampSpinnerLine } from '../spinner-line.js';
+import { makeProgressReporter } from '../lib/progress.js';
 import { openCommandLog } from '../lib/log-file.js';
 import { resolveLimits } from '../limits.js';
 import { maybePromptPortless } from '../portless-prompt.js';
@@ -108,6 +109,8 @@ interface ClaudeCreateOptions {
   disk?: string;
   /** Sandbox backend: `docker` (default) or `daytona`. */
   provider?: string;
+  /** -v / --verbose: bypass the spinner and stream raw provider output. */
+  verbose?: boolean;
 }
 
 function buildClaudeCliOverrides(opts: ClaudeCreateOptions): Partial<UserConfig> {
@@ -252,6 +255,10 @@ export const claudeCommand = new Command('claude')
     '--provider <name>',
     "sandbox backend: 'docker' (default) or 'daytona' for a cloud box",
   )
+  .option(
+    '-v, --verbose',
+    'bypass the spinner and stream raw provider output (docker build / Daytona snapshot create) to stderr. The same content always lands in ~/.agentbox/logs/claude.log.',
+  )
   .argument(
     '[claude-args...]',
     "extra args passed to claude inside the box; place after `--`, e.g. `agentbox claude -- --model sonnet`",
@@ -347,6 +354,7 @@ export const claudeCommand = new Command('claude')
         sessionName: cfg.effective.claude.sessionName,
         mode: 'claude',
         extraArgs: effectiveClaudeArgs,
+        verbose: opts.verbose === true,
       });
       return;
     }
@@ -362,7 +370,7 @@ export const claudeCommand = new Command('claude')
           : (cfg.effective.box.hostSnapshot ?? false);
     const sessionName = cfg.effective.claude.sessionName;
 
-    const s = spinner();
+    const s = makeProgressReporter(opts.verbose === true);
     s.start('creating box');
     let containerName = '';
     try {
@@ -388,7 +396,7 @@ export const claudeCommand = new Command('claude')
         limits: resolveLimits(cfg.effective.box, opts),
         projectRoot,
         onLog: (line) => {
-          s.message(clampSpinnerLine(line));
+          s.message(line);
           cmdLog.write(line);
         },
       });
@@ -405,7 +413,7 @@ export const claudeCommand = new Command('claude')
       const rebuild = await rebuildPluginNativeDeps(result.record.container, {
         volume: result.record.claudeConfigVolume ?? SHARED_CLAUDE_VOLUME,
         onProgress: (line) => {
-          s.message(clampSpinnerLine(line));
+          s.message(line);
           cmdLog.write(line);
         },
       });

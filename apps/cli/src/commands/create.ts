@@ -1,4 +1,4 @@
-import { intro, log, outro, spinner } from '@clack/prompts';
+import { intro, log, outro } from '@clack/prompts';
 import {
   bumpProjectGcCounter,
   findProjectRoot,
@@ -15,8 +15,8 @@ import {
 } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { execSync, spawnSync } from 'node:child_process';
-import { clampSpinnerLine } from '../spinner-line.js';
 import { openCommandLog } from '../lib/log-file.js';
+import { makeProgressReporter } from '../lib/progress.js';
 import { maybePromptPortless } from '../portless-prompt.js';
 import { providerForCreate } from '../provider/registry.js';
 import { resolveLimits } from '../limits.js';
@@ -223,13 +223,8 @@ export const createCommand = new Command('create')
     // watch and reassures the user that progress is happening. Without
     // --verbose, the spinner shows only the latest collapsed status line
     // (full output still lands in cmdLog) — calmer default.
-    const verbose = opts.verbose === true;
-    const s = verbose ? null : spinner();
-    if (s) {
-      s.start('creating box');
-    } else {
-      process.stderr.write('creating box (verbose mode — streaming provider output below)\n');
-    }
+    const s = makeProgressReporter(opts.verbose === true);
+    s.start('creating box');
     try {
       // browser.default = 'playwright' | 'both' implies installing playwright
       // even if box.withPlaywright wasn't explicitly set in any layer.
@@ -251,11 +246,7 @@ export const createCommand = new Command('create')
         limits: resolveLimits(cfg.effective.box, opts),
         projectRoot,
         onLog: (line) => {
-          if (s) {
-            s.message(clampSpinnerLine(line));
-          } else {
-            process.stderr.write(line.endsWith('\n') ? line : line + '\n');
-          }
+          s.message(line);
           cmdLog.write(line);
         },
         providerOptions: {
@@ -265,11 +256,7 @@ export const createCommand = new Command('create')
           portlessStateDir: cfg.effective.portless.stateDir || undefined,
         },
       });
-      if (s) {
-        s.stop(`box ${result.record.container} ready`);
-      } else {
-        process.stderr.write(`box ${result.record.container} ready\n`);
-      }
+      s.stop(`box ${result.record.container} ready`);
 
       log.info(`id:        ${result.record.id}`);
       if (typeof result.record.projectIndex === 'number') {
@@ -353,11 +340,7 @@ export const createCommand = new Command('create')
         await attachShell(result.record);
       }
     } catch (err) {
-      if (s) {
-        s.stop('failed');
-      } else {
-        process.stderr.write('create failed\n');
-      }
+      s.stop('failed');
       const msg = err instanceof Error ? err.message : String(err);
       cmdLog.write(`FAIL: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
       log.error(msg);

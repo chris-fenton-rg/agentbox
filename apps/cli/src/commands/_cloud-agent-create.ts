@@ -16,9 +16,9 @@
  * only runs when the caller pre-resolved a non-docker provider.
  */
 
-import { log, outro, spinner } from '@clack/prompts';
+import { log, outro } from '@clack/prompts';
 import type { CreateBoxRequest, Provider } from '@agentbox/core';
-import { clampSpinnerLine } from '../spinner-line.js';
+import { makeProgressReporter } from '../lib/progress.js';
 import { cloudAgentAttach } from './_cloud-attach.js';
 
 export interface CloudAgentCreateArgs {
@@ -34,6 +34,8 @@ export interface CloudAgentCreateArgs {
   mode: 'claude' | 'codex' | 'opencode';
   /** Args passed to the agent after `--`. Threaded through to the attached CLI. */
   extraArgs?: string[];
+  /** Bypass the spinner and stream raw provider output to stderr. */
+  verbose?: boolean;
 }
 
 /**
@@ -42,12 +44,12 @@ export interface CloudAgentCreateArgs {
  * on the happy path.
  */
 export async function cloudAgentCreate(args: CloudAgentCreateArgs): Promise<void> {
-  const s = spinner();
+  const s = makeProgressReporter(args.verbose === true);
   s.start('creating cloud box');
   try {
     const result = await args.provider.create({
       ...args.request,
-      onLog: (line) => s.message(clampSpinnerLine(line)),
+      onLog: (line) => s.message(line),
     });
     const nSuffix =
       typeof result.record.projectIndex === 'number'
