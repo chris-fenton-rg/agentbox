@@ -11,6 +11,7 @@ import {
   inspectBox,
   killShellSession,
   listShellSessions,
+  parseShellSessionList,
   shellLabel,
   shellSessionInfo,
   shellSessionName,
@@ -112,6 +113,41 @@ async function resolveTargetSession(
   return DEFAULT_SHELL_SESSION;
 }
 
+/**
+ * Cloud equivalent of {@link resolveTargetSession}. Lists tmux sessions
+ * over `provider.exec` (`tmux list-sessions -F …` over SSH) and reuses
+ * the pure-string `allocateShellSessionName` helper. Empty list / tmux
+ * server not running / exec failure all degrade to "default `shell`".
+ */
+async function resolveCloudShellSessionName(
+  box: BoxRecord,
+  provider: { exec: (b: BoxRecord, argv: string[], opts?: { user?: string }) => Promise<{ exitCode: number; stdout: string }> },
+  user: string,
+  opts: ShellOptions,
+): Promise<string> {
+  if (opts.name !== undefined && opts.name.trim() !== '') {
+    return shellSessionName(opts.name);
+  }
+  if (!opts.new) return DEFAULT_SHELL_SESSION;
+  const r = await provider
+    .exec(
+      box,
+      [
+        'tmux',
+        'list-sessions',
+        '-F',
+        '#{session_name}\t#{session_created}\t#{session_attached}',
+      ],
+      { user },
+    )
+    .catch(() => ({ exitCode: 1, stdout: '' }));
+  // tmux server-not-running prints "no server running" on stderr and exits 1.
+  // Empty session list → use the default name.
+  if (r.exitCode !== 0) return DEFAULT_SHELL_SESSION;
+  const existing = parseShellSessionList(r.stdout).map((s) => s.sessionName);
+  return allocateShellSessionName(existing);
+}
+
 interface ShellSessionCfg {
   user: string;
   login: boolean;
@@ -196,7 +232,11 @@ export const shellCommand = new Command('shell')
             ? (login ? `bash -l -c ${shellSingle(effectiveCmd.join(' '))}` : `bash -c ${shellSingle(effectiveCmd.join(' '))}`)
             : (login ? 'bash -l' : 'bash');
         const oneShot = effectiveCmd.length > 0;
-        const sessionName = opts.name ?? 'shell';
+        // Resolve `--name` / `--new` like the docker branch: list existing
+        // tmux shell sessions over SSH (`tmux list-sessions -F ...`) and
+        // pick the next free `shell-N`. The session naming helpers in
+        // sandbox-docker are pure string ops — safe to reuse here.
+        const sessionName = await resolveCloudShellSessionName(box, provider, user, opts);
         const spec = await provider.buildAttach(box, 'shell', {
           sessionName,
           user,

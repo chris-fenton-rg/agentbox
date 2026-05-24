@@ -96,10 +96,8 @@ Implementation: per-agent option added to the `.option(...)` chain + provider-na
 ### 3.2 ✅ Extra agent args after `--` forwarded for cloud (done)
 `cloudAgentAttach` (`apps/cli/src/commands/_cloud-attach.ts`) now builds the inner shell command via a base64-encoded launcher (`buildCloudAttachInnerCommand`) when `extraArgs` is non-empty: argv is joined newline-delimited, base64-encoded, and reconstructed inside the sandbox via `mapfile -t A < <(echo … | base64 -d); exec <binary> "${A[@]}"`. Base64 is opaque to every shell-quoting layer (SSH → tmux → bash), so args with spaces / quotes / shell metachars survive verbatim. Unit-tested in `apps/cli/test/cloud-attach.test.ts`. Limitation: args containing literal newlines aren't supported (none of claude/codex/opencode flags carry newlines in practice).
 
-### 3.3 🟡 `agentbox shell` cloud path doesn't support `--name <label>` / `--new` shell session management
-The Docker shell command has multi-session support (named shells, attach-by-label). The cloud branch uses a single fixed `sessionName: 'shell'` tmux session.
-
-**Fix:** route session naming + `--new` through `BuildAttachOptions.sessionName`; mirror docker's `allocateShellSessionName` / `listShellSessions` semantics for cloud using `tmux ls` over SSH.
+### 3.3 ✅ `agentbox shell --name/--new` for cloud (done)
+~~Single fixed session~~ — `agentbox shell` cloud branch now calls `resolveCloudShellSessionName(box, provider, user, opts)`. With `--name` it maps through `shellSessionName(label)` (same map as docker — `shell` / `shell-<label>`). With `--new` it runs `tmux list-sessions -F '#{session_name}\\t#{session_created}\\t#{session_attached}'` via `provider.exec` over SSH, parses with the pure-string `parseShellSessionList`, then picks the lowest-free with `allocateShellSessionName`. Empty list, tmux-not-running, or any exec failure degrades to the default `shell` (matches docker's best-effort listing).
 
 ### 3.4 ✅ `agentbox cp` / `download` cloud-routed (done)
 ~~Cloud-guarded~~ — routed through `provider.uploadPath` / `downloadPath` / `downloadDirContents`. See "Already landed".
