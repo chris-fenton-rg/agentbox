@@ -148,8 +148,8 @@ Cloud box's `cloud.previewUrls` only carries port 80/8080 today. Per-service `ex
 ### 5.2 🟢 No DinD verification for cloud
 The Daytona DinD PoC validated `dockerd` runs inside a Daytona sandbox, but our cloud provider doesn't launch `dockerd` (`packages/sandbox-docker/src/dockerd.ts` is Docker-only). The Dockerfile.box installs `docker.io` so a cloud user could `dockerd &` manually, but `agentbox`-driven in-box docker isn't wired.
 
-### 5.3 🟢 In-sandbox `agentbox-ctl daemon` log isn't surfaced
-Lives at `/var/log/agentbox/ctl-daemon.log` inside the sandbox. No CLI command pulls it. Should be reachable via `agentbox logs --daemon <cloud-box>` once `logs` routes for cloud (3.5).
+### 5.3 ✅ `agentbox logs --daemon` surfaces ctl-daemon log (done)
+~~No CLI path~~ — `logs.ts` accepts `--daemon`, which tails `/var/log/agentbox/ctl-daemon.log` directly via `tail -n N [-F]`. Works on both docker (over `provider.exec`) and cloud (non-follow → `provider.exec`; follow → `provider.buildAttach(kind: 'shell', noTmux: true)` running the tail argv over SSH). The service positional argument is optional when `--daemon` is set; usage hint updated.
 
 ---
 
