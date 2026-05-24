@@ -82,10 +82,22 @@ async function seedFromGitBundle(args: SeedFromGitBundleArgs): Promise<void> {
   const stage = await mkdtemp(join(tmpdir(), 'agentbox-bundle-'));
   const bundlePath = join(stage, 'workspace.bundle');
   try {
-    // `--all` captures every ref + full history; the sandbox gets a real clone
-    // with the user's local commits, not just origin's view. Tags etc. ride
-    // along automatically.
-    await execa('git', ['-C', args.hostRepo, 'bundle', 'create', bundlePath, '--all']);
+    // Default: `--all` captures every ref + full history so the sandbox gets
+    // a real clone with the user's local commits and tags. Monorepos with
+    // deep history make that a slow + big upload — opt out via
+    // `AGENTBOX_BUNDLE_DEPTH=N` to ship only the last N commits of HEAD
+    // (shallow clone semantics; `git push` from inside the box still works
+    // because the remote knows the merge base). 0 / empty / non-numeric →
+    // full history.
+    const depthRaw = process.env['AGENTBOX_BUNDLE_DEPTH'];
+    const depth = depthRaw ? Number.parseInt(depthRaw, 10) : NaN;
+    const bundleArgs: string[] = ['-C', args.hostRepo, 'bundle', 'create', bundlePath];
+    if (Number.isFinite(depth) && depth > 0) {
+      bundleArgs.push(`--depth=${String(depth)}`, 'HEAD');
+    } else {
+      bundleArgs.push('--all');
+    }
+    await execa('git', bundleArgs);
     const remoteUrl = await readOriginUrl(args.hostRepo);
     const remoteBundle = '/tmp/agentbox-workspace.bundle';
     await args.backend.uploadFile(args.handle, bundlePath, remoteBundle);

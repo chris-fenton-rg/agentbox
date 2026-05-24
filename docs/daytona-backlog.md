@@ -38,10 +38,8 @@ Implementation: host-side staging lives in `packages/sandbox-docker/src/host-sta
 
 **Remaining follow-up**: box→host pull (the reverse direction of `agentbox download claude|codex|opencode` against a cloud volume) is deferred. Today the docker `download` paths still work for docker boxes only.
 
-### 1.3 🟡 Workspace bundle is full-history `--all`
-`packages/sandbox-cloud/src/workspace-seed.ts` does `git bundle create --all`, which is fine for small repos but slow + big upload for monorepos with deep history. (eg use range export from the start of the current branch)
-
-**Fix:** add a depth knob (`AGENTBOX_BUNDLE_DEPTH` env or config key); default to full history, allow `--depth N` for shallow seeding.
+### 1.3 ✅ Workspace bundle depth knob (done)
+~~Always `--all`~~ — `seedFromGitBundle` now honors `AGENTBOX_BUNDLE_DEPTH=N`. Default (unset / 0 / non-numeric) stays at `git bundle create --all`. With N > 0 the bundle becomes `git bundle create --depth=N HEAD`, shipping only the last N commits of HEAD as a shallow clone — fast enough for monorepos with deep history. `git push` from inside the sandbox still resolves merge bases because the host relay's pull-back fetches the per-box branch and lets the real `git push` find common ancestors via the host repo's full history.
 
 ### 1.4 🟡 Nested-repo monorepos not seeded
 `workspace-seed.ts` v0 only handles the root repo (`detectGitRepos(...).find(r => r.kind === 'root')`). Nested submodules / monorepo with multiple `.git` dirs are silently skipped.
