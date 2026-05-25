@@ -26,7 +26,7 @@ export interface PortlessPromptArgs {
  * prompt (box web apps are then served at `http://<box>.localhost:1355`).
  * Best-effort — any failure degrades to a printed hint, never throws.
  */
-async function setupPortlessHost(): Promise<void> {
+export async function setupPortlessHost(): Promise<void> {
   let state = await detectPortless();
 
   if (!state.installed) {

@@ -105,7 +105,16 @@ export async function listBoxes(): Promise<ListedBox[]> {
       if (b.provider && b.provider !== 'docker') {
         const persisted = await readBoxStatus(b);
         const webPort = b.cloud?.webPort ?? 0;
-        const webUrl = webPort > 0 ? b.cloud?.previewUrls?.[webPort] : undefined;
+        // Prefer the stable Portless URL when one was registered (Hetzner
+        // gets it by default; Daytona naturally skips because its URL isn't
+        // loopback). Falls back to the ephemeral `127.0.0.1:<random>`
+        // preview URL when Portless isn't in play.
+        const portlessWebUrl =
+          b.portlessAlias !== undefined
+            ? (b.portlessUrl ?? `https://${b.portlessAlias}.localhost`)
+            : undefined;
+        const cachedWebUrl = webPort > 0 ? b.cloud?.previewUrls?.[webPort] : undefined;
+        const webUrl = portlessWebUrl ?? cachedWebUrl;
         const endpoints: BoxEndpoints = {
           domain: webUrl ? safeHost(webUrl) : '',
           domainIsOrb: false,

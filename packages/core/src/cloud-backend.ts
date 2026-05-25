@@ -195,4 +195,26 @@ export interface CloudBackend {
    * `destroy()` "already gone" semantics).
    */
   deleteSnapshot?(snapshotName: string): Promise<void>;
+
+  /**
+   * Optional: bring up a `portless` proxy *inside the sandbox* that mirrors
+   * the host's Portless setup, so `https://<boxName>.localhost` resolves to
+   * the same content from both the host browser and the in-box browser.
+   *
+   * Only meaningful for backends whose `previewUrl()` returns a loopback URL
+   * (Hetzner — the host is reached via `ssh -L 127.0.0.1:<ephemeral>`). Cloud
+   * backends that surface a public URL (Daytona) omit this; their URL is
+   * already reachable from both sides.
+   *
+   * `proxyPort` + `tls` should match the host's portless mode so the URL is
+   * literally identical on both sides; `webPort` is the in-box port to alias
+   * to (the cloud WebProxy listens here).
+   *
+   * Best-effort: a failure logs but does not break create/start. Idempotent
+   * — a portless proxy already up on the port should be reused.
+   */
+  startInBoxPortless?(
+    h: CloudHandle,
+    opts: { boxName: string; proxyPort: number; tls: boolean; webPort: number },
+  ): Promise<void>;
 }

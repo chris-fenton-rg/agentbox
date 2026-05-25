@@ -17,7 +17,7 @@ import { Command } from 'commander';
 import { execSync, spawnSync } from 'node:child_process';
 import { openCommandLog } from '../lib/log-file.js';
 import { makeProgressReporter } from '../lib/progress.js';
-import { maybePromptPortless } from '../portless-prompt.js';
+import { maybePromptPortless, setupPortlessHost } from '../portless-prompt.js';
 import { providerForCreate } from '../provider/registry.js';
 import { resolveLimits } from '../limits.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
@@ -169,20 +169,28 @@ export const createCommand = new Command('create')
       resolveDefaultCheckpoint(cfg.effective, providerName as 'docker' | 'daytona' | 'hetzner'),
     );
 
-    // Cloud providers don't use the Docker-only Portless proxy and would
-    // hand off to `agentbox claude` (a Docker-only flow that ignores
-    // --provider) via the setup wizard — skip both for non-docker providers
-    // so `agentbox create --provider daytona` provisions a cloud box.
+    // Cloud providers that use the Daytona public-URL path don't need
+    // Portless; the URL is already reachable from anywhere. The wizard's
+    // first-run `agentbox claude` hand-off is also Docker-only.
     const isDocker = providerName === 'docker';
+    const isHetzner = providerName === 'hetzner';
 
-    const portlessEnabled = isDocker
-      ? await maybePromptPortless({
-          engine: await detectEngine(),
-          enabled: cfg.effective.portless.enabled,
-          yes: !!opts.yes,
-          cwd: opts.workspace,
-        })
-      : undefined;
+    // Resolve Portless. Docker: classic prompt-once-then-persist flow.
+    // Hetzner: default-on (per the "safe defaults for cloud providers"
+    // policy) — silently set up the host proxy when undefined; respect
+    // explicit --no-portless / config `portless.enabled: false`.
+    let portlessEnabled: boolean | undefined;
+    if (isDocker) {
+      portlessEnabled = await maybePromptPortless({
+        engine: await detectEngine(),
+        enabled: cfg.effective.portless.enabled,
+        yes: !!opts.yes,
+        cwd: opts.workspace,
+      });
+    } else if (isHetzner) {
+      portlessEnabled = cfg.effective.portless.enabled ?? true;
+      if (portlessEnabled) await setupPortlessHost();
+    }
 
     // First-run wizard: when no agentbox.yaml exists, optionally hand off to
     // `agentbox claude` so the agent can interactively generate one. The

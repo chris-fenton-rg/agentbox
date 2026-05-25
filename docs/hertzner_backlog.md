@@ -73,6 +73,7 @@ Status legend:
   - `state`: Hetzner status → `CloudState` mapping (10 cases, including transitional ones reported as `running` so callers don't ping-pong). 10 unit tests verify the mapping.
   - `exec` / `uploadFile` / `downloadFile` / `listFiles`: all reuse the ControlMaster via `-S <sock>`. `exec` wraps the remote cmd in `bash -lc` so `/etc/profile.d/agentbox.sh`'s PATH/DISPLAY/AGENT_BROWSER_* are sourced.
   - `previewUrl` / `signedPreviewUrl`: mint a `ssh -L 127.0.0.1:<localPort>:127.0.0.1:<remote>` and return `http://127.0.0.1:<localPort>`. The cloud-provider layer adds the Portless `<box-name>.localhost` alias on top — handled provider-side rather than in the backend, so the backend stays focused on plumbing.
+  - ✅ `startInBoxPortless(h, {boxName, proxyPort, tls, webPort})`: brings up a `portless` proxy *inside* the VPS that mirrors the host's mode so `https://<boxName>.localhost` resolves to the same content from both the host browser and the in-box browser. Idempotent — `portless proxy start` exits 0 on a running proxy. Node has `cap_net_bind_service` set in the base snapshot so binding 80/443 inside the VPS doesn't need sudo. The `portless` CLI is already baked in by `install-box.sh:316`.
   - `attachArgv`: returns ssh argv with `-S <controlPath>` (reuses ControlMaster — no new auth, no SSH-token mint pressure unlike Daytona).
   - `createSnapshot` / `deleteSnapshot`: maps to Hetzner `create_image` (no-pause by default — matches `docker commit` semantics + the user's "optionally without pausing"). `deleteSnapshot` is idempotent on 404. Both labeled with `agentbox.role=ckpt` + `agentbox.box=<sandboxId>` for orphan discovery.
   - No `ensureVolume` — Hetzner has no shared-volume primitive suitable for agent credentials (the cloud-provider layer probes for it and degrades cleanly).
@@ -144,7 +145,10 @@ node apps/cli/dist/index.js create -y -n hetzner-smoke --provider hetzner
 # 3. Bridge / exec / Portless symmetry.
 node apps/cli/dist/index.js exec hetzner-smoke -- uname -a
 node apps/cli/dist/index.js url hetzner-smoke              # https://hetzner-smoke.localhost
-node apps/cli/dist/index.js exec hetzner-smoke -- curl -k https://hetzner-smoke.localhost/
+# Same URL works on host AND in-box (a portless proxy runs inside the VPS too):
+curl http://hetzner-smoke.localhost:1355                   # host-side via host portless
+node apps/cli/dist/index.js exec hetzner-smoke -- curl http://hetzner-smoke.localhost:1355
+# Smoke fixture for end-to-end Portless: cd examples/express-ready && cp .env.example .env
 
 # 4. DinD inside the VPS.
 node apps/cli/dist/index.js exec hetzner-smoke -- docker run --rm hello-world

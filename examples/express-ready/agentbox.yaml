@@ -1,0 +1,19 @@
+# yaml-language-server: $schema=../../packages/ctl/schema/agentbox.schema.json
+tasks:
+  install:
+    command: 'cp -n .env.example .env 2>/dev/null || true; npm install'
+
+services:
+  web:
+    command: 'set -a; [ -f .env ] && . ./.env; set +a; node server.js'
+    needs: [install]
+    env:
+      PORT: '3000'
+      GREETING: 'hello from agentbox'
+    expose:
+      port: 3000
+      as: 80
+    ready_when:
+      port: 3000
+      timeout_ms: 60000
+    restart: on-failure

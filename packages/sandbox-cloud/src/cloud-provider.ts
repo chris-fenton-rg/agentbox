@@ -36,6 +36,9 @@ import {
   forgetBoxFromRelay,
   generateRelayToken,
   generateVncPassword,
+  portlessAlias,
+  portlessGetUrl,
+  portlessUnalias,
   registerBoxWithRelay,
 } from '@agentbox/sandbox-docker';
 import {
@@ -64,8 +67,14 @@ import { seedCloudWorkspace } from './workspace-seed.js';
 
 /** Workspace mount path inside every cloud sandbox. Matches the Docker model. */
 export const CLOUD_WORKSPACE_DIR = '/workspace';
-/** In-box port the supervisor's WebProxy binds to. Non-privileged so no `setcap` dep. */
-export const CLOUD_WEB_PROXY_PORT = 8080;
+/**
+ * In-box port the supervisor's WebProxy binds to. Matches `RESERVED_WEB_PORT`
+ * in `@agentbox/ctl` (the only container port AgentBox publishes) — node has
+ * `cap_net_bind_service` set in both the Docker and Hetzner base images so the
+ * bind to <1024 needs no root. Daytona's base image inherits the same setcap
+ * via Dockerfile.box.
+ */
+export const CLOUD_WEB_PROXY_PORT = 80;
 /** In-box port the noVNC viewer (websockify) serves on — fixed by Dockerfile.box. */
 export const CLOUD_VNC_PORT = 6080;
 /**
@@ -96,6 +105,92 @@ export interface CreateCloudProviderOptions {
 }
 
 const FALLBACK_IMAGE = 'agentbox/box:dev';
+
+/** Default Portless no-TLS proxy port — matches the host wizard's choice. */
+const DEFAULT_PORTLESS_PROXY_PORT = 1355;
+
+/**
+ * Parse a host portless preview URL like `http://my-box.localhost:1355` /
+ * `https://my-box.localhost` into the proxy mode the in-VPS mirror should
+ * match. Returns `undefined` when the URL isn't a `*.localhost` portless URL
+ * (e.g. portless isn't installed and we fell back to a loopback URL).
+ */
+function parsePortlessUrl(url: string): { proxyPort: number; tls: boolean } | undefined {
+  try {
+    const u = new URL(url);
+    if (!u.hostname.endsWith('.localhost')) return undefined;
+    const tls = u.protocol === 'https:';
+    const proxyPort = u.port
+      ? Number.parseInt(u.port, 10)
+      : tls
+        ? 443
+        : 80;
+    if (!Number.isFinite(proxyPort)) return undefined;
+    return { proxyPort, tls };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Parse a loopback `http://127.0.0.1:<N>` URL into its port. Returns
+ * `undefined` for any non-loopback URL (Daytona-style public URLs naturally
+ * skip the Portless alias path).
+ */
+function parseLoopbackPort(url: string): number | undefined {
+  try {
+    const u = new URL(url);
+    if (u.hostname !== '127.0.0.1' && u.hostname !== 'localhost') return undefined;
+    const port = Number.parseInt(u.port, 10);
+    return Number.isFinite(port) ? port : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Register the host Portless alias for `<boxName>.localhost -> <webPreviewUrl>`
+ * and bring up the in-VPS mirror proxy so the same URL works from inside the
+ * box. Best-effort: every step is gated on a previous step's success, and any
+ * failure logs but doesn't throw. Returns `{ alias, url }` when the host alias
+ * landed (so the caller can persist it on the BoxRecord), `undefined` otherwise.
+ */
+async function bootstrapPortlessForCloudBox(
+  backend: CloudBackend,
+  handle: CloudHandle,
+  args: { boxName: string; webPreviewUrl: string; webPort: number; onLog: (line: string) => void },
+): Promise<{ alias: string; url: string } | undefined> {
+  const localPort = parseLoopbackPort(args.webPreviewUrl);
+  if (localPort === undefined) return undefined;
+  const ok = await portlessAlias(args.boxName, localPort);
+  if (!ok) {
+    args.onLog(
+      `portless: alias not registered (portless CLI missing or not running) — host URL stays http://127.0.0.1:${String(localPort)}`,
+    );
+    return undefined;
+  }
+  const url = await portlessGetUrl(args.boxName);
+  args.onLog(`portless alias ${url} -> 127.0.0.1:${String(localPort)}`);
+  if (backend.startInBoxPortless) {
+    const mode = parsePortlessUrl(url) ?? { proxyPort: DEFAULT_PORTLESS_PROXY_PORT, tls: false };
+    try {
+      await backend.startInBoxPortless(handle, {
+        boxName: args.boxName,
+        proxyPort: mode.proxyPort,
+        tls: mode.tls,
+        webPort: args.webPort,
+      });
+      args.onLog(
+        `portless: in-box mirror up on 127.0.0.1:${String(mode.proxyPort)} (${mode.tls ? 'https' : 'http'})`,
+      );
+    } catch (err) {
+      args.onLog(
+        `portless: in-box mirror failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  return { alias: args.boxName, url };
+}
 
 export function createCloudProvider(
   backend: CloudBackend,
@@ -312,6 +407,27 @@ export function createCloudProvider(
         } catch {
           webPreview = undefined;
         }
+
+        // Portless host alias + in-VPS mirror. Default-on for backends whose
+        // `previewUrl()` returns a loopback URL (Hetzner); naturally skipped
+        // for public-URL backends (Daytona) because the URL doesn't parse as
+        // 127.0.0.1. Caller can opt out via `providerOptions.portless: false`.
+        // Best-effort: every step logs + continues on failure.
+        const portlessOpt = (req.providerOptions?.['portless'] as boolean | undefined) ?? true;
+        let portlessAliasName: string | undefined;
+        let portlessUrlResolved: string | undefined;
+        if (portlessOpt && webPreview) {
+          const r = await bootstrapPortlessForCloudBox(backend, handle, {
+            boxName: name,
+            webPreviewUrl: webPreview.url,
+            webPort: CLOUD_WEB_PROXY_PORT,
+            onLog: log,
+          });
+          if (r) {
+            portlessAliasName = r.alias;
+            portlessUrlResolved = r.url;
+          }
+        }
         // Per-service preview URLs. Each `services.*.expose.port` from
         // `agentbox.yaml` gets a direct preview URL alongside the main
         // WebProxy URL — lets users hit services without going through the
@@ -386,6 +502,8 @@ export function createCloudProvider(
           relayToken,
           withPlaywright: req.withPlaywright,
           withEnv: req.withEnv,
+          portlessAlias: portlessAliasName,
+          portlessUrl: portlessUrlResolved,
           vncEnabled,
           vncPassword,
           vncContainerPort: vncEnabled ? CLOUD_VNC_PORT : undefined,
@@ -476,8 +594,32 @@ export function createCloudProvider(
         ...servicePreviews,
       };
       if (webPreview !== undefined) mergedPreviews[webPort] = webPreview.url;
+
+      // Portless: the `ssh -L` local port is fresh after `agentbox start`
+      // (pickFreePort picks again), and the in-VPS portless proxy died with
+      // the VPS. Re-register the host alias against the new local port and
+      // bring the in-box mirror back up. Skipped when no host portless alias
+      // was set originally (user opted out at create) or when the URL is
+      // non-loopback (Daytona).
+      let portlessAliasName: string | undefined = box.portlessAlias;
+      let portlessUrlResolved: string | undefined = box.portlessUrl;
+      if (box.portlessAlias && webPreview) {
+        const r = await bootstrapPortlessForCloudBox(backend, h, {
+          boxName: box.name,
+          webPreviewUrl: webPreview.url,
+          webPort,
+          onLog: () => {},
+        });
+        if (r) {
+          portlessAliasName = r.alias;
+          portlessUrlResolved = r.url;
+        }
+      }
+
       const next: BoxRecord = {
         ...box,
+        portlessAlias: portlessAliasName,
+        portlessUrl: portlessUrlResolved,
         cloud: {
           ...(box.cloud ?? { backend: providerName, sandboxId: h.sandboxId }),
           webPort,
@@ -562,6 +704,15 @@ export function createCloudProvider(
         const msg = err instanceof Error ? err.message : String(err);
         if (!/not.?found|missing/i.test(msg)) throw err;
       }
+      // Best-effort: drop the host Portless alias so `<box>.localhost` stops
+      // pointing at a dead ssh -L. The in-VPS portless dies with the VPS.
+      if (box.portlessAlias) {
+        try {
+          await portlessUnalias(box.portlessAlias);
+        } catch {
+          // portlessUnalias swallows already; paranoid catch in case.
+        }
+      }
       // Best-effort: stop the host poller and drop the registration.
       try {
         await forgetBoxFromRelay(box.id);
@@ -578,7 +729,17 @@ export function createCloudProvider(
     async inspect(box: BoxRecord): Promise<InspectedBox> {
       const state = await probe(box);
       const webPort = box.cloud?.webPort ?? CLOUD_WEB_PROXY_PORT;
-      const webUrl = box.cloud?.previewUrls?.[webPort];
+      // Prefer the stable Portless URL for the `web` endpoint when one was
+      // registered — matches Docker's endpoint shape (sandbox-docker/src/
+      // endpoints.ts:108-117) so `<name>.localhost` shows up uniformly in
+      // `agentbox list` / `inspect`. Falls back to the ephemeral preview URL
+      // when Portless wasn't enabled or didn't take.
+      const portlessWebUrl =
+        box.portlessAlias !== undefined
+          ? (box.portlessUrl ?? `https://${box.portlessAlias}.localhost`)
+          : undefined;
+      const cachedWebUrl = box.cloud?.previewUrls?.[webPort];
+      const webUrl = portlessWebUrl ?? cachedWebUrl;
       // Surface each per-service preview URL alongside the main WebProxy.
       // Naming is `service-<port>` because we don't track the YAML name
       // -> port map on the record (avoids extra wire shape just for

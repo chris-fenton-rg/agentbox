@@ -593,6 +593,27 @@ export const hetznerBackend: CloudBackend = {
     return this.previewUrl(h, port);
   },
 
+  async startInBoxPortless(h, opts): Promise<void> {
+    // Bring up a `portless` proxy *inside the VPS* mirroring the host's
+    // mode so `<boxName>.localhost:<P>` resolves to the same content on
+    // both sides. The `portless` CLI is baked into the base snapshot by
+    // install-box.sh:316. Idempotent — `portless proxy start` exits 0 if a
+    // proxy is already running on the port. Best-effort: a failure here
+    // just means the in-box symmetric URL won't resolve; the host URL
+    // still works.
+    //
+    // Run as root (vscode has NOPASSWD sudo): portless's :443/:80 TLS
+    // proxy self-elevates to root anyway, and its state lands in
+    // /root/.portless. A subsequent `portless alias` from vscode would
+    // write to /home/vscode/.portless and the proxy wouldn't see it —
+    // the two state dirs are disjoint. Using sudo for both keeps them
+    // pointed at the same `/root/.portless`.
+    const tlsFlag = opts.tls ? '' : '--no-tls';
+    const startCmd = `sudo portless proxy start ${tlsFlag} -p ${String(opts.proxyPort)}`.replace(/\s+/g, ' ');
+    const aliasCmd = `sudo portless alias ${shellQuote(opts.boxName)} ${String(opts.webPort)}`;
+    await this.exec(h, `${startCmd}; ${aliasCmd}`);
+  },
+
   async attachArgv(h): Promise<string[]> {
     const { target } = await ensureLiveTarget(h.sandboxId);
     // Reuse the ControlMaster via `-S <sock>` — no new auth handshake, no

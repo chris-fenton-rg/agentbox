@@ -7,15 +7,21 @@ description: Generate an agentbox.yaml for the current AgentBox workspace. Invok
 
 ## Box layout (what you're configuring against)
 
-Your user i `vscode` and you can use passwordless sudo to run commands as root.
+Your user i `vscode` and you can use `sudo` to run commands as root.
 
-`/workspace` is the box's plain writable filesystem — a per-box git worktree on a fresh `agentbox/<box-name>` branch (or a tar-piped copy of the host workspace for non-git projects). Anything you install or build into `/workspace` (incl. `node_modules`, `.next`, `target`, `.venv`) lives in the **container's writable layer** and is captured wholesale by `agentbox checkpoint` (`docker commit`) — so a setup task that runs the install once becomes a warm-start asset for every future box in the project. Everything is wiped on `agentbox destroy`.
+`/workspace` is where the user code lives, a per-box git worktree on a fresh `agentbox/<box-name>` branch (or a tar-piped copy of the host workspace for non-git projects).
+Run `agentbox checkpoint --set-default` (similar to `docker commit`) to save any changes make to the system and workspace so that new boxes will start from a warm state. Everything is wiped on `agentbox destroy`.
 
-Three bind mounts wire the box back to the host:
+Some special folders:
 
-- **Host main repo's `.git/`** — bind-mounted RW at its identical absolute host path. In-box commits land on the host's branch refs (visible to `git log` on the host immediately); the box itself carries no SSH/git creds, so `git push` goes through the host relay (`agentbox-ctl git push`). The host's **working tree is never written to** — only refs/objects under `.git/`.
-- **`~/.claude`** — a Docker named volume (`agentbox-claude-config`, shared across boxes by default) seeded from the host's `~/.claude` on each create so auth, skills, and plugins persist without leaking the host's home dir.
+- **Host main repo's `.git/`** — If the box bind-mounted RW at its identical absolute host path. In-box commits land on the host's branch refs (visible to `git log` on the host immediately); the box itself carries no SSH/git creds, so `git push` goes through the host relay (`agentbox-ctl git push`). The host's **working tree is never written to** — only refs/objects under `.git/`.
+- **`~/.claude`** — and similar home folders for coding agents are seeded from the host's `~/.claude` on each create so auth, skills, and plugins persist without leaking the host's home dir.
 - **`agentbox.yaml`** — read by `agentbox-ctl` from `/workspace`. Tasks and services declared here are what the supervisor will run.
+
+Exposed ports and services:
+- **portless** - every port with `expose:` setting in agentbox.yaml, will be exposed not only as a local port but also as a special domain name `https://<name>.localhost` (so on https) using `portless` cli and proxy. This will be also mapped to the host where also `portless` proxy is running so users can access the same service on the same looking url.
+- **vnc** - the webVNC server exposed on 6080 will be proxies to the host on a random port.
+- **vscode** - the vscode server is proxied to the host on a random port.
 
 ## Goal
 
@@ -64,7 +70,7 @@ The box's primary web app (the dev server / Next.js / API the user opens in a br
       as: 80        # must be 80 — the container port AgentBox publishes
 ```
 
-At most **one** service may set `expose:`. AgentBox forwards container `:80` to `127.0.0.1:<port>` and publishes it on the host, so `agentbox list`/`status` show it as the box's main URL on every engine (no OrbStack dependency). Set this on the same service whose `ready_when:` you just wrote (a DB or worker should **not** get `expose:`).
+At most **one** service may set `expose:`. AgentBox forwards container `:80` to `127.0.0.1:<port>` and publishes it on the host with `portless` proxy to a <boxname>.localhost url, so `agentbox list`/`status` show it as the box's main URL on every engine (no OrbStack dependency). Set this on the same service whose `ready_when:` you just wrote (a DB or worker should **not** get `expose:`).
 
 ## 4. Restart + backoff
 
@@ -179,11 +185,12 @@ Tell the user (verbatim):
    ```
 
    your box is ready, you can start more sessions with `agentbox claude`
+   you can access the web app at https://<boxname>.localhost
 
 ## 10. Known issues
 
 - For Nextjs/Vite/Tasnstack projects, makes sure to forward also websocket for hot reload.
 
-- The `install` task is intentionally a no-op once `node_modules/.agentbox-installed` exists. Do **not** remove the marker guard to "force a fresh install" — that reinstalls on every box start. To force a one-off rebuild, delete `node_modules` (or just the marker) then run `agentbox-ctl reload`.
+- Service like flask, nextjs, BETTER_AUTH_URL, NEXT_PUBLIC_APP_URL should use the <boxname>.localhost url for the local development so that on the host it will use the same url as the box.
 
-- Host-only CLI wrappers (portless, etc.) must be bypassed, eg some projects wrap the dev server with a host-side proxy (here: `portless projectname next dev --turbopack`). Override the service command: to call the underlying tool directly (`next dev --turbopack`)
+- The `install` task is intentionally a no-op once `node_modules/.agentbox-installed` exists. Do **not** remove the marker guard to "force a fresh install" — that reinstalls on every box start. To force a one-off rebuild, delete `node_modules` (or just the marker) then run `agentbox-ctl reload`.
