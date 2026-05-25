@@ -33,7 +33,12 @@ import {
 } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
-import { ATTACH_IN_HELP, parseAttachInOption } from './_attach-in.js';
+import {
+  ATTACH_IN_HELP,
+  INLINE_HELP,
+  NO_ATTACH_HELP,
+  resolveAttachInOption,
+} from './_attach-in.js';
 import { cloudAgentAttach } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
 import { providerForCreate } from '../provider/registry.js';
@@ -115,6 +120,10 @@ interface CodexCreateOptions {
   verbose?: boolean;
   /** Raw `--attach-in <mode>` value; validated by `parseAttachInOption`. */
   attachIn?: string;
+  /** -i / --inline: shortcut for `--attach-in same`. */
+  inline?: boolean;
+  /** Commander parses `-b, --no-attach` as `attach: false` (defaults true). */
+  attach?: boolean;
 }
 
 function buildCodexCliOverrides(opts: CodexCreateOptions): Partial<UserConfig> {
@@ -132,7 +141,7 @@ function buildCodexCliOverrides(opts: CodexCreateOptions): Partial<UserConfig> {
   if (Object.keys(box).length > 0) out.box = box;
   if (Object.keys(codex).length > 0) out.codex = codex;
   if (opts.portless !== undefined) out.portless = { enabled: opts.portless };
-  const attachIn = parseAttachInOption(opts.attachIn);
+  const attachIn = resolveAttachInOption(opts);
   if (attachIn !== undefined) out.attach = { openIn: attachIn };
   return out;
 }
@@ -243,6 +252,8 @@ export const codexCommand = new Command('codex')
     'bypass the spinner and stream raw provider output to stderr. The same content always lands in ~/.agentbox/logs/codex.log.',
   )
   .option('--attach-in <mode>', ATTACH_IN_HELP)
+  .option('-i, --inline', INLINE_HELP)
+  .option('-b, --no-attach', NO_ATTACH_HELP)
   .argument(
     '[codex-args...]',
     "extra args passed to codex inside the box; place after `--`, e.g. `agentbox codex -- -m gpt-5.4`",
@@ -291,6 +302,7 @@ export const codexCommand = new Command('codex')
         extraArgs: codexArgs,
         verbose: opts.verbose === true,
         openIn: cfg.effective.attach.openIn,
+        attach: opts.attach !== false,
       });
       return;
     }
@@ -369,6 +381,12 @@ export const codexCommand = new Command('codex')
           : '';
       s.stop(`box ${result.record.container} ready${nSuffix}`);
 
+      if (opts.attach === false) {
+        outro(
+          `session started — attach with: agentbox codex attach ${reattachRef(result.record)}`,
+        );
+        return;
+      }
       outro('attaching — Control+a d to detach, leaves codex running');
       await attachCodexWrapped(
         result.record,
@@ -399,6 +417,8 @@ interface CodexStartOptions {
   sessionName?: string;
   syncConfig?: boolean; // commander: --no-sync-config => false; default true
   attachIn?: string; // raw `--attach-in <mode>` value, validated below.
+  inline?: boolean; // -i / --inline: shortcut for --attach-in same.
+  attach?: boolean; // commander: --no-attach => false; default true.
 }
 
 // Shared by `codex start` and `codex attach`: if a session is already running,
@@ -409,13 +429,14 @@ async function startOrAttachCodex(
   codexArgs: string[],
   opts: CodexStartOptions,
 ): Promise<void> {
-  const attachIn = parseAttachInOption(opts.attachIn);
+  const attachIn = resolveAttachInOption(opts);
   const cliOverrides: Partial<UserConfig> = {};
   if (opts.sessionName) cliOverrides.codex = { sessionName: opts.sessionName };
   if (attachIn !== undefined) cliOverrides.attach = { openIn: attachIn };
   const cfg = await loadEffectiveConfig(box.workspacePath, { cliOverrides });
   const sessionName = cfg.effective.codex.sessionName;
   const openIn = cfg.effective.attach.openIn;
+  const wantAttach = opts.attach !== false;
 
   const insp = await inspectBox(box.id);
   if (insp.state === 'missing') {
@@ -426,6 +447,12 @@ async function startOrAttachCodex(
   // post-`--` args (they only apply to a fresh codex).
   const existing = await codexSessionInfo(box.container, sessionName);
   if (existing.running) {
+    if (!wantAttach) {
+      outro(
+        `session "${sessionName}" already running — attach with: agentbox codex attach ${reattachRef(box)}`,
+      );
+      return;
+    }
     outro(`session "${sessionName}" already running — attaching (Control+a d to detach)`);
     await attachCodexWrapped(box, sessionName, reattachRef(box), undefined, openIn);
     return;
@@ -475,8 +502,14 @@ async function startOrAttachCodex(
 
   s.stop(`box ${box.container} ready`);
 
+  if (!wantAttach) {
+    outro(
+      `session "${sessionName}" started — attach with: agentbox codex attach ${reattachRef(box)}`,
+    );
+    return;
+  }
   outro('attaching — Control+a d to detach, leaves codex running');
-  await attachCodexWrapped(box, sessionName, reattachRef(box));
+  await attachCodexWrapped(box, sessionName, reattachRef(box), undefined, openIn);
 }
 
 const codexAttachCommand = new Command('attach')
@@ -489,11 +522,12 @@ const codexAttachCommand = new Command('attach')
   )
   .option('--session-name <name>', 'tmux session name (default from config; built-in: codex)')
   .option('--attach-in <mode>', ATTACH_IN_HELP)
+  .option('-i, --inline', INLINE_HELP)
   .action(async function (this: Command, idOrName: string | undefined) {
     const opts = this.optsWithGlobals() as CodexStartOptions;
     intro('Attaching to Codex session...');
     try {
-      const attachIn = parseAttachInOption(opts.attachIn);
+      const attachIn = resolveAttachInOption(opts);
       const box = await resolveBoxOrExit(idOrName);
       if ((box.provider ?? 'docker') !== 'docker') {
         const cfg = await loadEffectiveConfig(box.workspacePath, {
@@ -532,6 +566,8 @@ const codexStartCommand = new Command('start')
     "skip rsyncing the host's ~/.codex into the box's volume before starting (faster; use existing in-box state)",
   )
   .option('--attach-in <mode>', ATTACH_IN_HELP)
+  .option('-i, --inline', INLINE_HELP)
+  .option('-b, --no-attach', NO_ATTACH_HELP)
   .argument(
     '[codex-args...]',
     "extra args passed to codex when starting a new session; ignored if a session is already running. Place after `--`, e.g. `agentbox codex start 1 -- -m gpt-5.4`",
@@ -540,12 +576,18 @@ const codexStartCommand = new Command('start')
     const opts = this.optsWithGlobals() as CodexStartOptions;
     intro('Starting Codex in a box...');
     try {
-      const attachIn = parseAttachInOption(opts.attachIn);
+      const attachIn = resolveAttachInOption(opts);
       // Two positionals make commander bind the first post-`--` token to
       // `[box]`; resolveBoxOrShift detects that and auto-picks the box.
       const { box, shifted } = await resolveBoxOrShift(idOrName);
       const effectiveCodexArgs = shifted && idOrName ? [idOrName, ...codexArgs] : codexArgs;
       if ((box.provider ?? 'docker') !== 'docker') {
+        if (opts.attach === false) {
+          outro(
+            `--no-attach: cloud agent sessions are started lazily on attach. Run: agentbox codex attach ${reattachRef(box)}`,
+          );
+          return;
+        }
         const cfg = await loadEffectiveConfig(box.workspacePath, {
           cliOverrides: attachIn ? { attach: { openIn: attachIn } } : {},
         });

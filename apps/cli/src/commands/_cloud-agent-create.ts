@@ -39,6 +39,12 @@ export interface CloudAgentCreateArgs {
   verbose?: boolean;
   /** Where to open the attached session; forwarded to `cloudAgentAttach`. */
   openIn?: AttachOpenIn;
+  /** When `false`, create the cloud box and skip the agent attach (background
+   *  mode). Defaults to `true`. On cloud providers the agent's tmux session is
+   *  created lazily by `cloudAgentAttach`; with `attach: false` the session
+   *  isn't started yet — a later `agentbox <agent> attach <box>` starts it on
+   *  first attach. */
+  attach?: boolean;
 }
 
 /**
@@ -63,6 +69,12 @@ export async function cloudAgentCreate(args: CloudAgentCreateArgs): Promise<void
     log.info(`provider:  ${result.record.provider}`);
     if (result.record.cloud?.sandboxId) {
       log.info(`sandboxId: ${result.record.cloud.sandboxId}`);
+    }
+    if (args.attach === false) {
+      outro(
+        `session not started — attach with: agentbox ${args.mode} attach ${result.record.name}`,
+      );
+      return;
     }
     outro(`attaching ${args.mode} — Control+a d to detach, leaves the agent running`);
     await cloudAgentAttach({
