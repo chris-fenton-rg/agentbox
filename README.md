@@ -15,17 +15,16 @@ Run multiple agents in parallel, with a single command, on your PC, self-hosted
 
 ## How it works
 
-Just run `agentbox claude` to automatically spin a new VM from the current folder.
+```sh
+npx @madarco/agentbox claude
+```
 
-- 📦 **Teleport** - Move your project to a dedicated VM, local on in the cloud, with a single command.
+- 📦 **Teleport** - Move your project to a dedicated VM, local or in the cloud, with a single command.
 - 🤖 **Automatic** - Bring all your skills, plugins, and settings for **Claude Code**, **Codex**, **Open Code**
 - 🌐 **A full Computer** — Dedicated browser, screen sharing, persisten shells and wermed up VS Code / Cursor IDE, with each box.
 - 💾 **Checkpoints** — Sub <1s startup of new boxes from a previous checkpoint, auto pause to save cost/resources when not in use.
 - 🔒 **Safe** - Your git credentials are kept on your local machine, with permission requests to push to the remote repository.
 
-```sh
-npx @madarco/agentbox claude # Start a persistent Claude Code in LOCAL docker box in a worktree, docker-in-docker, dedicated browser, etc.
-```
 
 ### Complete setup:
 
@@ -90,6 +89,7 @@ Uses `portless` to give box web apps the same URL from inside the box and on the
 - `agentbox daytona login` — interactive Daytona API key setup, saved to `~/.agentbox/secrets.env`
 - `agentbox hetzner login` — interactive Hetzner Cloud token setup, saved to `~/.agentbox/secrets.env`
 - `agentbox prepare [--provider daytona|hetzner]` — build the image and initial snapshot
+- `agentbox hetzner claude`, `agentbox hetzner codex`, `agentbox hetzner create`, etc.
 
 ## How to use
 
@@ -102,17 +102,17 @@ Uses `portless` to give box web apps the same URL from inside the box and on the
 
 **Access**
 
-- `agentbox dashboard` — Box list + the selected box's live agent session
 - `agentbox url` — Open a box's web app URL in the browser (even with no `expose:` service)
 - `agentbox screen` — Open a box's VNC (noVNC) viewer in the browser
 - `agentbox code` — Open a box in VS Code or Cursor via the Dev Containers extension
 - `agentbox shell` — Open an interactive bash shell in a box
 - `agentbox open` — Open a box's merged workspace in Finder
 - `agentbox logs` — Print recent log lines from a box service; `-f` to stream
+- `agentbox dashboard` — Box list + the selected box's live agent session
 
 **Inspect**
 
-- `agentbox list` (`ls`) — List all known agent boxes
+- `agentbox list` (`ls`) — List boxes in current project or `-g` for all
 - `agentbox status` — Show service + task status from a box's `agentbox-ctl` daemon
 - `agentbox top` — Live resource monitor (cpu/mem/pids/disk) for a box, project, or all boxes
 
