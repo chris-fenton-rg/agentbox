@@ -5,6 +5,8 @@ import {
   PtySession,
   MOUSE_ENABLE_SEQ,
   MOUSE_DISABLE_SEQ,
+  EXT_KEYS_ENABLE_SEQ,
+  EXT_KEYS_DISABLE_SEQ,
   type PtySpawn,
   type TerminalCtor,
 } from './pty-session.js';
@@ -254,7 +256,7 @@ export class Compositor {
   }
 
   async run(): Promise<void> {
-    this.out.write('\x1b[?1049h\x1b[?25l\x1b[2J' + MOUSE_ENABLE_SEQ);
+    this.out.write('\x1b[?1049h\x1b[?25l\x1b[2J' + MOUSE_ENABLE_SEQ + EXT_KEYS_ENABLE_SEQ);
     if (this.inp.isTTY) this.inp.setRawMode(true);
     this.inp.resume();
     this.inp.on('data', this.onData);
@@ -1069,7 +1071,7 @@ export class Compositor {
     this.inp.pause();
     // Belt-and-suspenders: clear the whole mouse-mode family in case Claude
     // enabled one we didn't individually track.
-    this.out.write(MOUSE_DISABLE_SEQ + '\x1b[?25h\x1b[0m\x1b[?1049l');
+    this.out.write(EXT_KEYS_DISABLE_SEQ + MOUSE_DISABLE_SEQ + '\x1b[?25h\x1b[0m\x1b[?1049l');
     this.resolveDone?.();
   }
 }

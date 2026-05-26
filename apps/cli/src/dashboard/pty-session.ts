@@ -43,6 +43,20 @@ export const MOUSE_ENABLE_SEQ = '\x1b[?1000h\x1b[?1002h\x1b[?1006h';
 const MOUSE_MODES = [1000, 1002, 1003, 1005, 1006, 1015];
 export const MOUSE_DISABLE_SEQ = MOUSE_MODES.map((n) => `\x1b[?${String(n)}l`).join('');
 
+// modifyOtherKeys=2 — ask the outer terminal to disambiguate modifier+key combos
+// (Shift+Enter, Ctrl+Enter, …) by sending CSI-u sequences like `\x1b[13;2u`
+// instead of collapsing them to plain `\r`. The in-box tmux already enables
+// `extended-keys on` + `terminal-features ",*:extkeys"` (see buildTmuxSessionArgs
+// in packages/sandbox-docker/src/claude.ts), which makes tmux emit this very
+// sequence to its outer terminal. In the wrapped-pty attach path that request
+// reaches the host terminal directly; in the dashboard it doesn't — the inner
+// PTY's output flows only into @xterm/headless (this file, constructor below)
+// and the compositor renders a cell grid from the parsed state, so tmux's
+// `\x1b[>4;2m` never reaches the user's real terminal. The compositor emits it
+// itself on start (and the reset on teardown) to put the host in the right mode.
+export const EXT_KEYS_ENABLE_SEQ = '\x1b[>4;2m';
+export const EXT_KEYS_DISABLE_SEQ = '\x1b[>4m';
+
 const BLANK: CellLike = {
   width: 1,
   chars: ' ',
