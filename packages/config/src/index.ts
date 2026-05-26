@@ -8,6 +8,7 @@ export {
   type ConfigLayer,
   type ConfigScope,
   type ConfigSource,
+  type CredentialForwarding,
   type EffectiveConfig,
   type EngineKind,
   type IdeFlavor,
@@ -46,6 +47,8 @@ export {
   loadProjectAgentboxDefaults,
   type LoadEffectiveConfigOptions,
 } from './load.js';
+
+export { loadCredentialForwarding } from './credential-forwarding.js';
 
 export {
   defaultCheckpointConfigKey,

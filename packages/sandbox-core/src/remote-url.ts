@@ -13,8 +13,12 @@ export type RemoteScheme = 'ssh' | 'https' | 'other';
 
 export function classifyRemoteUrl(url: string): RemoteScheme {
   if (/^ssh:\/\//i.test(url)) return 'ssh';
-  // scp-like: user@host:path/to/repo.git
-  if (/^[^/@\s]+@[^/:\s]+:[^/]/.test(url)) return 'ssh';
+  // scp-like: `user@host:path/to/repo.git` OR `user@host:/abs/path/repo.git`.
+  // Git treats both forms as valid scp-style SSH remotes (see git-clone(1)
+  // GIT URLS). The user/host segments forbid `/` so this can't ambiguously
+  // match `https://user@host/path` — that's caught by the `https?://` rule
+  // below; it has `//` before the user, so the `[^/@\s]+` anchor doesn't fit.
+  if (/^[^/@\s]+@[^/:\s]+:/.test(url)) return 'ssh';
   if (/^https?:\/\//i.test(url)) return 'https';
   return 'other';
 }

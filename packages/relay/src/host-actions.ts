@@ -37,6 +37,7 @@ import {
   runHostGh,
   type GhPrRpcParams,
 } from './gh.js';
+import { loadCredentialForwarding } from '@agentbox/config';
 import { askPrompt, type PendingPrompts, type PromptSubscribers } from './prompts.js';
 import type {
   CheckpointRpcParams,
@@ -770,8 +771,19 @@ interface FastPathOutcome {
 async function maybeRunGitFastPath(input: FastPathInput): Promise<FastPathOutcome> {
   const { action, backend, handle, containerPath, branch, remote, extraArgs, hostRepo } = input;
   const log = input.log ?? (() => {});
+
+  // Gate behind `box.credentialForwarding`. Default is 'off' — the safe
+  // path that never forwards host credentials into the box. Users opt in
+  // to 'transient' for speed via `agentbox config set box.credentialForwarding transient`.
+  const policy = await loadCredentialForwarding(hostRepo);
+  if (policy === 'off') {
+    log('git fast path: skipped (box.credentialForwarding=off — set to "transient" to enable)');
+    return { taken: false, result: emptyResult() };
+  }
+
   const execWithAgent = backend.execWithAgent?.bind(backend);
   if (!execWithAgent) {
+    log(`git fast path: backend ${backend.name} has no execWithAgent — falling back to bundle`);
     return { taken: false, result: emptyResult() };
   }
 
@@ -799,6 +811,7 @@ async function maybeRunGitFastPath(input: FastPathInput): Promise<FastPathOutcom
     }
     const gitCmd = buildBoxGitCommand(action.method, containerPath, remote, branch, extraArgs, 'ssh', null);
     if (!gitCmd) return { taken: false, result: emptyResult() };
+    log(`git fast path (ssh): ${action.method} via ssh -A`);
     const res = await execWithAgent(handle, gitCmd, { attemptTimeoutMs: 5 * 60_000 });
     if (isFastPathAuthFailure(res, 'ssh')) {
       log(`git fast path (ssh): auth failure (exit ${String(res.exitCode)}); falling back to bundle`);
@@ -823,6 +836,7 @@ async function maybeRunGitFastPath(input: FastPathInput): Promise<FastPathOutcom
     try {
       const gitCmd = buildBoxGitCommand(action.method, containerPath, remote, branch, extraArgs, 'https', inboxPort);
       if (!gitCmd) return { taken: false, result: emptyResult() };
+      log(`git fast path (https): ${action.method} via ssh -A -R cred-helper`);
       const res = await execWithAgent(handle, gitCmd, {
         attemptTimeoutMs: 5 * 60_000,
         reverseForward: { inboxPort, hostPort: proxy.port },
@@ -923,7 +937,7 @@ function isFastPathAuthFailure(res: CloudExecResult, scheme: 'ssh' | 'https'): b
   return (
     stderr.includes('could not read username') ||
     stderr.includes('terminal prompts disabled') ||
-    stderr.includes('credential helper') && stderr.includes('exited with')
+    (stderr.includes('credential helper') && stderr.includes('exited with'))
   );
 }
 

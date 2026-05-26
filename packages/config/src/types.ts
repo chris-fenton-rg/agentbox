@@ -13,6 +13,25 @@ export type EngineKind = 'orbstack' | 'docker-desktop' | 'other' | 'auto';
 export type BrowserKind = 'agent-browser' | 'playwright' | 'both';
 /** Sandbox backend new boxes are created on. */
 export type ProviderKind = 'docker' | 'daytona' | 'hetzner';
+
+/**
+ * Policy controlling whether agentbox may forward host credentials into the
+ * box for the duration of a single SSH connection.
+ *
+ *   - 'off'       — Safe default. All credentialed git operations fall back
+ *                   to the bundle round-trip via the host relay. The host
+ *                   never opens an `ssh -A` into the box; the host
+ *                   credential proxy is never started.
+ *   - 'transient' — Permit per-RPC `ssh -A` (and per-RPC reverse-forward of
+ *                   the credential proxy for HTTPS origins). Forwarded
+ *                   agent socket / proxy port live only for that one exec.
+ *                   Faster but a hostile in-box process can sign with the
+ *                   forwarded agent for the SSH session lifetime.
+ *
+ * Applies uniformly to the relay's `git.push` / `git.fetch` fast paths
+ * and the cloud workspace seed's in-box-clone fast path.
+ */
+export type CredentialForwarding = 'off' | 'transient';
 /** Where `agentbox claude|codex|opencode` opens the attached session when the host
  *  shell is running inside tmux or iTerm2. `same` keeps today's inline behavior. */
 export type AttachOpenIn = 'split' | 'window' | 'tab' | 'same';
@@ -46,6 +65,12 @@ export interface UserConfig {
     cpus?: number;
     pidsLimit?: number;
     disk?: string;
+    /**
+     * Whether host credentials may be transiently forwarded into the box
+     * for cloud-routed git operations (push/fetch/seed). See
+     * `CredentialForwarding`. Defaults to `'off'` — the safe path.
+     */
+    credentialForwarding?: CredentialForwarding;
   };
   checkpoint?: {
     maxLayers?: number;
@@ -132,6 +157,7 @@ export interface EffectiveConfig {
     cpus: number;
     pidsLimit: number;
     disk: string;
+    credentialForwarding: CredentialForwarding;
   };
   checkpoint: {
     maxLayers: number;
@@ -237,6 +263,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     cpus: 0,
     pidsLimit: 0,
     disk: '',
+    credentialForwarding: 'off',
   },
   checkpoint: {
     maxLayers: 3,
@@ -353,6 +380,13 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     description:
       'Per-provider override of `box.defaultCheckpoint` for hetzner. Wins over the global when set; set via `agentbox checkpoint set-default --provider hetzner`.',
     advanced: true,
+  },
+  {
+    key: 'box.credentialForwarding',
+    type: 'enum',
+    enumValues: ['off', 'transient'] as const,
+    description:
+      "Whether host credentials may be transiently forwarded into the box for cloud git ops. 'off' (default) → use the bundle round-trip via the host relay; 'transient' → permit per-RPC `ssh -A` (and `-R`-forwarded credential proxy for HTTPS origins). Trades safety for speed.",
   },
   {
     key: 'checkpoint.maxLayers',

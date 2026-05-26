@@ -3,6 +3,7 @@ import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CloudBackend, CloudHandle } from '@agentbox/core';
+import { loadCredentialForwarding } from '@agentbox/config';
 import { classifyRemoteUrl, detectGitRepos } from '@agentbox/sandbox-core';
 import { bashScript, quoteShellArgv } from './shell.js';
 
@@ -191,10 +192,9 @@ async function seedFromGitBundle(args: SeedFromGitBundleArgs): Promise<void> {
     // Try the fast path first when the backend supports it and we have a
     // reachable origin with credentials. On any failure, fall through to the
     // bundle path which is guaranteed to work but trades the host's upstream
-    // bandwidth.
-    const force = (process.env['AGENTBOX_FORCE_BUNDLE_SEED'] ?? '').toLowerCase();
-    const forceBundle = force === '1' || force === 'true' || force === 'yes';
-    const fastTried = !forceBundle && (await tryFastClone({ args, stage, carry, depth, log }));
+    // bandwidth. The fast path is also gated by `box.credentialForwarding`
+    // inside `tryFastClone` — `off` (default) → straight to bundle.
+    const fastTried = await tryFastClone({ args, stage, carry, depth, log });
     if (fastTried) return;
     await runBundleClone({ args, stage, carry, depth, log });
   } finally {
@@ -224,6 +224,16 @@ interface PathDeps {
  */
 async function tryFastClone(deps: PathDeps): Promise<boolean> {
   const { args, stage, carry, depth, log } = deps;
+
+  // Gate behind `box.credentialForwarding`. Default 'off' → bundle path
+  // straight away. 'transient' → proceed with the credential-forwarded
+  // in-box clone.
+  const policy = await loadCredentialForwarding(args.hostRepo);
+  if (policy === 'off') {
+    log('git fast seed: skipped (box.credentialForwarding=off — set to "transient" to enable)');
+    return false;
+  }
+
   const execGit = args.backend.execGitWithHostCreds?.bind(args.backend);
   if (!execGit) return false;
 
@@ -311,11 +321,17 @@ async function tryFastClone(deps: PathDeps): Promise<boolean> {
   // stash carryover ref. Typically tiny; often empty.
   const deltaBundlePath = join(stage, 'delta.bundle');
   let deltaBundleSize = 0;
+  // CRITICAL: the stash carryover ref must appear BEFORE `--not` in the
+  // rev-list — `--not` toggles all subsequent positional refs to exclusion.
+  // If we appended STASH_CARRYOVER_REF after `--not --remotes=origin`, the
+  // stash commit would be EXCLUDED from the bundle instead of included,
+  // silently dropping the user's uncommitted changes.
   const deltaArgs: string[] = [
     '-C', args.hostRepo, 'bundle', 'create', deltaBundlePath,
-    '--branches', '--tags', '--not', '--remotes=origin',
+    '--branches', '--tags',
   ];
   if (carry.stashRefOwned) deltaArgs.push(STASH_CARRYOVER_REF);
+  deltaArgs.push('--not', '--remotes=origin');
   const delta = await execa('git', deltaArgs, { reject: false });
   if (delta.exitCode === 0) {
     try {
@@ -344,12 +360,18 @@ async function tryFastClone(deps: PathDeps): Promise<boolean> {
   // In-box: fetch the delta (if any), check out the per-box branch, apply
   // stash, extract untracked. Mirrors the bundle path's tail.
   const carryOverSteps = buildCarryOverSteps(args.workspaceDir, carry);
+  // Fetch the delta bundle's refs into the corresponding in-box namespaces.
+  // We explicitly map `refs/agentbox-carryover/*` so `buildCarryOverSteps`
+  // can find the stash ref via `git stash apply`. Without that refspec the
+  // bundle commit lands but the ref name doesn't, and the stash silently
+  // doesn't apply.
   const fetchDeltaStep =
     deltaBundleSize > 0
       ? [
           `if [ -f ${quoteShellArgv([REMOTE_DELTA_BUNDLE])} ]; then ` +
             `git -C ${quoteShellArgv([args.workspaceDir])} fetch ${quoteShellArgv([REMOTE_DELTA_BUNDLE])} ` +
-            `--tags '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*' || true ; ` +
+            `--tags '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*' ` +
+            `'+refs/agentbox-carryover/*:refs/agentbox-carryover/*' || true ; ` +
             `rm -f ${quoteShellArgv([REMOTE_DELTA_BUNDLE])} ; ` +
             `fi`,
         ]

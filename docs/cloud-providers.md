@@ -403,10 +403,14 @@ hetzner-specific code (verified live in Phase-7 smoke).
 
 ### 3.8 Faster `git push` / `git fetch` (SSH agent + credential proxy)
 
-By default the relay's `git.push` / `git.fetch` round-trip through a
-git bundle. On Hetzner that's replaced with a single fresh `ssh -A`
-exec into the box that runs `git push` / `git fetch` against `origin`
-directly:
+When **`box.credentialForwarding=transient`** (see §3.10; default is
+`off`), the relay's `git.push` / `git.fetch` are run as a single fresh
+`ssh -A` exec into the box that runs `git push` / `git fetch` against
+`origin` directly. When the policy is `off` (the default) the relay
+falls back to the slower bundle round-trip — safer because the host
+never opens an agent-forwarded SSH into the box.
+
+With the policy set to `transient`:
 
 - **SSH origin** (`git@…`/`ssh://…`): host SSH agent is forwarded via
   `-A`. The in-box `git` uses the forwarded agent socket to
@@ -433,19 +437,22 @@ only the transport.
 
 ### 3.9 Faster workspace seed (in-box clone from origin)
 
-On `agentbox create --provider hetzner`, the cloud workspace seeder
-tries to have the box `git clone` directly from the real origin
-(GitHub/GitLab/…) using the same credential-forwarding primitives as
-§3.8 — `ssh -A` for SSH origins, an `ssh -R`-forwarded host credential
-proxy for HTTPS origins. The host then ships only the small **delta**
-bundle (commits/refs that aren't on origin) plus stash + untracked
-files. For non-trivial repos this is dramatically faster than the
-old "bundle the whole `--depth=N HEAD` on host and upload" path,
-because the bulk of the history travels over the box's fast GitHub
-download rather than the user's slow consumer upload pipe.
+When **`box.credentialForwarding=transient`** (see §3.11; default is
+`off`), `agentbox create --provider hetzner` tries to have the box
+`git clone` directly from the real origin (GitHub/GitLab/…) using the
+same credential-forwarding primitives as §3.8 — `ssh -A` for SSH
+origins, an `ssh -R`-forwarded host credential proxy for HTTPS origins.
+The host then ships only the small **delta** bundle (commits/refs that
+aren't on origin) plus stash + untracked files. For non-trivial repos
+this is dramatically faster than the "bundle the whole `--depth=N HEAD`
+on host and upload" path, because the bulk of the history travels over
+the box's fast GitHub download rather than the user's slow consumer
+upload pipe.
 
 Preconditions (all required, else fall back to the bundle path):
 
+- `box.credentialForwarding=transient` (see §3.11). Default `off` →
+  always bundle path.
 - Backend exposes `execGitWithHostCreds` (Hetzner today; Daytona no).
 - Host repo has an SSH or HTTPS origin URL.
 - For SSH origins: `SSH_AUTH_SOCK` is set on the host.
@@ -453,8 +460,7 @@ Preconditions (all required, else fall back to the bundle path):
   the origin within 15s.
 
 Fallback to the bundle path happens automatically on any failure —
-auth, network, post-clone errors — and is logged. Force the bundle
-path with `AGENTBOX_FORCE_BUNDLE_SEED=1` (debug only).
+auth, network, post-clone errors — and is logged.
 
 Both paths honor `AGENTBOX_BUNDLE_DEPTH`:
 
@@ -470,7 +476,31 @@ is the implicit default and the produced bundle exceeds
 depth=100 once. Explicit `AGENTBOX_BUNDLE_DEPTH` values are honored
 verbatim — no auto-reshallow.
 
-### 3.10 `agentbox git box-fetch <box> [refspec...]` (host pulls box's commits)
+### 3.10 `box.credentialForwarding` policy
+
+`box.credentialForwarding` is a uniform kill-switch for the §3.8 (git
+push/fetch fast path) and §3.9 (workspace seed fast path) features:
+
+- `'off'` — **default**. The safe path. Host credentials are never
+  forwarded into the box; both fast paths immediately fall through to
+  the bundle round-trip via the host relay.
+- `'transient'` — Permit per-RPC `ssh -A` and per-RPC `-R` credential
+  proxy. The forwarded agent socket / proxy port live only for the
+  duration of that one exec; closed on session end. Faster, but a
+  hostile in-box process can sign with the forwarded agent during the
+  exec window — opt in only when the speed matters more than the
+  residual risk.
+
+Set with:
+
+```
+agentbox config set box.credentialForwarding transient   # per project
+agentbox config set --global box.credentialForwarding transient
+```
+
+Re-read on every RPC / seed — no relay restart needed.
+
+### 3.11 `agentbox git box-fetch <box> [refspec...]` (host pulls box's commits)
 
 A symmetric helper for the host side: pull a Hetzner box's commits
 back into the host repo over SSH (no GitHub round-trip, no bundle,
