@@ -19,8 +19,14 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CloudBackend, CloudExecResult, CloudHandle } from '@agentbox/core';
-import { findBox, readState } from '@agentbox/sandbox-core';
-import { startHostCredentialProxy, type HostCredentialProxy } from './host-credential-proxy.js';
+import {
+  classifyRemoteUrl,
+  findBox,
+  readState,
+  startHostCredentialProxy,
+  type HostCredentialProxy,
+  type RemoteScheme,
+} from '@agentbox/sandbox-core';
 import {
   assertGhReady,
   checkoutGuards,
@@ -839,16 +845,6 @@ async function maybeRunGitFastPath(input: FastPathInput): Promise<FastPathOutcom
 
 function emptyResult(): HostActionResult {
   return { exitCode: 0, stdout: '', stderr: '' };
-}
-
-type RemoteScheme = 'ssh' | 'https' | 'other';
-
-function classifyRemoteUrl(url: string): RemoteScheme {
-  if (/^ssh:\/\//i.test(url)) return 'ssh';
-  // scp-like: user@host:path/to/repo.git
-  if (/^[^/@\s]+@[^/:\s]+:[^/]/.test(url)) return 'ssh';
-  if (/^https?:\/\//i.test(url)) return 'https';
-  return 'other';
 }
 
 function buildBoxGitCommand(

@@ -60,6 +60,7 @@ import { readPreparedState } from './prepared-state.js';
 import { ensureHetznerBaseSnapshot } from './prepare.js';
 import { mintSshKey } from './ssh-key.js';
 import { waitForSsh, sshOptArgs, sshExecWithAgent, type SshTargetArgs } from './ssh-cli.js';
+import { execGitWithHostCreds } from './git-host-creds.js';
 import { SshTunnelManager, defaultBoxSshDir } from './ssh-tunnel.js';
 import { withHetznerRetry } from './retry.js';
 
@@ -545,6 +546,11 @@ export const hetznerBackend: CloudBackend = {
         reverseForward: opts?.reverseForward,
       },
     );
+  },
+
+  async execGitWithHostCreds(h, gitArgv, opts): Promise<CloudExecResult> {
+    const { target } = await ensureLiveTarget(h.sandboxId);
+    return execGitWithHostCreds(target, gitArgv, opts);
   },
 
   async uploadFile(h, localPath, remotePath): Promise<void> {

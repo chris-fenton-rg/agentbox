@@ -166,6 +166,28 @@ export interface CloudBackend {
     opts?: CloudExecWithAgentOptions,
   ): Promise<CloudExecResult>;
 
+  /**
+   * Optional: run `git <argv>` inside the sandbox with the host's git
+   * credentials forwarded for the duration of the exec. Higher-level than
+   * `execWithAgent` — the backend internally classifies the remote URL,
+   * picks SSH agent forwarding (SSH origins) or a `-R` credential helper
+   * proxy (HTTPS origins), and orchestrates the proxy lifetime.
+   *
+   * Used by the cloud workspace seed fast path so the box can `git clone`
+   * directly from origin without the host having to bundle + upload the
+   * whole repo. Returns the underlying git exec result; auth failures /
+   * unreachable upstream surface as non-zero exit codes and the caller
+   * falls back to the bundle path.
+   *
+   * Backends without the primitives (Daytona) omit this; callers detect
+   * with `typeof backend.execGitWithHostCreds === 'function'`.
+   */
+  execGitWithHostCreds?(
+    h: CloudHandle,
+    gitArgv: string[],
+    opts: { remoteUrl: string; hostRepo?: string; attemptTimeoutMs?: number },
+  ): Promise<CloudExecResult>;
+
   uploadFile(h: CloudHandle, localPath: string, remotePath: string): Promise<void>;
   downloadFile(h: CloudHandle, remotePath: string, localPath: string): Promise<void>;
   listFiles(h: CloudHandle, remoteDir: string): Promise<CloudFileEntry[]>;

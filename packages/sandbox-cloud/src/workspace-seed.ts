@@ -1,24 +1,28 @@
 import { execa } from 'execa';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CloudBackend, CloudHandle } from '@agentbox/core';
-import { detectGitRepos } from '@agentbox/sandbox-core';
+import { classifyRemoteUrl, detectGitRepos } from '@agentbox/sandbox-core';
 import { bashScript, quoteShellArgv } from './shell.js';
 
 /**
- * Seed `/workspace` inside a cloud sandbox from the host workspace. Mirrors
- * what `seedWorkspace` does for the Docker provider, adapted for the cloud
- * channel (`backend.uploadFile` + `backend.exec`):
+ * Seed `/workspace` inside a cloud sandbox from the host workspace.
  *
- *   - Git workspace: `git bundle create --all` on the host, upload the bundle,
- *     `git clone` it inside the sandbox, repoint `origin`, check out the
- *     per-box branch `agentbox/<box-name>`. Repeats for every nested repo
- *     (1st-level subdir with its own `.git/`) so monorepos seed correctly.
- *   - Non-git workspace: tar the host workspace, upload, extract.
+ * Two strategies, picked at runtime per repo:
  *
- * Host-uncommitted-carry-over (stash + untracked) is the remaining gap
- * tracked in Phase 6.
+ *   - **Fast path** ("in-box clone"): when the backend exposes
+ *     `execGitWithHostCreds` (Hetzner today) and the host repo has an SSH or
+ *     HTTPS origin that is reachable from the box with the host's forwarded
+ *     credentials, the box clones shallow from origin itself — saving the
+ *     host's upstream bandwidth. The host then ships only a small delta
+ *     bundle (refs/commits that aren't on origin) + stash + untracked.
+ *   - **Bundle path** ("host-bundle clone", today's default): the host runs
+ *     `git bundle create --depth=N HEAD` and uploads the whole bundle; the
+ *     box clones from the file. Used for Daytona, for repos with no origin
+ *     or unreachable origin, or when the host has no credentials configured.
+ *
+ *   - Non-git workspace: tar the host workspace, upload, extract (unchanged).
  */
 export interface SeedCloudWorkspaceArgs {
   backend: CloudBackend;
@@ -53,8 +57,8 @@ export async function seedCloudWorkspace(
   if (root) {
     log(
       nested.length > 0
-        ? `seeding /workspace from git bundle (+${String(nested.length)} nested repo${nested.length === 1 ? '' : 's'})`
-        : 'seeding /workspace from git bundle',
+        ? `seeding /workspace from git (+${String(nested.length)} nested repo${nested.length === 1 ? '' : 's'})`
+        : 'seeding /workspace from git',
     );
     await seedFromGitBundle({
       backend: args.backend,
@@ -62,20 +66,18 @@ export async function seedCloudWorkspace(
       hostRepo: root.hostMainRepo,
       branch: args.branch,
       workspaceDir,
+      onLog: log,
     });
-    // Each nested repo gets its own bundle + clone at /workspace/<rel>. We
-    // do these after the root clone because the root clone wipes
-    // /workspace; a nested dir created during the root checkout (if
-    // tracked) would be replaced when we clone over it.
     for (const r of nested) {
       const sub = `${workspaceDir}/${r.relPathFromWorkspace}`;
-      log(`seeding nested repo ${r.relPathFromWorkspace} from git bundle`);
+      log(`seeding nested repo ${r.relPathFromWorkspace}`);
       await seedFromGitBundle({
         backend: args.backend,
         handle: args.handle,
         hostRepo: r.hostMainRepo,
         branch: args.branch,
         workspaceDir: sub,
+        onLog: log,
       });
     }
     return { fromGit: true, branch: args.branch };
@@ -97,147 +99,435 @@ interface SeedFromGitBundleArgs {
   hostRepo: string;
   branch: string;
   workspaceDir: string;
+  onLog?: (line: string) => void;
 }
 
 /**
- * Temporary host ref used to carry the `git stash create` commit into the
- * bundle so the in-sandbox repo can apply it. Lives only for the duration
- * of one `git bundle create` invocation — set, bundle, delete. Lands inside
- * the cloned repo as `refs/remotes/origin/<this name>`, which we delete
- * after applying the stash so it doesn't pollute branch lists.
+ * Default shallow depth applied to both paths when `AGENTBOX_BUNDLE_DEPTH`
+ * is unset. ~6 months of typical commit cadence — enough for agent
+ * grounding (`git log`, recent `git blame`), small enough to avoid
+ * monorepo blow-ups. Override with `AGENTBOX_BUNDLE_DEPTH=full` for
+ * unlimited history, or a positive int for a specific depth.
  */
+const DEFAULT_BUNDLE_DEPTH = 200;
+
+/** Adaptive-reshallow target when default-depth bundle exceeds the budget. */
+const RESHALLOW_FALLBACK_DEPTH = 100;
+
+/** Bundle file size budget (MB) before adaptive reshallow kicks in. */
+const DEFAULT_BUNDLE_BUDGET_MB = 100;
+
+interface BundleDepth {
+  /** 'full' = no `--depth=N`. 'shallow' = pass `--depth=<depth>`. */
+  kind: 'full' | 'shallow';
+  /** Shallow depth (undefined for 'full'). */
+  depth?: number;
+  /** True when the user set AGENTBOX_BUNDLE_DEPTH explicitly. Disables auto-reshallow. */
+  explicit: boolean;
+}
+
+/**
+ * Resolve the bundle depth from `AGENTBOX_BUNDLE_DEPTH`:
+ *   - unset / empty / 'auto'  → default 200 (not explicit)
+ *   - 'full' / '0' / negative → no depth limit
+ *   - positive int            → that depth
+ */
+function resolveBundleDepth(): BundleDepth {
+  const raw = process.env['AGENTBOX_BUNDLE_DEPTH'];
+  if (!raw || raw === 'auto') return { kind: 'shallow', depth: DEFAULT_BUNDLE_DEPTH, explicit: false };
+  if (raw.toLowerCase() === 'full') return { kind: 'full', explicit: true };
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0) return { kind: 'full', explicit: true };
+  return { kind: 'shallow', depth: n, explicit: true };
+}
+
+function bundleBudgetBytes(): number {
+  const raw = process.env['AGENTBOX_BUNDLE_BUDGET_MB'];
+  const n = raw ? Number.parseInt(raw, 10) : NaN;
+  const mb = Number.isFinite(n) && n > 0 ? n : DEFAULT_BUNDLE_BUDGET_MB;
+  return mb * 1024 * 1024;
+}
+
 const STASH_CARRYOVER_REF = 'refs/agentbox-carryover/stash';
 const REMOTE_UNTRACKED_TAR = '/tmp/agentbox-carryover-untracked.tar.gz';
 
+interface CarryOver {
+  stashSha: string | null;
+  /** Set on the host repo once update-ref succeeded; caller deletes in finally. */
+  stashRefOwned: boolean;
+  untrackedSize: number;
+  untrackedTarPath: string;
+}
+
+async function prepareCarryOver(hostRepo: string, stage: string): Promise<CarryOver> {
+  const stashSha = await safeStashCreate(hostRepo);
+  const untrackedTarPath = join(stage, 'untracked.tar.gz');
+  const untrackedSize = await maybeBuildUntrackedTar(hostRepo, untrackedTarPath);
+  let stashRefOwned = false;
+  if (stashSha) {
+    const ref = await execa(
+      'git',
+      ['-C', hostRepo, 'update-ref', STASH_CARRYOVER_REF, stashSha],
+      { reject: false },
+    );
+    stashRefOwned = ref.exitCode === 0;
+  }
+  return { stashSha, stashRefOwned, untrackedSize, untrackedTarPath };
+}
+
+async function releaseCarryOver(hostRepo: string, carry: CarryOver): Promise<void> {
+  if (carry.stashRefOwned) {
+    await execa('git', ['-C', hostRepo, 'update-ref', '-d', STASH_CARRYOVER_REF], { reject: false });
+  }
+}
+
 async function seedFromGitBundle(args: SeedFromGitBundleArgs): Promise<void> {
   const stage = await mkdtemp(join(tmpdir(), 'agentbox-bundle-'));
-  const bundlePath = join(stage, 'workspace.bundle');
-  const untrackedTarPath = join(stage, 'untracked.tar.gz');
-  // Per-repo carry-over (mirrors `collectRepoCarryOver` from sandbox-docker):
-  //   - `git stash create` captures every staged + tracked-modified change
-  //     (including deletes/renames) as a one-off commit.
-  //   - untracked files get tarred separately because `stash create` (no -u
-  //     option) doesn't capture them.
-  // The stash commit travels in the bundle via a temp ref the host owns
-  // for the duration of `git bundle create`. The untracked tar uploads on
-  // the side and the in-sandbox script untars it after the clone.
-  const stashSha = await safeStashCreate(args.hostRepo);
-  const untrackedSize = await maybeBuildUntrackedTar(args.hostRepo, untrackedTarPath);
-  let stashRefCreated = false;
+  const log = args.onLog ?? (() => {});
+  const depth = resolveBundleDepth();
+  const carry = await prepareCarryOver(args.hostRepo, stage);
+
   try {
-    if (stashSha) {
-      const ref = await execa(
-        'git',
-        ['-C', args.hostRepo, 'update-ref', STASH_CARRYOVER_REF, stashSha],
-        { reject: false },
-      );
-      stashRefCreated = ref.exitCode === 0;
-    }
-    // Default: `--all` captures every ref + full history so the sandbox gets
-    // a real clone with the user's local commits and tags. Monorepos with
-    // deep history make that a slow + big upload — opt out via
-    // `AGENTBOX_BUNDLE_DEPTH=N` to ship only the last N commits of HEAD
-    // (shallow clone semantics; `git push` from inside the box still works
-    // because the remote knows the merge base). 0 / empty / non-numeric →
-    // full history. The stash ref (if any) is included explicitly so it
-    // rides along with either bundle mode.
-    const depthRaw = process.env['AGENTBOX_BUNDLE_DEPTH'];
-    const depth = depthRaw ? Number.parseInt(depthRaw, 10) : NaN;
-    const bundleArgs: string[] = ['-C', args.hostRepo, 'bundle', 'create', bundlePath];
-    if (Number.isFinite(depth) && depth > 0) {
-      bundleArgs.push(`--depth=${String(depth)}`, 'HEAD');
-    } else {
-      bundleArgs.push('--all');
-    }
-    if (stashRefCreated) bundleArgs.push(STASH_CARRYOVER_REF);
-    await execa('git', bundleArgs);
-    if (stashRefCreated) {
-      await execa('git', ['-C', args.hostRepo, 'update-ref', '-d', STASH_CARRYOVER_REF], {
-        reject: false,
+    // Try the fast path first when the backend supports it and we have a
+    // reachable origin with credentials. On any failure, fall through to the
+    // bundle path which is guaranteed to work but trades the host's upstream
+    // bandwidth.
+    const force = (process.env['AGENTBOX_FORCE_BUNDLE_SEED'] ?? '').toLowerCase();
+    const forceBundle = force === '1' || force === 'true' || force === 'yes';
+    const fastTried = !forceBundle && (await tryFastClone({ args, stage, carry, depth, log }));
+    if (fastTried) return;
+    await runBundleClone({ args, stage, carry, depth, log });
+  } finally {
+    await releaseCarryOver(args.hostRepo, carry);
+    await rm(stage, { recursive: true, force: true });
+  }
+}
+
+interface PathDeps {
+  args: SeedFromGitBundleArgs;
+  stage: string;
+  carry: CarryOver;
+  depth: BundleDepth;
+  log: (line: string) => void;
+}
+
+/**
+ * Fast path: have the box clone shallow from origin (with the host's
+ * credentials forwarded for that one exec), then ship only the small delta
+ * of unpushed commits + stash + untracked.
+ *
+ * Returns `true` when the fast path completed (success). Returns `false`
+ * when the preconditions don't apply or an early-stage probe failed — the
+ * caller falls back to the bundle path. On a post-clone failure we still
+ * return `false` (and clean up the partial workspace) so the bundle path
+ * can recover.
+ */
+async function tryFastClone(deps: PathDeps): Promise<boolean> {
+  const { args, stage, carry, depth, log } = deps;
+  const execGit = args.backend.execGitWithHostCreds?.bind(args.backend);
+  if (!execGit) return false;
+
+  const remoteUrl = await readOriginUrl(args.hostRepo);
+  if (!remoteUrl) {
+    log('git fast seed: no host origin URL — falling back to bundle');
+    return false;
+  }
+  const scheme = classifyRemoteUrl(remoteUrl);
+  if (scheme === 'other') {
+    log(`git fast seed: unsupported origin scheme (${remoteUrl}) — falling back to bundle`);
+    return false;
+  }
+  if (scheme === 'ssh' && !process.env['SSH_AUTH_SOCK']) {
+    log('git fast seed: SSH_AUTH_SOCK not set on host — falling back to bundle');
+    return false;
+  }
+
+  // Reachability probe. Cheap: one `ls-remote --exit-code HEAD`. 15s ceiling
+  // because credential resolution + DNS + handshake can take a few seconds.
+  log(`git fast seed: probing ${remoteUrl} reachability from box…`);
+  const probe = await execGit(args.handle, ['ls-remote', '--exit-code', remoteUrl, 'HEAD'], {
+    remoteUrl,
+    hostRepo: args.hostRepo,
+    attemptTimeoutMs: 15_000,
+  });
+  if (probe.exitCode !== 0) {
+    log(
+      `git fast seed: reachability probe failed (exit ${String(probe.exitCode)}: ${truncate(probe.stderr || probe.stdout)}) — falling back to bundle`,
+    );
+    return false;
+  }
+
+  // Clone shallow into the workspace dir.
+  const cloneArgs = [
+    'clone',
+    '--no-checkout',
+    ...(depth.kind === 'shallow' && depth.depth ? [`--depth=${String(depth.depth)}`] : []),
+    remoteUrl,
+    args.workspaceDir,
+  ];
+  const SUDO = `if command -v sudo >/dev/null 2>&1; then SUDO='sudo -n'; else SUDO=''; fi`;
+  // Wipe + chown the destination dir before the clone (same rationale as the
+  // bundle path: the snapshot's /workspace is root-owned). Run as a single
+  // shell so we don't pay multiple ssh round-trips.
+  const wipe = await args.backend.exec(
+    args.handle,
+    bashScript(
+      [
+        `set -euo pipefail`,
+        `cd /tmp`,
+        SUDO,
+        `$SUDO rm -rf ${quoteShellArgv([args.workspaceDir])}`,
+        `$SUDO mkdir -p ${quoteShellArgv([args.workspaceDir])}`,
+        `$SUDO chown "$(id -un):$(id -gn)" ${quoteShellArgv([args.workspaceDir])}`,
+      ].join('\n'),
+    ),
+  );
+  if (wipe.exitCode !== 0) {
+    log(`git fast seed: wipe-and-chown failed: ${truncate(wipe.stderr || wipe.stdout)} — falling back to bundle`);
+    return false;
+  }
+
+  log(
+    `git fast seed: in-box clone from origin (${scheme}${depth.kind === 'shallow' && depth.depth ? `, depth=${String(depth.depth)}` : ', full'})…`,
+  );
+  const clone = await execGit(args.handle, cloneArgs, {
+    remoteUrl,
+    hostRepo: args.hostRepo,
+    attemptTimeoutMs: 10 * 60_000,
+  });
+  if (clone.exitCode !== 0) {
+    log(`git fast seed: clone failed (exit ${String(clone.exitCode)}: ${truncate(clone.stderr || clone.stdout)}) — falling back to bundle`);
+    // Best-effort wipe the partial clone before the bundle path runs.
+    await args.backend
+      .exec(args.handle, bashScript(`cd /tmp; if command -v sudo >/dev/null 2>&1; then sudo -n rm -rf ${quoteShellArgv([args.workspaceDir])}; else rm -rf ${quoteShellArgv([args.workspaceDir])}; fi`))
+      .catch(() => {
+        /* best-effort */
       });
-      stashRefCreated = false;
+    return false;
+  }
+
+  // Build the delta bundle on host: refs reachable from local branches/tags
+  // that are NOT reachable from any origin/* remote-tracking ref, plus the
+  // stash carryover ref. Typically tiny; often empty.
+  const deltaBundlePath = join(stage, 'delta.bundle');
+  let deltaBundleSize = 0;
+  const deltaArgs: string[] = [
+    '-C', args.hostRepo, 'bundle', 'create', deltaBundlePath,
+    '--branches', '--tags', '--not', '--remotes=origin',
+  ];
+  if (carry.stashRefOwned) deltaArgs.push(STASH_CARRYOVER_REF);
+  const delta = await execa('git', deltaArgs, { reject: false });
+  if (delta.exitCode === 0) {
+    try {
+      deltaBundleSize = (await stat(deltaBundlePath)).size;
+    } catch {
+      deltaBundleSize = 0;
     }
-    const remoteUrl = await readOriginUrl(args.hostRepo);
-    const remoteBundle = '/tmp/agentbox-workspace.bundle';
-    await args.backend.uploadFile(args.handle, bundlePath, remoteBundle);
-    if (untrackedSize > 0) {
-      await args.backend.uploadFile(args.handle, untrackedTarPath, REMOTE_UNTRACKED_TAR);
-    }
-    const setOrigin = remoteUrl
-      ? `git -C ${quoteShellArgv([args.workspaceDir])} remote set-url origin ${quoteShellArgv([remoteUrl])}`
-      : ': # no host origin to copy';
-    // Clone from the bundle (the bundle stands in for a remote), then repoint
-    // `origin` to the real upstream so future fetch/push target the actual
-    // remote — `git push` itself will travel back through the host relay in a
-    // later phase. Finally check out the per-box branch from current HEAD.
-    // /workspace lives at the root in the snapshot — root-owned by default
-    // (Dockerfile.box never chowns it). The sandbox runs non-root, so the
-    // dir ops need sudo. The devcontainers/base image grants passwordless
-    // sudo to `vscode`; SUDO is a no-op when sudo isn't needed/available.
-    const SUDO = `if command -v sudo >/dev/null 2>&1; then SUDO='sudo -n'; else SUDO=''; fi`;
-    // The stash apply step is best-effort — applying onto a possibly
-    // shallow clone can hit "needs merge" conflicts in pathological cases
-    // (e.g. host had local changes against a commit that's now outside
-    // the depth window). Soft-failure is better than blocking provision;
-    // any unapplied changes can be re-derived from the host as a fallback.
-    const carryOverSteps: string[] = stashSha
+  } else {
+    // `git bundle create` fails with non-zero when there's nothing reachable
+    // to bundle — that's expected when HEAD == origin/HEAD and there's no
+    // stash. We treat it as "no delta to ship".
+    deltaBundleSize = 0;
+  }
+
+  const REMOTE_DELTA_BUNDLE = '/tmp/agentbox-workspace-delta.bundle';
+  if (deltaBundleSize > 0) {
+    log(`git fast seed: shipping ${formatBytes(deltaBundleSize)} delta bundle…`);
+    await args.backend.uploadFile(args.handle, deltaBundlePath, REMOTE_DELTA_BUNDLE);
+  } else {
+    log('git fast seed: no delta to ship (box matches origin)');
+  }
+  if (carry.untrackedSize > 0) {
+    await args.backend.uploadFile(args.handle, carry.untrackedTarPath, REMOTE_UNTRACKED_TAR);
+  }
+
+  // In-box: fetch the delta (if any), check out the per-box branch, apply
+  // stash, extract untracked. Mirrors the bundle path's tail.
+  const carryOverSteps = buildCarryOverSteps(args.workspaceDir, carry);
+  const fetchDeltaStep =
+    deltaBundleSize > 0
       ? [
-          `if git -C ${quoteShellArgv([args.workspaceDir])} rev-parse --verify ${quoteShellArgv([`refs/remotes/origin/agentbox-carryover/stash`])} >/dev/null 2>&1; then ` +
-            `git -C ${quoteShellArgv([args.workspaceDir])} stash apply ${quoteShellArgv([`refs/remotes/origin/agentbox-carryover/stash`])} || ` +
-            `echo "agentbox: stash apply soft-failed; carry-over may be incomplete" >&2 ; ` +
-            `git -C ${quoteShellArgv([args.workspaceDir])} update-ref -d ${quoteShellArgv([`refs/remotes/origin/agentbox-carryover/stash`])} || true ; ` +
+          `if [ -f ${quoteShellArgv([REMOTE_DELTA_BUNDLE])} ]; then ` +
+            `git -C ${quoteShellArgv([args.workspaceDir])} fetch ${quoteShellArgv([REMOTE_DELTA_BUNDLE])} ` +
+            `--tags '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*' || true ; ` +
+            `rm -f ${quoteShellArgv([REMOTE_DELTA_BUNDLE])} ; ` +
             `fi`,
         ]
       : [];
-    if (untrackedSize > 0) {
-      carryOverSteps.push(
-        `if [ -f ${quoteShellArgv([REMOTE_UNTRACKED_TAR])} ]; then ` +
-          `tar -C ${quoteShellArgv([args.workspaceDir])} -xzf ${quoteShellArgv([REMOTE_UNTRACKED_TAR])} && ` +
-          `rm -f ${quoteShellArgv([REMOTE_UNTRACKED_TAR])} ; ` +
-          `fi`,
-      );
-    }
-    const script = [
-      `set -euo pipefail`,
-      // Move out of any cwd we might inherit from Daytona's executeCommand
-      // before we delete /workspace. The agentbox image bakes WORKDIR
-      // /workspace; if the shell's cwd is /workspace when we `rm -rf` it,
-      // the next process inherits a stale cwd FD and git-clone's child
-      // (index-pack) fails with "Unable to read current working directory".
-      `cd /tmp`,
-      SUDO,
-      // rm -rf only the directory we're about to clone into — for nested
-      // repos this is just `/workspace/<rel>`, so the root clone (already
-      // at `/workspace`) is preserved.
-      `$SUDO rm -rf ${quoteShellArgv([args.workspaceDir])}`,
-      `$SUDO mkdir -p ${quoteShellArgv([args.workspaceDir])}`,
-      `$SUDO chown "$(id -un):$(id -gn)" ${quoteShellArgv([args.workspaceDir])}`,
-      `git clone ${quoteShellArgv([remoteBundle, args.workspaceDir])}`,
-      setOrigin,
-      `git -C ${quoteShellArgv([args.workspaceDir])} fetch ${quoteShellArgv([remoteBundle])} --tags '+refs/heads/*:refs/remotes/bundle/*' || true`,
-      `git -C ${quoteShellArgv([args.workspaceDir])} checkout -B ${quoteShellArgv([args.branch])}`,
-      ...carryOverSteps,
-      `rm -f ${quoteShellArgv([remoteBundle])}`,
-    ].join('\n');
-    // Daytona's executeCommand shells out via dash (`/bin/sh`), which rejects
-    // bash idioms like `set -o pipefail`. Wrap in `bash -c` so the script
-    // runs in bash regardless of what `/bin/sh` points at.
-    const r = await args.backend.exec(args.handle, bashScript(script));
-    if (r.exitCode !== 0) {
-      throw new Error(`workspace seed (bundle) failed: ${r.stderr || r.stdout}`);
-    }
-  } finally {
-    // Defensive cleanup — in the happy path the stashRefCreated flag was
-    // flipped off after we deleted the ref. If we threw between updates,
-    // the ref may still be on the host; delete it so re-runs don't accrue
-    // refs/agentbox-carryover/* entries.
-    if (stashRefCreated) {
-      await execa('git', ['-C', args.hostRepo, 'update-ref', '-d', STASH_CARRYOVER_REF], {
-        reject: false,
+  const finalScript = [
+    `set -euo pipefail`,
+    `cd /tmp`,
+    ...fetchDeltaStep,
+    `git -C ${quoteShellArgv([args.workspaceDir])} checkout -B ${quoteShellArgv([args.branch])}`,
+    ...carryOverSteps,
+  ].join('\n');
+  const tail = await args.backend.exec(args.handle, bashScript(finalScript));
+  if (tail.exitCode !== 0) {
+    log(`git fast seed: post-clone steps failed: ${truncate(tail.stderr || tail.stdout)} — falling back to bundle`);
+    // The clone succeeded but checkout/apply failed; wipe so the bundle
+    // path can re-clone cleanly.
+    await args.backend
+      .exec(args.handle, bashScript(`cd /tmp; if command -v sudo >/dev/null 2>&1; then sudo -n rm -rf ${quoteShellArgv([args.workspaceDir])}; else rm -rf ${quoteShellArgv([args.workspaceDir])}; fi`))
+      .catch(() => {
+        /* best-effort */
       });
-    }
-    await rm(stage, { recursive: true, force: true });
+    return false;
   }
+  log('git fast seed: done');
+  return true;
+}
+
+/**
+ * Bundle path: today's behavior. `git bundle create --depth=N HEAD` on host,
+ * upload, in-box clone from the bundle, repoint origin.
+ *
+ * Adaptive size guard: if we're using the default depth and the produced
+ * bundle exceeds `AGENTBOX_BUNDLE_BUDGET_MB`, rebuild with a smaller depth
+ * (100). Honors user-explicit `AGENTBOX_BUNDLE_DEPTH` settings — no
+ * auto-reshallow when the user picked a number.
+ */
+async function runBundleClone(deps: PathDeps): Promise<void> {
+  const { args, stage, carry, depth, log } = deps;
+  const bundlePath = join(stage, 'workspace.bundle');
+  const usedDepth = await buildBundleWithSizeGuard(args.hostRepo, bundlePath, depth, carry, log);
+
+  const remoteUrl = await readOriginUrl(args.hostRepo);
+  const remoteBundle = '/tmp/agentbox-workspace.bundle';
+  await args.backend.uploadFile(args.handle, bundlePath, remoteBundle);
+  if (carry.untrackedSize > 0) {
+    await args.backend.uploadFile(args.handle, carry.untrackedTarPath, REMOTE_UNTRACKED_TAR);
+  }
+  const setOrigin = remoteUrl
+    ? `git -C ${quoteShellArgv([args.workspaceDir])} remote set-url origin ${quoteShellArgv([remoteUrl])}`
+    : ': # no host origin to copy';
+  const SUDO = `if command -v sudo >/dev/null 2>&1; then SUDO='sudo -n'; else SUDO=''; fi`;
+  const carryOverSteps = buildCarryOverSteps(args.workspaceDir, carry);
+  const script = [
+    `set -euo pipefail`,
+    `cd /tmp`,
+    SUDO,
+    `$SUDO rm -rf ${quoteShellArgv([args.workspaceDir])}`,
+    `$SUDO mkdir -p ${quoteShellArgv([args.workspaceDir])}`,
+    `$SUDO chown "$(id -un):$(id -gn)" ${quoteShellArgv([args.workspaceDir])}`,
+    `git clone ${quoteShellArgv([remoteBundle, args.workspaceDir])}`,
+    setOrigin,
+    `git -C ${quoteShellArgv([args.workspaceDir])} fetch ${quoteShellArgv([remoteBundle])} --tags '+refs/heads/*:refs/remotes/bundle/*' || true`,
+    `git -C ${quoteShellArgv([args.workspaceDir])} checkout -B ${quoteShellArgv([args.branch])}`,
+    ...carryOverSteps,
+    `rm -f ${quoteShellArgv([remoteBundle])}`,
+  ].join('\n');
+  log(`git bundle seed: clone-from-bundle (${usedDepth.kind === 'shallow' && usedDepth.depth ? `depth=${String(usedDepth.depth)}` : 'full'})…`);
+  const r = await args.backend.exec(args.handle, bashScript(script));
+  if (r.exitCode !== 0) {
+    throw new Error(`workspace seed (bundle) failed: ${r.stderr || r.stdout}`);
+  }
+}
+
+async function buildBundleWithSizeGuard(
+  hostRepo: string,
+  bundlePath: string,
+  depth: BundleDepth,
+  carry: CarryOver,
+  log: (line: string) => void,
+): Promise<BundleDepth> {
+  let effective = depth;
+  await writeBundle(hostRepo, bundlePath, effective, carry);
+  const size = await safeStat(bundlePath);
+  const budget = bundleBudgetBytes();
+  if (
+    effective.kind === 'shallow' &&
+    !effective.explicit &&
+    size > budget &&
+    (effective.depth ?? 0) > RESHALLOW_FALLBACK_DEPTH
+  ) {
+    log(
+      `git bundle seed: bundle ${formatBytes(size)} > budget ${formatBytes(budget)}; reshallowing to depth=${String(RESHALLOW_FALLBACK_DEPTH)}`,
+    );
+    effective = { kind: 'shallow', depth: RESHALLOW_FALLBACK_DEPTH, explicit: false };
+    await writeBundle(hostRepo, bundlePath, effective, carry);
+    const size2 = await safeStat(bundlePath);
+    if (size2 > budget) {
+      log(`git bundle seed: bundle ${formatBytes(size2)} still over budget; uploading anyway`);
+    }
+  } else if (size > budget) {
+    // Either user explicitly chose this depth, or we're already at the
+    // fallback. Honor it but warn.
+    log(`git bundle seed: bundle ${formatBytes(size)} > budget ${formatBytes(budget)}; uploading anyway`);
+  }
+  return effective;
+}
+
+async function writeBundle(
+  hostRepo: string,
+  bundlePath: string,
+  depth: BundleDepth,
+  carry: CarryOver,
+): Promise<void> {
+  // Use `--max-count=N` (a rev-list arg) rather than `--depth=N` (a bundle-
+  // create flag added in git 2.40) so we work with the macOS system git
+  // (currently 2.39.x). `--max-count` limits the rev-list walk to N commits
+  // per starting rev, producing a shallow-equivalent bundle.
+  const argv: string[] = ['-C', hostRepo, 'bundle', 'create', bundlePath];
+  if (depth.kind === 'shallow' && depth.depth) {
+    argv.push('HEAD', `--max-count=${String(depth.depth)}`);
+  } else {
+    argv.push('--all');
+  }
+  if (carry.stashRefOwned) argv.push(STASH_CARRYOVER_REF);
+  await execa('git', argv);
+}
+
+function buildCarryOverSteps(workspaceDir: string, carry: CarryOver): string[] {
+  const steps: string[] = [];
+  if (carry.stashSha) {
+    // The stash apply step is best-effort — applying onto a possibly
+    // shallow clone can hit "needs merge" in pathological cases (host had
+    // local changes against a commit outside the depth window). Soft-fail
+    // rather than blocking provision.
+    steps.push(
+      `if git -C ${quoteShellArgv([workspaceDir])} rev-parse --verify ${quoteShellArgv([`refs/agentbox-carryover/stash`])} >/dev/null 2>&1; then ` +
+        `git -C ${quoteShellArgv([workspaceDir])} stash apply ${quoteShellArgv([`refs/agentbox-carryover/stash`])} || ` +
+        `echo "agentbox: stash apply soft-failed; carry-over may be incomplete" >&2 ; ` +
+        `git -C ${quoteShellArgv([workspaceDir])} update-ref -d ${quoteShellArgv([`refs/agentbox-carryover/stash`])} || true ; ` +
+        `elif git -C ${quoteShellArgv([workspaceDir])} rev-parse --verify ${quoteShellArgv([`refs/remotes/origin/agentbox-carryover/stash`])} >/dev/null 2>&1; then ` +
+        // Legacy location: the bundle path used to fetch the stash ref under
+        // refs/remotes/origin/agentbox-carryover/stash. Keep both for compat
+        // until all in-flight bundles drain.
+        `git -C ${quoteShellArgv([workspaceDir])} stash apply ${quoteShellArgv([`refs/remotes/origin/agentbox-carryover/stash`])} || ` +
+        `echo "agentbox: stash apply soft-failed; carry-over may be incomplete" >&2 ; ` +
+        `git -C ${quoteShellArgv([workspaceDir])} update-ref -d ${quoteShellArgv([`refs/remotes/origin/agentbox-carryover/stash`])} || true ; ` +
+        `fi`,
+    );
+  }
+  if (carry.untrackedSize > 0) {
+    steps.push(
+      `if [ -f ${quoteShellArgv([REMOTE_UNTRACKED_TAR])} ]; then ` +
+        `tar -C ${quoteShellArgv([workspaceDir])} -xzf ${quoteShellArgv([REMOTE_UNTRACKED_TAR])} && ` +
+        `rm -f ${quoteShellArgv([REMOTE_UNTRACKED_TAR])} ; ` +
+        `fi`,
+    );
+  }
+  return steps;
+}
+
+async function safeStat(path: string): Promise<number> {
+  try {
+    return (await stat(path)).size;
+  } catch {
+    return 0;
+  }
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${String(n)} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+function truncate(s: string, max = 200): string {
+  const t = (s ?? '').trim().replace(/\s+/g, ' ');
+  return t.length <= max ? t : t.slice(0, max) + '…';
 }
 
 /**
@@ -266,10 +556,6 @@ async function maybeBuildUntrackedTar(hostRepo: string, outPath: string): Promis
     { reject: false },
   );
   if (list.exitCode !== 0 || list.stdout.length === 0) return 0;
-  // Feed NUL-delimited paths to `tar --null -T -` so spaces / quotes /
-  // newlines in filenames survive. Use COPYFILE_DISABLE=1 to suppress
-  // macOS' AppleDouble `._<name>` sidecars (same hardening as the
-  // agent-credential tarballs).
   const tar = await execa(
     'tar',
     ['-C', hostRepo, '--null', '-T', '-', '-czf', outPath],
@@ -281,9 +567,7 @@ async function maybeBuildUntrackedTar(hostRepo: string, outPath: string): Promis
   );
   if (tar.exitCode !== 0) return 0;
   try {
-    const { stat } = await import('node:fs/promises');
-    const s = await stat(outPath);
-    return s.size;
+    return (await stat(outPath)).size;
   } catch {
     return 0;
   }
@@ -313,11 +597,6 @@ async function seedFromTar(args: SeedFromTarArgs): Promise<void> {
     const SUDO = `if command -v sudo >/dev/null 2>&1; then SUDO='sudo -n'; else SUDO=''; fi`;
     const script = [
       `set -euo pipefail`,
-      // Move out of any cwd we might inherit from Daytona's executeCommand
-      // before we delete /workspace. The agentbox image bakes WORKDIR
-      // /workspace; if the shell's cwd is /workspace when we `rm -rf` it,
-      // the next process inherits a stale cwd FD and git-clone's child
-      // (index-pack) fails with "Unable to read current working directory".
       `cd /tmp`,
       SUDO,
       `$SUDO rm -rf ${quoteShellArgv([args.workspaceDir])}`,

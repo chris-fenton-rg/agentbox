@@ -431,7 +431,46 @@ logged once per box. The existing `askPrompt()` confirmation gate
 runs before either path executes — the safety model is unchanged,
 only the transport.
 
-### 3.9 `agentbox git box-fetch <box> [refspec...]` (host pulls box's commits)
+### 3.9 Faster workspace seed (in-box clone from origin)
+
+On `agentbox create --provider hetzner`, the cloud workspace seeder
+tries to have the box `git clone` directly from the real origin
+(GitHub/GitLab/…) using the same credential-forwarding primitives as
+§3.8 — `ssh -A` for SSH origins, an `ssh -R`-forwarded host credential
+proxy for HTTPS origins. The host then ships only the small **delta**
+bundle (commits/refs that aren't on origin) plus stash + untracked
+files. For non-trivial repos this is dramatically faster than the
+old "bundle the whole `--depth=N HEAD` on host and upload" path,
+because the bulk of the history travels over the box's fast GitHub
+download rather than the user's slow consumer upload pipe.
+
+Preconditions (all required, else fall back to the bundle path):
+
+- Backend exposes `execGitWithHostCreds` (Hetzner today; Daytona no).
+- Host repo has an SSH or HTTPS origin URL.
+- For SSH origins: `SSH_AUTH_SOCK` is set on the host.
+- A one-shot `git ls-remote --exit-code HEAD` from the box reaches
+  the origin within 15s.
+
+Fallback to the bundle path happens automatically on any failure —
+auth, network, post-clone errors — and is logged. Force the bundle
+path with `AGENTBOX_FORCE_BUNDLE_SEED=1` (debug only).
+
+Both paths honor `AGENTBOX_BUNDLE_DEPTH`:
+
+- **Unset** (the new default): shallow clone with depth **200**
+  (~6 months on a typical project; enough for `git log` / `git blame`
+  grounding by an agent without dragging in monorepo years).
+- `full`, `0`, or any non-positive value: no depth limit.
+- Positive integer: that depth.
+
+The bundle path also runs an **adaptive size guard**: when the depth
+is the implicit default and the produced bundle exceeds
+`AGENTBOX_BUNDLE_BUDGET_MB` (default 100 MB), it rebuilds with
+depth=100 once. Explicit `AGENTBOX_BUNDLE_DEPTH` values are honored
+verbatim — no auto-reshallow.
+
+### 3.10 `agentbox git box-fetch <box> [refspec...]` (host pulls box's commits)
 
 A symmetric helper for the host side: pull a Hetzner box's commits
 back into the host repo over SSH (no GitHub round-trip, no bundle,

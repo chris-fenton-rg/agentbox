@@ -31,3 +31,9 @@ export {
   type PreparedBaseSnapshot,
   type PreparedProviderKind,
 } from './prepared-state.js';
+export {
+  startHostCredentialProxy,
+  type HostCredentialProxy,
+  type StartHostCredentialProxyOpts,
+} from './host-credential-proxy.js';
+export { classifyRemoteUrl, type RemoteScheme } from './remote-url.js';
