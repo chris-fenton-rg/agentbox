@@ -80,6 +80,7 @@ export async function unsetConfigValue(
   const current = await readExistingDoc(path);
   const existed = unsetLeaf(current, key);
   if (!existed) return { path, existed: false };
+  stampSchema(current);
   await atomicWriteYaml(path, current);
   if (scope === 'project') {
     const root = (await findProjectRoot(cwd)).root;
