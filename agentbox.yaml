@@ -25,6 +25,45 @@
 #   concurrency is 10 but there are 10 dev tasks, so turbo refuses to
 #   start without the bump).
 
+# Dogfood: ship the host user's agent OAuth tokens into the dev box so the
+# in-box claude / codex / opencode are authenticated against the same
+# account as the host — no in-box re-login needed when developing AgentBox.
+#
+# All entries `optional: true` — first-time users without a given agent
+# (e.g. only Claude installed) get a working box; the missing entries
+# show as `optional` in the carry prompt and are skipped silently.
+#
+# Source-path choices:
+#  - Claude:    ~/.agentbox/claude-credentials.json is the host backup
+#               extracted from the box's claude-config volume via
+#               `syncClaudeCredentials` (handles the macOS-keychain case
+#               where ~/.claude/.credentials.json doesn't exist on disk).
+#               Dest is the file path in-box claude actually reads.
+#  - Codex:     ~/.codex/auth.json — same path host + box.
+#  - OpenCode:  ~/.local/share/opencode/auth.json — same path host + box.
+#               OpenCode may keep auth in the macOS keychain instead; the
+#               entry is `optional` so a missing file is a no-op.
+#
+# On Docker this overlaps with the shared agent-config volumes (which
+# rsync ~/.claude etc. on every create) — harmless overwrite of identical
+# bytes, but makes the credential flow visible + declarative. On Hetzner
+# carry: actively helps: the existing scp-at-create-time is marker-gated
+# and won't re-copy a rotated token, while carry: refreshes on every
+# create.
+carry:
+  - src: ~/.agentbox/claude-credentials.json
+    dest: ~/.claude/.credentials.json
+    mode: 0o600
+    optional: true
+  - src: ~/.codex/auth.json
+    dest: ~/.codex/auth.json
+    mode: 0o600
+    optional: true
+  - src: ~/.local/share/opencode/auth.json
+    dest: ~/.local/share/opencode/auth.json
+    mode: 0o600
+    optional: true
+
 tasks:
   # Idempotent dep install. Re-runs on every supervisor restart, so guard
   # the slow path with a marker inside node_modules (kept across
