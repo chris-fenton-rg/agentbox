@@ -172,14 +172,48 @@ handle_repo() {
   if [ "$op" != "clone" ]; then
     die "'gh repo $op' is not proxied (supported: clone)"
   fi
-  # gh repo clone <repo> [<dir>] [--branch] [--depth]
-  local repo="${1-}"
-  if [ -z "$repo" ] || [[ "$repo" == -* ]]; then
+  # gh repo clone <repo> [<dir>] [--branch <n>] [--depth <n>]
+  strict_flags "gh repo clone" "--branch|--depth" "$@"
+  # Split argv into (repo, dir, flags). Pass positionals BEFORE options to the
+  # ctl so commander parses --branch/--depth as real options; using a `--`
+  # separator would force commander to treat them as extra positionals (the
+  # ctl `gh repo clone` command doesn't allowExcessArguments).
+  local repo='' dir=''
+  local -a flags=()
+  local pos=0
+  local skip_value=0
+  local arg
+  for arg in "$@"; do
+    if [ "$skip_value" = "1" ]; then
+      flags+=("$arg")
+      skip_value=0
+      continue
+    fi
+    case "$arg" in
+      --branch|--depth)
+        flags+=("$arg")
+        skip_value=1
+        ;;
+      -*)
+        flags+=("$arg")
+        ;;
+      *)
+        if [ $pos -eq 0 ]; then repo="$arg"
+        elif [ $pos -eq 1 ]; then dir="$arg"
+        else die "too many positionals for 'gh repo clone' (got '$arg' after repo + dir)"
+        fi
+        pos=$((pos+1))
+        ;;
+    esac
+  done
+  if [ -z "$repo" ]; then
     die "'gh repo clone' requires a positional <repo> (owner/name or full URL)"
   fi
-  shift
-  strict_flags "gh repo clone" "--branch|--depth" "$@"
-  exec "$CTL" gh repo clone -- "$repo" "$@"
+  if [ -n "$dir" ]; then
+    exec "$CTL" gh repo clone "$repo" "$dir" ${flags[@]+"${flags[@]}"}
+  else
+    exec "$CTL" gh repo clone "$repo" ${flags[@]+"${flags[@]}"}
+  fi
 }
 
 # Top-level dispatch.

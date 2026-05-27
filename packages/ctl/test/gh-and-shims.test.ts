@@ -300,7 +300,14 @@ describe('gh-shim arg whitelist + branch injection', () => {
     }
   });
 
-  it('repo clone accepts repo + --branch + --depth', () => {
+  it('repo clone accepts repo + --branch + --depth, with no `--` separator', () => {
+    // Regression: the prior implementation passed `gh repo clone -- <repo>
+    // --branch X` to the ctl. Commander treats `--` as end-of-options and
+    // every flag after it as a positional, so the ctl's `--branch <name>`
+    // option never saw the value — the clone went to the wrong branch and
+    // the host's `gh` ran with stale defaults. Now we split positionals
+    // from flags and emit them in commander-friendly order (positionals
+    // first), no `--` in the middle.
     const env = makeStubShell();
     try {
       const out = runShim(
@@ -309,7 +316,33 @@ describe('gh-shim arg whitelist + branch injection', () => {
         env,
       );
       expect(out.code).toBe(0);
-      expect(out.stdout).toContain('foo/bar mydir --branch main --depth 1');
+      expect(out.stdout.trim()).toBe(
+        'STUB: gh repo clone foo/bar mydir --branch main --depth 1',
+      );
+      // Critically: NO `--` separator anywhere in the ctl invocation.
+      expect(out.stdout).not.toContain(' -- ');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('repo clone with just a repo (no dir) emits clean ctl invocation', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GH_SHIM, ['repo', 'clone', 'foo/bar'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout.trim()).toBe('STUB: gh repo clone foo/bar');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('repo clone rejects extra positionals', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GH_SHIM, ['repo', 'clone', 'foo/bar', 'mydir', 'extra'], env);
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/too many positionals/);
     } finally {
       env.cleanup();
     }
