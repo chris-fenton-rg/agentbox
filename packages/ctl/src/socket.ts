@@ -159,7 +159,11 @@ async function handleConnection(sock: Socket, opts: ServerOptions): Promise<void
       if (!CLAUDE_ACTIVITY_STATES.includes(req.state)) {
         writeLine(sock, { ok: false, error: `invalid claude state: ${String(req.state)}` });
       } else {
-        opts.reporter?.setClaudeState(req.state);
+        opts.reporter?.setClaudeState(req.state, {
+          plan: req.plan,
+          question: req.question,
+          clearPending: req.clearPending,
+        });
         writeLine(sock, { ok: true, data: 'ok' });
       }
       sock.end();

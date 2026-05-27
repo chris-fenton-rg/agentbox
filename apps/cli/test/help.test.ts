@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { describe, expect, it } from 'vitest';
 import { HELP_GROUPS, buildGroupedHelp } from '../src/help.js';
+import { agentCommand } from '../src/commands/agent.js';
 import { checkpointCommand } from '../src/commands/checkpoint.js';
 import { claudeCommand } from '../src/commands/claude.js';
 import { codeCommand } from '../src/commands/code.js';
@@ -15,6 +16,7 @@ import { dockerCommand } from '../src/commands/docker.js';
 import { hetznerCommand } from '@agentbox/sandbox-hetzner/cli';
 import { destroyCommand } from '../src/commands/destroy.js';
 import { downloadCommand } from '../src/commands/download.js';
+import { driveCommand } from '../src/commands/drive.js';
 import { listCommand } from '../src/commands/list.js';
 import { logsCommand } from '../src/commands/logs.js';
 import { openCommand } from '../src/commands/open.js';
@@ -56,6 +58,8 @@ function buildProgram(): Command {
     statusCommand,
     topCommand,
     dashboardCommand,
+    driveCommand,
+    agentCommand,
     waitCommand,
     logsCommand,
     pauseCommand,

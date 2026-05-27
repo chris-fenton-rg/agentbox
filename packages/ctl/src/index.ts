@@ -8,6 +8,8 @@ export type {
   BoxStatusServiceEntry,
   BoxStatusTaskEntry,
   ClaudeActivityState,
+  ClaudePlanPayload,
+  ClaudeQuestionPayload,
   ClaudeSessionStatus,
   CtlRequest,
   CtlResponse,

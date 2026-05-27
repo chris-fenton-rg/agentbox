@@ -11,6 +11,8 @@ import {
   type BoxStatus,
   type BoxStatusPort,
   type ClaudeActivityState,
+  type ClaudePlanPayload,
+  type ClaudeQuestionPayload,
 } from './types.js';
 
 export interface StatusReporterOptions {
@@ -41,6 +43,8 @@ export class StatusReporter {
   private readonly periodicMs: number;
   private claudeState: ClaudeActivityState = 'unknown';
   private claudeUpdatedAt: string | null = null;
+  private claudePlan: ClaudePlanPayload | undefined;
+  private claudeQuestion: ClaudeQuestionPayload | undefined;
   private codexState: AgentActivityState = 'unknown';
   private codexUpdatedAt: string | null = null;
   private debounceTimer: NodeJS.Timeout | null = null;
@@ -75,9 +79,43 @@ export class StatusReporter {
     }
   }
 
-  setClaudeState(state: ClaudeActivityState): void {
+  setClaudeState(
+    state: ClaudeActivityState,
+    payload?: {
+      plan?: ClaudePlanPayload;
+      question?: ClaudeQuestionPayload;
+      clearPending?: boolean;
+    },
+  ): void {
+    // Sticky end-plan/question handling. Two pressures:
+    //   1. PreToolUse:ExitPlanMode|AskUserQuestion races with the catchall
+    //      PreToolUse:* hook ('working'). The catchall must not win.
+    //   2. AskUserQuestion *also* triggers Notification:permission_prompt
+    //      ('waiting'), so the question payload must survive the question →
+    //      waiting hop. Same for end-plan and the post-approval idle/Stop.
+    //
+    // Semantics:
+    //   - 'working' while currently end-plan/question: swallow unless
+    //     clearPending is set (PostToolUse cleanup).
+    //   - Any other state: accept, but DON'T auto-clear the plan/question
+    //     payload — only clearPending=true clears them, or a fresh PreToolUse
+    //     overwrites with new content.
+    const sticky = this.claudeState === 'end-plan' || this.claudeState === 'question';
+    if (state === 'working' && sticky && !payload?.clearPending) return;
+
     this.claudeState = state;
     this.claudeUpdatedAt = new Date().toISOString();
+
+    if (payload?.clearPending) {
+      this.claudePlan = undefined;
+      this.claudeQuestion = undefined;
+    }
+    if (state === 'end-plan' && payload?.plan) {
+      this.claudePlan = payload.plan;
+    }
+    if (state === 'question' && payload?.question) {
+      this.claudeQuestion = payload.question;
+    }
     this.schedulePush();
   }
 
@@ -146,6 +184,8 @@ export class StatusReporter {
         updatedAt: this.claudeUpdatedAt,
         sessionRunning: claudeSession.running,
         ...(claudeSession.title ? { sessionTitle: claudeSession.title } : {}),
+        ...(this.claudePlan ? { plan: this.claudePlan } : {}),
+        ...(this.claudeQuestion ? { question: this.claudeQuestion } : {}),
       },
     };
     // Codex / OpenCode bodies are additive and present only when there's

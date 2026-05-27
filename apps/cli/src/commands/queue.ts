@@ -1,6 +1,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import { intro, log, outro } from '@clack/prompts';
 import { Command } from 'commander';
+import { readState } from '@agentbox/sandbox-core';
 import {
   deleteJob,
   loadQueue,
@@ -10,6 +11,8 @@ import {
   type QueueJob,
   type QueueJobStatus,
 } from '@agentbox/relay';
+import { resolveBoxOrExit } from '../box-ref.js';
+import { providerForBox } from '../provider/registry.js';
 
 interface QueueListOpts {
   all?: boolean;
@@ -136,10 +139,164 @@ const queueClearCommand = new Command('clear')
     log.success(`removed ${String(removed)} manifest${removed === 1 ? '' : 's'}`);
   });
 
+const QUEUE_WAIT_EVENTS = [
+  'new-box',
+  'empty-queue',
+  'box-paused',
+  'box-running',
+  'box-stopped',
+  'job-done',
+] as const;
+type QueueWaitEvent = (typeof QUEUE_WAIT_EVENTS)[number];
+
+const ACTIVE_JOB_STATUSES: ReadonlySet<QueueJobStatus> = new Set(['queued', 'running']);
+const DEFAULT_QUEUE_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
+const QUEUE_POLL_INTERVAL_MS = 500;
+
+interface QueueWaitOpts {
+  box?: string;
+  job?: string;
+  timeout?: string;
+  json?: boolean;
+}
+
+const queueWaitForCommand = new Command('wait-for')
+  .description(
+    `Block until a queue / box event fires. <event> one of: ${QUEUE_WAIT_EVENTS.join(' | ')}.`,
+  )
+  .argument('<event>', `target event: ${QUEUE_WAIT_EVENTS.join(' | ')}`)
+  .option('--box <ref>', 'box ref (required for box-paused / box-running / box-stopped)')
+  .option('--job <id>', 'queue job id (required for job-done)')
+  .option('--timeout <ms>', `wall-clock cap (default: ${String(DEFAULT_QUEUE_WAIT_TIMEOUT_MS)})`)
+  .option('--json', 'emit a JSON envelope { matched, elapsedMs, ... }')
+  .action(async (eventRaw: string, opts: QueueWaitOpts) => {
+    if (!QUEUE_WAIT_EVENTS.includes(eventRaw as QueueWaitEvent)) {
+      log.error(`unknown event '${eventRaw}' (one of: ${QUEUE_WAIT_EVENTS.join(', ')})`);
+      process.exit(2);
+    }
+    const event = eventRaw as QueueWaitEvent;
+    const timeoutMs =
+      opts.timeout !== undefined
+        ? parsePositiveInt(opts.timeout, '--timeout')
+        : DEFAULT_QUEUE_WAIT_TIMEOUT_MS;
+    const start = Date.now();
+    const deadline = start + timeoutMs;
+
+    try {
+      const match = await waitForQueueEvent(event, opts, deadline);
+      const elapsedMs = Date.now() - start;
+      if (opts.json === true) {
+        process.stdout.write(JSON.stringify({ matched: true, event, elapsedMs, ...match }) + '\n');
+      }
+      return;
+    } catch (err) {
+      if (err instanceof QueueWaitTimeout) {
+        const elapsedMs = Date.now() - start;
+        if (opts.json === true) {
+          process.stdout.write(JSON.stringify({ matched: false, event, elapsedMs }) + '\n');
+        } else {
+          log.error(`'${event}' did not occur within ${String(timeoutMs)}ms`);
+        }
+        process.exit(1);
+      }
+      log.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+class QueueWaitTimeout extends Error {
+  constructor() {
+    super('queue wait-for timeout');
+    this.name = 'QueueWaitTimeout';
+  }
+}
+
+async function waitForQueueEvent(
+  event: QueueWaitEvent,
+  opts: QueueWaitOpts,
+  deadline: number,
+): Promise<Record<string, unknown>> {
+  if (event === 'empty-queue') {
+    return pollUntil(deadline, async () => {
+      const jobs = await loadQueue();
+      const active = jobs.filter((j) => ACTIVE_JOB_STATUSES.has(j.status));
+      return active.length === 0 ? { activeCount: 0 } : undefined;
+    });
+  }
+
+  if (event === 'new-box') {
+    const initial = new Set((await readState()).boxes.map((b) => b.id));
+    return pollUntil(deadline, async () => {
+      const current = await readState();
+      const fresh = current.boxes.find((b) => !initial.has(b.id));
+      return fresh ? { boxId: fresh.id, boxName: fresh.name } : undefined;
+    });
+  }
+
+  if (event === 'job-done') {
+    if (!opts.job) {
+      throw new Error('queue wait-for job-done requires --job <id>');
+    }
+    const jobId = opts.job;
+    return pollUntil(deadline, async () => {
+      const job = await readJob(jobId);
+      if (!job) throw new Error(`no job with id ${jobId}`);
+      const terminal: ReadonlySet<QueueJobStatus> = new Set(['done', 'failed', 'cancelled']);
+      return terminal.has(job.status)
+        ? { jobId: job.id, status: job.status, exitCode: job.exitCode ?? null }
+        : undefined;
+    });
+  }
+
+  // box-paused | box-running | box-stopped
+  if (!opts.box) {
+    throw new Error(`queue wait-for ${event} requires --box <ref>`);
+  }
+  const box = await resolveBoxOrExit(opts.box);
+  const provider = await providerForBox(box);
+  const targetMap: Record<'box-paused' | 'box-running' | 'box-stopped', readonly string[]> = {
+    'box-paused': ['paused'],
+    'box-running': ['running'],
+    'box-stopped': ['stopped', 'missing'],
+  };
+  const targets = new Set(targetMap[event]);
+  return pollUntil(deadline, async () => {
+    const state = await provider.probeState(box);
+    return targets.has(state) ? { boxId: box.id, state } : undefined;
+  });
+}
+
+async function pollUntil<T>(
+  deadline: number,
+  probe: () => Promise<T | undefined>,
+): Promise<T> {
+  while (Date.now() < deadline) {
+    const result = await probe();
+    if (result !== undefined) return result;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    await sleep(Math.min(QUEUE_POLL_INTERVAL_MS, remaining));
+  }
+  throw new QueueWaitTimeout();
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function parsePositiveInt(raw: string, label: string): number {
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0 || String(n) !== raw.trim()) {
+    throw new Error(`${label} must be a positive integer (got: ${raw})`);
+  }
+  return n;
+}
+
 queueCommand.addCommand(queueListCommand);
 queueCommand.addCommand(queueShowCommand);
 queueCommand.addCommand(queueCancelCommand);
 queueCommand.addCommand(queueClearCommand);
+queueCommand.addCommand(queueWaitForCommand);
 
 function formatAge(iso: string): string {
   const ms = Date.now() - Date.parse(iso);

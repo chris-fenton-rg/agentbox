@@ -66,15 +66,50 @@ export interface ReloadResult {
  * Coarse activity state of the in-box Claude Code session, fed by Claude Code
  * hooks via `agentbox-ctl claude-state <state>`. `unknown` is the initial value
  * before any hook has fired (or for boxes whose image predates the hooks).
+ *
+ * `end-plan` and `question` are PreToolUse-driven fine-grained states: Claude
+ * is about to call ExitPlanMode (plan finished, awaiting human approval) or
+ * AskUserQuestion (interactive prompt shown). The matching PostToolUse hook
+ * clears them back to `working`. The hook also pipes the tool input JSON to
+ * the daemon so `agentbox agent get-plan-question` can read the plan body or
+ * the questions[] array without scraping the terminal.
  */
-export type ClaudeActivityState = 'working' | 'idle' | 'waiting' | 'unknown';
+export type ClaudeActivityState =
+  | 'working'
+  | 'idle'
+  | 'waiting'
+  | 'end-plan'
+  | 'question'
+  | 'unknown';
 
 export const CLAUDE_ACTIVITY_STATES: readonly ClaudeActivityState[] = [
   'working',
   'idle',
   'waiting',
+  'end-plan',
+  'question',
   'unknown',
 ];
+
+/** Body shape extracted from the ExitPlanMode hook payload. */
+export interface ClaudePlanPayload {
+  /** Markdown plan body — Claude Code's `plan` tool input field. */
+  plan: string;
+  /** ISO-8601 timestamp the hook fired. */
+  capturedAt: string;
+}
+
+/** Body shape extracted from the AskUserQuestion hook payload. */
+export interface ClaudeQuestionPayload {
+  /** Each entry is one question Claude is asking; usually length 1. */
+  questions: Array<{
+    question: string;
+    header?: string;
+    multiSelect?: boolean;
+    options: Array<{ label: string; description?: string }>;
+  }>;
+  capturedAt: string;
+}
 
 /**
  * Same coarse activity union, reused for any agent. Codex feeds it via
@@ -119,6 +154,16 @@ export interface BoxStatusClaude {
    * existed simply lack it (schema stays 1; treat absent as no title).
    */
   sessionTitle?: string;
+  /**
+   * Last captured plan body — populated when `state === 'end-plan'`. The
+   * matching PostToolUse hook clears it. Additive — older snapshots lack it.
+   */
+  plan?: ClaudePlanPayload;
+  /**
+   * Last captured AskUserQuestion content — populated when `state === 'question'`.
+   * Cleared on the matching PostToolUse hook. Additive.
+   */
+  question?: ClaudeQuestionPayload;
 }
 
 /**
@@ -189,7 +234,27 @@ export type CtlRequest =
   | { op: 'reload' }
   | { op: 'ping' }
   | { op: 'claude-session'; sessionName?: string }
-  | { op: 'claude-state'; state: ClaudeActivityState }
+  | {
+      op: 'claude-state';
+      state: ClaudeActivityState;
+      /**
+       * Optional payload from a PreToolUse hook. For `end-plan` carries the
+       * plan body; for `question` carries the AskUserQuestion params. Cleared
+       * when the matching PostToolUse hook fires with `state: 'working'` and
+       * `clearPending: true`.
+       */
+      plan?: ClaudePlanPayload;
+      question?: ClaudeQuestionPayload;
+      /**
+       * Set by the matching PostToolUse hook (`claude-state working
+       * --clear-pending`) to force-exit a sticky end-plan/question state. The
+       * catchall PreToolUse `working` hook races with the matcher-specific
+       * `end-plan`/`question` hook on the same tool invocation; sticky
+       * semantics in the reporter swallow that race, and `clearPending`
+       * marks the legitimate post-tool transition out.
+       */
+      clearPending?: boolean;
+    }
   | { op: 'codex-state'; state: AgentActivityState };
 
 export type CtlResponse = { ok: true; data: unknown } | { ok: false; error: string };

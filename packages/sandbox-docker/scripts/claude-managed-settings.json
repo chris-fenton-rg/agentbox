@@ -1,5 +1,5 @@
 {
-  "$comment": "AgentBox enterprise-managed Claude Code settings, baked into the box image at /etc/claude-code/managed-settings.json. Highest precedence and NOT synced from the host ~/.claude, so claude-hooks-filter.ts never touches it; per Claude Code, hook arrays MERGE across settings sources, so the user's own hooks still run. These hooks report Claude's activity to the box supervisor (agentbox-ctl claude-state -> ctl socket -> relay -> ~/.agentbox/boxes/<id>/status.json) so `agentbox status/list/inspect` can show it even when the box is paused. Each command is exit-0 fast and shell-backgrounded so a hook can never block or fail a Claude turn.",
+  "$comment": "AgentBox enterprise-managed Claude Code settings, baked into the box image at /etc/claude-code/managed-settings.json. Highest precedence and NOT synced from the host ~/.claude, so claude-hooks-filter.ts never touches it; per Claude Code, hook arrays MERGE across settings sources, so the user's own hooks still run. These hooks report Claude's activity to the box supervisor (agentbox-ctl claude-state -> ctl socket -> relay -> ~/.agentbox/boxes/<id>/status.json) so `agentbox status/list/inspect` can show it even when the box is paused. Each command is exit-0 fast and shell-backgrounded so a hook can never block or fail a Claude turn. The ExitPlanMode / AskUserQuestion entries run SYNCHRONOUSLY (no &) because they consume the hook's stdin payload; the catchall PreToolUse 'working' hook races with them, but the supervisor's sticky-state semantics swallow that race (a 'working' set while in end-plan/question is ignored unless --clear-pending is set, which only the matching PostToolUse hook passes).",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -12,6 +12,32 @@
       {
         "hooks": [
           { "type": "command", "command": "agentbox-ctl claude-state working >/dev/null 2>&1 &", "timeout": 3 }
+        ]
+      },
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          { "type": "command", "command": "agentbox-ctl claude-state end-plan --payload-stdin >/dev/null 2>&1", "timeout": 3 }
+        ]
+      },
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          { "type": "command", "command": "agentbox-ctl claude-state question --payload-stdin >/dev/null 2>&1", "timeout": 3 }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          { "type": "command", "command": "agentbox-ctl claude-state working --clear-pending >/dev/null 2>&1 &", "timeout": 3 }
+        ]
+      },
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          { "type": "command", "command": "agentbox-ctl claude-state working --clear-pending >/dev/null 2>&1 &", "timeout": 3 }
         ]
       }
     ],

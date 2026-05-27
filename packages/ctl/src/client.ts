@@ -3,6 +3,8 @@ import { existsSync } from 'node:fs';
 import { createConnection, type Socket } from 'node:net';
 import type {
   ClaudeActivityState,
+  ClaudePlanPayload,
+  ClaudeQuestionPayload,
   ClaudeSessionStatus,
   CtlRequest,
   CtlResponse,
@@ -174,8 +176,19 @@ export async function claudeSession(
 export async function claudeState(
   opts: ConnectOptions,
   state: ClaudeActivityState,
+  payload?: {
+    plan?: ClaudePlanPayload;
+    question?: ClaudeQuestionPayload;
+    clearPending?: boolean;
+  },
 ): Promise<'ok'> {
-  return sendOneShot<'ok'>(opts, { op: 'claude-state', state });
+  return sendOneShot<'ok'>(opts, {
+    op: 'claude-state',
+    state,
+    ...(payload?.plan ? { plan: payload.plan } : {}),
+    ...(payload?.question ? { question: payload.question } : {}),
+    ...(payload?.clearPending ? { clearPending: true } : {}),
+  });
 }
 
 export async function codexState(
