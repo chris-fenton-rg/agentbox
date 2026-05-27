@@ -1094,59 +1094,79 @@ export async function waitForTmuxPaneContent(
 }
 
 /**
- * tmux command-list (separator-prefixed) that remaps the prefix and turns
- * the inner tmux status bar off. The outer host UI (the wrapped-pty footer
- * for `agentbox claude` / `agentbox shell`, the dashboard's own status row
- * for the right pane) already shows the box name + the detach hint, so the
- * inner bar is double-footer — strip it. Shared by {@link startClaudeSession}
- * and `startShellSession` (both tmux-backed sessions get the same chords).
+ * The list of tmux subcommands that configure a session: remap the prefix
+ * (Ctrl+a primary, Ctrl+b kept as secondary), enable CSI-u extended-key
+ * reporting so Claude Code can distinguish Shift+Enter from Enter, and turn
+ * the inner tmux status bar off so it doesn't double up with the outer
+ * wrapped-pty footer. Single source of truth shared by the docker path
+ * (via {@link buildTmuxSessionArgs}, which folds these into execa argv with
+ * `;` separators) and the cloud path (via
+ * {@link buildTmuxConfigShellSnippet}, which formats them as `tmux …`
+ * shell statements for SSH transport).
  *
- * `Ctrl+a` is the **primary** prefix (matches the dashboard's quit chord), and
- * tmux's default `Ctrl+b` is kept as a **secondary** prefix (`prefix2 C-b`) so
- * existing tmux muscle memory + integrations that send `Ctrl+b <key>` keep
- * working. Either prefix triggers the same key table — so `Ctrl+a d` *and*
- * `Ctrl+b d` both detach. `Ctrl+a Ctrl+a` sends a literal `Ctrl+a` through to
- * Claude (`send-prefix`); `Ctrl+b Ctrl+b` does the same for `Ctrl+b` via
- * `send-prefix -2`. `prefix`/`bind-key` are tmux server-global (no `-t`);
- * that's fine because each box's tmux server hosts only the claude session.
- * Applied here (not in the image) so existing boxes pick it up on the next
- * fresh session with no rebuild.
- *
- * Appended after `tmux new-session …` in {@link startClaudeSession}; the bare
- * `;` elements are tmux's command separator (execa array args, no host shell,
- * so they reach tmux verbatim). `status off` is a session option scoped with
- * `-t <session>` — the dashboard's grouped `<name>-dash` session has its own
- * option scope and runs its own `status off` in {@link buildDashboardAttachArgv}.
+ * `prefix`/`bind-key` are server-global (no `-t`) — fine because each box
+ * runs one tmux server per session role. `status off` is session-scoped
+ * with `-t <session>` so the dashboard's grouped sibling session
+ * (`<name>-dash`) keeps its own option scope.
+ */
+function tmuxConfigSubcommands(sessionName: string): readonly (readonly string[])[] {
+  return [
+    ['set', '-g', 'prefix', 'C-a'],
+    ['set', '-g', 'prefix2', 'C-b'],
+    ['bind-key', 'C-a', 'send-prefix'],
+    ['bind-key', 'C-b', 'send-prefix', '-2'],
+    ['bind-key', 'd', 'detach-client'],
+    ['set', '-g', 'extended-keys', 'on'],
+    ['set', '-as', 'terminal-features', ',*:extkeys'],
+    ['set', '-t', sessionName, 'status', 'off'],
+  ];
+}
+
+/**
+ * tmux command-list (separator-prefixed) appended after `tmux new-session …`
+ * in {@link startClaudeSession}. The bare `;` elements are tmux's command
+ * separator (execa array args, no host shell, so they reach tmux verbatim).
+ * See {@link tmuxConfigSubcommands} for the shared subcommand definitions
+ * and why each setting is set the way it is.
  */
 export function buildTmuxSessionArgs(sessionName: string): string[] {
-  const s = sessionName;
-  return [
-    // Server-global (no -t): primary prefix Ctrl+a (dashboard parity), keep
-    // tmux's default Ctrl+b as a secondary prefix so users with existing
-    // muscle memory / integrations aren't broken. `d` is the same key under
-    // both prefixes (single key table) -> Ctrl+a d AND Ctrl+b d both detach
-    // (and `d` is already tmux's built-in detach key — bound explicitly so
-    // the contract is visible). `send-prefix` / `send-prefix -2` let a
-    // double-tap of either prefix reach Claude as that literal key.
-    ';', 'set', '-g', 'prefix', 'C-a',
-    ';', 'set', '-g', 'prefix2', 'C-b',
-    ';', 'bind-key', 'C-a', 'send-prefix',
-    ';', 'bind-key', 'C-b', 'send-prefix', '-2',
-    ';', 'bind-key', 'd', 'detach-client',
-    // Modified-key reporting: without `extended-keys on`, tmux strips the
-    // modifier from Shift+Enter / Ctrl+Enter / etc. so Claude Code can't
-    // distinguish them from a plain Enter — pressing Shift+Enter submits the
-    // prompt instead of inserting a newline. `csi-u` is the format Claude
-    // Code recognises after `/terminal-setup`. Server-global so it survives
-    // grouped sibling sessions (e.g. the dashboard's `<name>-dash`).
-    ';', 'set', '-g', 'extended-keys', 'on',
-    ';', 'set', '-as', 'terminal-features', ',*:extkeys',
-    // Hide the inner tmux status bar — the wrapped-pty footer (for
-    // `agentbox claude` / `agentbox shell`) and the dashboard's own status
-    // row already show the box name + detach hint; without `status off`
-    // they double up.
-    ';', 'set', '-t', s, 'status', 'off',
-  ];
+  const out: string[] = [];
+  for (const sub of tmuxConfigSubcommands(sessionName)) {
+    out.push(';', ...sub);
+  }
+  return out;
+}
+
+/**
+ * Same tmux configuration as {@link buildTmuxSessionArgs}, formatted as a
+ * shell snippet (`tmux <args>; tmux <args>; …`) suitable for transports
+ * that go through a remote shell — i.e. the cloud providers' `ssh -t`
+ * attach in `@agentbox/sandbox-cloud`'s `renderInnerCommand`. The docker
+ * path uses execa argv directly and doesn't need this.
+ *
+ * Each subcommand is its own `tmux` invocation joined with `; ` (shell
+ * statement separator), because the in-tmux `;` separator can't pass
+ * through `ssh -t '...'` without ambiguity — single-quoted shell args
+ * forward `;` to the remote shell, where it would split the command line
+ * before reaching tmux. Multiple `tmux` invocations are equivalent
+ * (they're all idempotent `set`/`bind-key` operations) and re-applying
+ * on every reattach is harmless.
+ */
+export function buildTmuxConfigShellSnippet(sessionName: string): string {
+  return tmuxConfigSubcommands(sessionName)
+    .map((sub) => `tmux ${sub.map(shellSingleQuoteIfNeeded).join(' ')}`)
+    .join('; ');
+}
+
+/**
+ * Wrap `s` in POSIX single quotes only if it contains characters that
+ * shells (sh/bash/zsh) parse specially. Tmux args like `,*:extkeys` need
+ * quoting (the `*` would glob); plain identifiers like `C-a` or `prefix`
+ * don't. Keeping the unquoted form when safe makes the generated SSH
+ * command easier to read in logs.
+ */
+function shellSingleQuoteIfNeeded(s: string): string {
+  return /^[A-Za-z0-9_:.\/=+-]+$/.test(s) ? s : "'" + s.replace(/'/g, "'\\''") + "'";
 }
 
 /**

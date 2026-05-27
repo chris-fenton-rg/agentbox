@@ -7,6 +7,7 @@ import {
   buildClaudeLoginRunArgv,
   buildClaudeMounts,
   buildTmuxSessionArgs,
+  buildTmuxConfigShellSnippet,
   formatDetachNotice,
   DEFAULT_CLAUDE_SESSION,
   resolveClaudeVolume,
@@ -199,6 +200,32 @@ describe('buildTmuxSessionArgs', () => {
     for (const i of sessionSetIdxs) {
       expect(args[i + 2]).toBe('codex');
     }
+  });
+});
+
+describe('buildTmuxConfigShellSnippet', () => {
+  it('formats the same config as a sequence of tmux shell statements', () => {
+    const snippet = buildTmuxConfigShellSnippet('claude');
+    // Every subcommand is its own `tmux …` invocation joined with `; ` so
+    // it can ride through `ssh -t '...'` without `;` collisions inside
+    // tmux's own command parser.
+    const parts = snippet.split('; ');
+    for (const p of parts) expect(p).toMatch(/^tmux /);
+    // The user-visible regression target: the inner status bar is OFF and
+    // scoped to the named session.
+    expect(snippet).toContain('tmux set -t claude status off');
+    // Prefix remap survives the format change.
+    expect(snippet).toContain('tmux set -g prefix C-a');
+    expect(snippet).toContain('tmux set -g prefix2 C-b');
+    // The `,*:extkeys` value MUST be shell-quoted — the `*` would otherwise
+    // glob against the cwd and break the tmux call.
+    expect(snippet).toContain("tmux set -as terminal-features ',*:extkeys'");
+  });
+
+  it('threads a custom session name into the session-scoped option', () => {
+    const snippet = buildTmuxConfigShellSnippet('codex');
+    expect(snippet).toContain('tmux set -t codex status off');
+    expect(snippet).not.toContain('tmux set -t claude status off');
   });
 });
 

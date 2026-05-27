@@ -9,6 +9,7 @@ export {
   buildClaudeLoginRunArgv,
   buildClaudeMounts,
   buildTmuxSessionArgs,
+  buildTmuxConfigShellSnippet,
   buildShellArgv,
   CLAUDE_FORWARDED_ENV_KEYS,
   ClaudeSessionError,

@@ -32,6 +32,7 @@ import type {
 } from '@agentbox/core';
 import { allocateProjectIndex, readState, recordBox, removeBoxRecord } from '@agentbox/sandbox-core';
 import {
+  buildTmuxConfigShellSnippet,
   ensureRelay,
   forgetBoxFromRelay,
   generateRelayToken,
@@ -967,9 +968,16 @@ function makeCloudCheckpoint(backend: CloudBackend): ProviderCheckpoint {
  * be a single shell-safe phrase (the SSH client passes it to the remote
  * `sshd` which feeds it to the user's login shell).
  *
- * `tmux new-session -A` attaches if a session with the given name exists,
- * otherwise creates a fresh one running the fallback command. Matches the
- * Docker shell command's tmux semantics so the UX feels the same.
+ * Three-stage: ensure the session exists (idempotent), apply the same
+ * tmux configuration the docker provider uses (prefix remap, extended-keys,
+ * `status off` to hide the inner status bar so it doesn't double up with
+ * the wrapped-pty footer — see {@link buildTmuxConfigShellSnippet}), then
+ * `exec tmux attach`. We can't use `tmux new-session -A` here because it
+ * would attach before the `set` commands run; `has-session || new-session -d`
+ * keeps the session detached long enough to configure it. `-c /workspace`
+ * starts the session in the box's workspace dir so claude/codex/opencode
+ * see /workspace as their cwd (otherwise tmux inherits the SSH login
+ * shell's $HOME and the agents prompt for workspace-trust).
  */
 function renderInnerCommand(kind: AttachKind, opts?: BuildAttachOptions): string {
   const sessionName = opts?.sessionName ?? defaultSessionName(kind);
@@ -981,12 +989,16 @@ function renderInnerCommand(kind: AttachKind, opts?: BuildAttachOptions): string
   if (opts?.noTmux) {
     return fallback;
   }
-  // Single-quote the inner cmd so tmux gets exactly one argv element. Use
-  // `command -v tmux` so a missing tmux fails fast with a clear error.
-  // `-c /workspace` starts the session in the box's workspace dir so claude/
-  // codex/opencode see /workspace as their cwd (otherwise tmux inherits the
-  // SSH login shell's $HOME and the agents prompt for workspace-trust).
-  return `command -v tmux >/dev/null || { echo "tmux not installed in sandbox"; exit 127; }; exec tmux new-session -A -c ${shellSingle(CLOUD_WORKSPACE_DIR)} -s ${shellSingle(sessionName)} ${shellSingle(fallback)}`;
+  const sessionQ = shellSingle(sessionName);
+  const cwdQ = shellSingle(CLOUD_WORKSPACE_DIR);
+  const fallbackQ = shellSingle(fallback);
+  const configSnippet = buildTmuxConfigShellSnippet(sessionName);
+  return [
+    `command -v tmux >/dev/null || { echo "tmux not installed in sandbox"; exit 127; }`,
+    `tmux has-session -t ${sessionQ} 2>/dev/null || tmux new-session -d -c ${cwdQ} -s ${sessionQ} ${fallbackQ}`,
+    configSnippet,
+    `exec tmux attach -t ${sessionQ}`,
+  ].join('; ');
 }
 
 function defaultSessionName(kind: AttachKind): string {
