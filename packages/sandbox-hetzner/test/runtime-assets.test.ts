@@ -19,6 +19,8 @@ function makeFakeRepo(): string {
     'packages/sandbox-docker/scripts/agentbox-dockerd-start',
     'packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup',
     'packages/sandbox-docker/scripts/agentbox-open',
+    'packages/sandbox-docker/scripts/gh-shim',
+    'packages/sandbox-docker/scripts/git-shim',
     'packages/sandbox-hetzner/scripts/custom-system-CLAUDE.md',
     'packages/sandbox-docker/scripts/claude-managed-settings.json',
     'packages/sandbox-docker/scripts/agentbox-codex-hooks.json',

@@ -91,6 +91,8 @@ const hetznerFiles = [
   ['packages/sandbox-docker/scripts/agentbox-dockerd-start', 'agentbox-dockerd-start', true],
   ['packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup', 'agentbox-checkpoint-cleanup', true],
   ['packages/sandbox-docker/scripts/agentbox-open', 'agentbox-open', true],
+  ['packages/sandbox-docker/scripts/gh-shim', 'gh-shim', true],
+  ['packages/sandbox-docker/scripts/git-shim', 'git-shim', true],
   ['packages/sandbox-hetzner/scripts/custom-system-CLAUDE.md', 'custom-system-CLAUDE.md', false],
   ['packages/sandbox-docker/scripts/claude-managed-settings.json', 'claude-managed-settings.json', false],
   ['packages/sandbox-docker/scripts/agentbox-codex-hooks.json', 'agentbox-codex-hooks.json', false],

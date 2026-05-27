@@ -13,6 +13,8 @@
 #   /tmp/agentbox-dockerd-start        -- DinD startup helper
 #   /tmp/agentbox-checkpoint-cleanup   -- pre-snapshot cleanup helper
 #   /tmp/agentbox-open                 -- in-box xdg-open shim
+#   /tmp/agentbox-gh-shim              -- in-box `gh` shim (routes to host gh via relay)
+#   /tmp/agentbox-git-shim             -- in-box `git` shim (routes push/pull/fetch/clone via relay)
 #   /tmp/agentbox-custom-CLAUDE.md     -- /etc/claude-code/CLAUDE.md content
 #   /tmp/agentbox-managed-settings.json -- /etc/claude-code/managed-settings.json
 #   /tmp/agentbox-codex-hooks.json     -- /usr/local/share/agentbox/codex-hooks.json
@@ -159,13 +161,19 @@ done_ "agentbox-ctl install"
 # *before* Chromium sidesteps the issue and keeps the snapshot complete.
 # Tracked as Phase-7 follow-up in docs/hertzner_backlog.md.
 
-step "baked helper scripts (vnc / dockerd / cleanup / xdg-open shim)"
+step "baked helper scripts (vnc / dockerd / cleanup / xdg-open / gh + git shims)"
 install -m 0755 /tmp/agentbox-vnc-start          /usr/local/bin/agentbox-vnc-start
 install -m 0755 /tmp/agentbox-dockerd-start      /usr/local/bin/agentbox-dockerd-start
 install -m 0755 /tmp/agentbox-checkpoint-cleanup /usr/local/bin/agentbox-checkpoint-cleanup
 install -m 0755 /tmp/agentbox-open               /usr/local/bin/agentbox-open
 ln -sf /usr/local/bin/agentbox-open /usr/local/bin/xdg-open
-done_ "baked helper scripts (vnc / dockerd / cleanup / xdg-open shim)"
+# gh + git shims — same files baked by Dockerfile.box for the docker provider.
+# The shim wins on PATH (default /usr/local/bin precedes /usr/bin) so any agent
+# call to `gh ...` / `git push|pull|fetch|clone` routes through the relay; the
+# git shim execs /usr/bin/git for everything else, no overhead.
+install -m 0755 /tmp/agentbox-gh-shim            /usr/local/bin/gh
+install -m 0755 /tmp/agentbox-git-shim           /usr/local/bin/git
+done_ "baked helper scripts (vnc / dockerd / cleanup / xdg-open / gh + git shims)"
 
 step "baked config files (claude / codex / setup guide / tmux.conf)"
 install -m 0644 /tmp/agentbox-custom-CLAUDE.md      /etc/claude-code/CLAUDE.md
@@ -356,6 +364,7 @@ step "trim /tmp/agentbox-*"
 # re-read which lines actually executed against which source.
 rm -f /tmp/agentbox-ctl /tmp/agentbox-vnc-start /tmp/agentbox-dockerd-start \
       /tmp/agentbox-checkpoint-cleanup /tmp/agentbox-open \
+      /tmp/agentbox-gh-shim /tmp/agentbox-git-shim \
       /tmp/agentbox-custom-CLAUDE.md /tmp/agentbox-managed-settings.json \
       /tmp/agentbox-codex-hooks.json /tmp/agentbox-setup-skill.md
 # Move install-box.sh into the persistent location for diagnostics.
