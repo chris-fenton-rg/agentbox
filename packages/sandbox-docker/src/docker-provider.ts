@@ -159,7 +159,8 @@ export const dockerProvider: Provider = {
     }
     const engine = await detectEngine();
     if (engine === 'orbstack' && !opts?.loopback) {
-      // OrbStack auto-routes <container>.orb.local to container :80.
+      // OrbStack auto-routes <container>.orb.local to the container; :80 is
+      // declared (EXPOSE 80) so no port suffix is needed.
       return `http://${box.container}.orb.local`;
     }
     if (box.portlessAlias && !opts?.loopback) {

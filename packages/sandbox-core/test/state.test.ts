@@ -173,6 +173,8 @@ describe('state.ts', () => {
       vncHostPort: 49001,
       webHostPort: 49002,
       portlessAlias: 'shape.localhost',
+      portlessVncAlias: 'vnc-shape.localhost',
+      portlessVncUrl: 'https://vnc-shape.localhost',
       createdAt: '2026-05-12T12:00:00.000Z',
     };
     await recordBox(box, file);
@@ -184,6 +186,8 @@ describe('state.ts', () => {
     expect(r.docker?.vncHostPort).toBe(49001);
     expect(r.docker?.webHostPort).toBe(49002);
     expect(r.docker?.portlessAlias).toBe('shape.localhost');
+    expect(r.docker?.portlessVncAlias).toBe('vnc-shape.localhost');
+    expect(r.docker?.portlessVncUrl).toBe('https://vnc-shape.localhost');
   });
 
   it('cloud records do NOT get a docker shape mirrored in', async () => {

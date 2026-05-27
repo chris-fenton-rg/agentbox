@@ -32,6 +32,10 @@ function webEndpoint(eps: Awaited<ReturnType<typeof getBoxEndpoints>>) {
   return eps.endpoints.find((e) => e.kind === 'web');
 }
 
+function vncEndpoint(eps: Awaited<ReturnType<typeof getBoxEndpoints>>) {
+  return eps.endpoints.find((e) => e.kind === 'vnc');
+}
+
 describe('getBoxEndpoints — Portless web URL', () => {
   it('uses the stored portlessUrl on Docker Desktop', async () => {
     const record = {
@@ -63,5 +67,60 @@ describe('getBoxEndpoints — Portless web URL', () => {
     };
     const eps = await getBoxEndpoints(record, 'orbstack', webStatus);
     expect(webEndpoint(eps)?.url).toBe('http://127.0.0.1:54321');
+  });
+});
+
+describe('getBoxEndpoints — Portless VNC URL', () => {
+  const vncBase: BoxRecord = {
+    ...baseRecord,
+    vncEnabled: true,
+    vncContainerPort: 6080,
+    vncHostPort: 64080,
+    vncPassword: 'pw12345A',
+  };
+
+  it('uses the stored portlessVncUrl on Docker Desktop', async () => {
+    const record = {
+      ...vncBase,
+      portlessVncAlias: 'vnc-mybox',
+      portlessVncUrl: 'http://vnc-mybox.localhost:1355',
+    };
+    const eps = await getBoxEndpoints(record, 'docker-desktop', webStatus);
+    expect(vncEndpoint(eps)?.url).toBe(
+      'http://vnc-mybox.localhost:1355/vnc.html?autoconnect=1&password=pw12345A',
+    );
+    expect(vncEndpoint(eps)?.reachable).toBe(true);
+  });
+
+  it('falls back to https://vnc-<name>.localhost when portlessVncUrl is absent', async () => {
+    const record = { ...vncBase, portlessVncAlias: 'vnc-mybox' };
+    const eps = await getBoxEndpoints(record, 'docker-desktop', webStatus);
+    expect(vncEndpoint(eps)?.url).toBe(
+      'https://vnc-mybox.localhost/vnc.html?autoconnect=1&password=pw12345A',
+    );
+  });
+
+  it('falls back to loopback VNC URL when no Portless route is registered', async () => {
+    const eps = await getBoxEndpoints(vncBase, 'docker-desktop', webStatus);
+    expect(vncEndpoint(eps)?.url).toBe(
+      'http://127.0.0.1:64080/vnc.html?autoconnect=1&password=pw12345A',
+    );
+  });
+
+  it('ignores the Portless VNC route on OrbStack (orb.local is preferred)', async () => {
+    const record = {
+      ...vncBase,
+      portlessVncAlias: 'vnc-mybox',
+      portlessVncUrl: 'http://vnc-mybox.localhost:1355',
+    };
+    const eps = await getBoxEndpoints(record, 'orbstack', webStatus);
+    expect(vncEndpoint(eps)?.url).toBe(
+      'http://agentbox-mybox.orb.local:6080/vnc.html?autoconnect=1&password=pw12345A',
+    );
+  });
+
+  it('omits the VNC endpoint when vncEnabled is false', async () => {
+    const eps = await getBoxEndpoints(baseRecord, 'docker-desktop', webStatus);
+    expect(vncEndpoint(eps)).toBeUndefined();
   });
 });

@@ -38,7 +38,12 @@ export async function getBoxEndpoints(
 
   if (record.vncEnabled && record.vncPassword) {
     const vncUrls = buildVncUrls(record, engine);
-    const url = vncUrls.orbUrl ?? vncUrls.loopbackUrl;
+    // Preference: portless (stable name) > orb.local > loopback. Mirrors the
+    // web endpoint's choice below and `agentbox screen`'s default.
+    const url =
+      engine === 'orbstack'
+        ? (vncUrls.orbUrl ?? vncUrls.loopbackUrl)
+        : (vncUrls.portlessUrl ?? vncUrls.loopbackUrl);
     endpoints.push({
       kind: 'vnc',
       name: 'vnc',

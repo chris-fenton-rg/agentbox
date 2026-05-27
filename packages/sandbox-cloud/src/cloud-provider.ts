@@ -151,6 +151,34 @@ function parseLoopbackPort(url: string): number | undefined {
 }
 
 /**
+ * Register a single host Portless alias `<alias>.localhost -> <previewUrl>`
+ * when `previewUrl` resolves to a loopback `http://127.0.0.1:<port>` (Hetzner's
+ * `ssh -L` forward). For backends that return a public URL (Daytona's signed
+ * preview) the alias is naturally skipped. Best-effort: every Portless call
+ * already swallows; we never throw from here. Returns the resolved URL on
+ * success.
+ */
+async function registerHostPortlessAlias(args: {
+  alias: string;
+  previewUrl: string;
+  label: string;
+  onLog: (line: string) => void;
+}): Promise<string | undefined> {
+  const localPort = parseLoopbackPort(args.previewUrl);
+  if (localPort === undefined) return undefined;
+  const ok = await portlessAlias(args.alias, localPort);
+  if (!ok) {
+    args.onLog(
+      `portless: ${args.label} alias not registered (portless CLI missing or not running) — host URL stays http://127.0.0.1:${String(localPort)}`,
+    );
+    return undefined;
+  }
+  const url = await portlessGetUrl(args.alias);
+  args.onLog(`portless alias ${url} -> 127.0.0.1:${String(localPort)}`);
+  return url;
+}
+
+/**
  * Register the host Portless alias for `<boxName>.localhost -> <webPreviewUrl>`
  * and bring up the in-VPS mirror proxy so the same URL works from inside the
  * box. Best-effort: every step is gated on a previous step's success, and any
@@ -162,17 +190,13 @@ async function bootstrapPortlessForCloudBox(
   handle: CloudHandle,
   args: { boxName: string; webPreviewUrl: string; webPort: number; onLog: (line: string) => void },
 ): Promise<{ alias: string; url: string } | undefined> {
-  const localPort = parseLoopbackPort(args.webPreviewUrl);
-  if (localPort === undefined) return undefined;
-  const ok = await portlessAlias(args.boxName, localPort);
-  if (!ok) {
-    args.onLog(
-      `portless: alias not registered (portless CLI missing or not running) — host URL stays http://127.0.0.1:${String(localPort)}`,
-    );
-    return undefined;
-  }
-  const url = await portlessGetUrl(args.boxName);
-  args.onLog(`portless alias ${url} -> 127.0.0.1:${String(localPort)}`);
+  const url = await registerHostPortlessAlias({
+    alias: args.boxName,
+    previewUrl: args.webPreviewUrl,
+    label: 'web',
+    onLog: args.onLog,
+  });
+  if (!url) return undefined;
   if (backend.startInBoxPortless) {
     const mode = parsePortlessUrl(url) ?? { proxyPort: DEFAULT_PORTLESS_PROXY_PORT, tls: false };
     try {
@@ -454,6 +478,33 @@ export function createCloudProvider(
             portlessUrlResolved = r.url;
           }
         }
+        // Parallel `vnc-<box-name>.localhost` alias against the in-box noVNC
+        // port. Host-only — no in-box mirror; an agent inside the box opening
+        // its own VNC view is a degenerate self-loop. Same loopback-URL gate
+        // as the web path, so Daytona naturally skips and Hetzner registers.
+        let vncPreview: { url: string; token?: string } | undefined;
+        if (portlessOpt && vncEnabled) {
+          try {
+            vncPreview = await backend.previewUrl(handle, CLOUD_VNC_PORT);
+          } catch {
+            vncPreview = undefined;
+          }
+        }
+        let portlessVncAliasName: string | undefined;
+        let portlessVncUrlResolved: string | undefined;
+        if (portlessOpt && vncPreview) {
+          const vncAlias = `vnc-${name}`;
+          const url = await registerHostPortlessAlias({
+            alias: vncAlias,
+            previewUrl: vncPreview.url,
+            label: 'vnc',
+            onLog: log,
+          });
+          if (url) {
+            portlessVncAliasName = vncAlias;
+            portlessVncUrlResolved = url;
+          }
+        }
         // Per-service preview URLs. Each `services.*.expose.port` from
         // `agentbox.yaml` gets a direct preview URL alongside the main
         // WebProxy URL — lets users hit services without going through the
@@ -531,6 +582,8 @@ export function createCloudProvider(
           carry: carrySummary,
           portlessAlias: portlessAliasName,
           portlessUrl: portlessUrlResolved,
+          portlessVncAlias: portlessVncAliasName,
+          portlessVncUrl: portlessVncUrlResolved,
           vncEnabled,
           vncPassword,
           vncContainerPort: vncEnabled ? CLOUD_VNC_PORT : undefined,
@@ -642,11 +695,35 @@ export function createCloudProvider(
           portlessUrlResolved = r.url;
         }
       }
+      // Same story for the VNC alias — the ssh -L port for 6080 is fresh.
+      // Best-effort, silent (startBox has no onLog). Skipped when no VNC
+      // alias was set at create.
+      let portlessVncAliasName: string | undefined = box.portlessVncAlias;
+      let portlessVncUrlResolved: string | undefined = box.portlessVncUrl;
+      if (box.portlessVncAlias && box.vncEnabled) {
+        try {
+          const vncPreview = await backend.previewUrl(h, CLOUD_VNC_PORT);
+          const url = await registerHostPortlessAlias({
+            alias: box.portlessVncAlias,
+            previewUrl: vncPreview.url,
+            label: 'vnc',
+            onLog: () => {},
+          });
+          if (url) {
+            portlessVncAliasName = box.portlessVncAlias;
+            portlessVncUrlResolved = url;
+          }
+        } catch {
+          /* best-effort */
+        }
+      }
 
       const next: BoxRecord = {
         ...box,
         portlessAlias: portlessAliasName,
         portlessUrl: portlessUrlResolved,
+        portlessVncAlias: portlessVncAliasName,
+        portlessVncUrl: portlessVncUrlResolved,
         cloud: {
           ...(box.cloud ?? { backend: providerName, sandboxId: h.sandboxId }),
           webPort,
@@ -731,13 +808,21 @@ export function createCloudProvider(
         const msg = err instanceof Error ? err.message : String(err);
         if (!/not.?found|missing/i.test(msg)) throw err;
       }
-      // Best-effort: drop the host Portless alias so `<box>.localhost` stops
-      // pointing at a dead ssh -L. The in-VPS portless dies with the VPS.
+      // Best-effort: drop the host Portless aliases (web + vnc) so neither
+      // `<box>.localhost` nor `vnc-<box>.localhost` keeps pointing at a dead
+      // ssh -L. The in-VPS portless dies with the VPS.
       if (box.portlessAlias) {
         try {
           await portlessUnalias(box.portlessAlias);
         } catch {
           // portlessUnalias swallows already; paranoid catch in case.
+        }
+      }
+      if (box.portlessVncAlias) {
+        try {
+          await portlessUnalias(box.portlessVncAlias);
+        } catch {
+          // best-effort
         }
       }
       // Best-effort: stop the host poller and drop the registration.
@@ -875,6 +960,17 @@ export function createCloudProvider(
     ): Promise<string> {
       const h = handleFor(box);
       const kind = opts?.kind ?? 'web';
+      // Prefer the stable Portless URL when one was registered (Hetzner gets
+      // both; Daytona naturally skips since previewUrl is non-loopback). The
+      // `--loopback` flag forces the raw signed/loopback path instead.
+      if (!opts?.loopback) {
+        if (kind === 'web' && box.portlessAlias) {
+          return box.portlessUrl ?? `https://${box.portlessAlias}.localhost`;
+        }
+        if (kind === 'vnc' && box.portlessVncAlias) {
+          return box.portlessVncUrl ?? `https://${box.portlessVncAlias}.localhost`;
+        }
+      }
       // VNC port is fixed by Dockerfile.box (websockify serves noVNC on :6080).
       const port = kind === 'vnc' ? CLOUD_VNC_PORT : (box.cloud?.webPort ?? CLOUD_WEB_PROXY_PORT);
       // Always re-resolve through the SDK — cached URLs on the record may be

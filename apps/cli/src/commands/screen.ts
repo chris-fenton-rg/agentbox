@@ -97,7 +97,13 @@ export const screenCommand = new Command('screen')
 
         const engine = await detectEngine();
         const urls = buildVncUrls(box, engine);
-        const resolved = opts.loopback ? urls.loopbackUrl : (urls.orbUrl ?? urls.loopbackUrl);
+        // Preference when --loopback is off: portless > orb.local > loopback.
+        // Portless gives a stable name across box restarts (loopback port
+        // rerolls every `docker run`); orb.local is OrbStack-only; loopback is
+        // the always-available fallback. `--loopback` forces the raw port.
+        const resolved = opts.loopback
+          ? urls.loopbackUrl
+          : (urls.portlessUrl ?? urls.orbUrl ?? urls.loopbackUrl);
         if (!resolved) {
           throw new Error(
             `VNC URL unavailable (daemon may not be up); try \`agentbox inspect ${box.name}\``,

@@ -69,12 +69,15 @@ export interface VncUrls {
   orbUrl?: string;
   /** Loopback URL via the auto-allocated host port, e.g. http://127.0.0.1:54321/... Present whenever vncHostPort is known. */
   loopbackUrl?: string;
+  /** Portless URL, e.g. https://vnc-mybox.localhost/vnc.html?... Present when `portlessVncAlias` is set on the record. */
+  portlessUrl?: string;
 }
 
 /**
  * Build the noVNC URLs for a box, given the box record + (host engine).
  * `engine === 'orbstack'` triggers the `<container>.orb.local:6080` route;
- * either engine produces the loopback URL when the host port is resolved.
+ * a stored Portless alias gives `vnc-<name>.localhost`; either engine
+ * produces the loopback URL when the host port is resolved.
  * Returns an empty object when VNC isn't enabled or the password isn't known.
  */
 export function buildVncUrls(
@@ -84,6 +87,8 @@ export function buildVncUrls(
     vncHostPort?: number;
     vncContainerPort?: number;
     vncPassword?: string;
+    portlessVncAlias?: string;
+    portlessVncUrl?: string;
   },
   engine: 'orbstack' | 'docker-desktop' | 'other',
 ): VncUrls {
@@ -96,6 +101,10 @@ export function buildVncUrls(
   }
   if (record.vncHostPort) {
     urls.loopbackUrl = `http://127.0.0.1:${String(record.vncHostPort)}/vnc.html?${qs}`;
+  }
+  if (record.portlessVncAlias) {
+    const base = record.portlessVncUrl ?? `https://${record.portlessVncAlias}.localhost`;
+    urls.portlessUrl = `${base}/vnc.html?${qs}`;
   }
   return urls;
 }

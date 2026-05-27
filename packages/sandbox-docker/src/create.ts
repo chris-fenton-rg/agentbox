@@ -947,13 +947,16 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     );
   }
 
-  // Portless: register `https://<box-name>.localhost -> 127.0.0.1:<webHostPort>`.
-  // Best-effort — Portless is user-installed and never required; any failure
-  // here just leaves the box on its loopback URL. Skipped on OrbStack (which
-  // already has <container>.orb.local).
+  // Portless: register `https://<box-name>.localhost -> 127.0.0.1:<webHostPort>`
+  // and a parallel `https://vnc-<box-name>.localhost -> 127.0.0.1:<vncHostPort>`
+  // for the noVNC viewer. Best-effort — Portless is user-installed and never
+  // required; any failure here just leaves the box on its loopback URL.
+  // Skipped on OrbStack (which already has <container>.orb.local).
   let portlessAliasName: string | undefined;
   let portlessUrl: string | undefined;
-  if (opts.portless === true && webHostPort) {
+  let portlessVncAliasName: string | undefined;
+  let portlessVncUrl: string | undefined;
+  if (opts.portless === true && (webHostPort || (vncEnabled && vncHostPort))) {
     try {
       const engine = await detectEngine();
       if (engine === 'orbstack') {
@@ -962,17 +965,31 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
         const portless = await detectPortless();
         if (!portless.installed) {
           log('portless not installed — run `npm install -g portless` for a <name>.localhost URL');
-        } else if (await portlessAlias(name, webHostPort)) {
-          portlessAliasName = name;
-          // Resolve the real URL from the proxy: scheme + port depend on how
-          // the proxy was started (http://…:1355 no-TLS, or https://… on :443).
-          portlessUrl = await portlessGetUrl(name);
-          log(`portless alias ${portlessUrl} -> 127.0.0.1:${String(webHostPort)}`);
-          if (!portless.proxyRunning) {
+        } else {
+          if (webHostPort) {
+            if (await portlessAlias(name, webHostPort)) {
+              portlessAliasName = name;
+              // Resolve the real URL from the proxy: scheme + port depend on how
+              // the proxy was started (http://…:1355 no-TLS, or https://… on :443).
+              portlessUrl = await portlessGetUrl(name);
+              log(`portless alias ${portlessUrl} -> 127.0.0.1:${String(webHostPort)}`);
+            } else {
+              log('portless alias failed (best-effort) — box still reachable on the loopback URL');
+            }
+          }
+          if (vncEnabled && vncHostPort) {
+            const vncAlias = `vnc-${name}`;
+            if (await portlessAlias(vncAlias, vncHostPort)) {
+              portlessVncAliasName = vncAlias;
+              portlessVncUrl = await portlessGetUrl(vncAlias);
+              log(`portless alias ${portlessVncUrl} -> 127.0.0.1:${String(vncHostPort)}`);
+            } else {
+              log('portless vnc alias failed (best-effort) — VNC still reachable on the loopback URL');
+            }
+          }
+          if (!portless.proxyRunning && (portlessAliasName || portlessVncAliasName)) {
             log(`portless proxy not running — start it with \`${portlessStartHint()}\``);
           }
-        } else {
-          log('portless alias failed (best-effort) — box still reachable on the loopback URL');
         }
       }
     } catch (err) {
@@ -1006,6 +1023,8 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     webHostPort: webHostPort ?? undefined,
     portlessAlias: portlessAliasName,
     portlessUrl,
+    portlessVncAlias: portlessVncAliasName,
+    portlessVncUrl,
     dockerVolume,
     dockerCacheShared: dockerCacheShared || undefined,
     projectRoot: opts.projectRoot,

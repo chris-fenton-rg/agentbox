@@ -52,7 +52,7 @@ import { launchDockerdDaemon, SHARED_DOCKER_CACHE_VOLUME } from './dockerd.js';
 import { launchVncDaemon, VNC_CONTAINER_PORT } from './vnc.js';
 import { WEB_CONTAINER_PORT } from './web.js';
 import { detectPortless, portlessAlias, portlessGetUrl, portlessUnalias } from './portless.js';
-import { getBoxEndpoints, type BoxEndpoints } from './endpoints.js';
+import { getBoxEndpoints, type BoxEndpoint, type BoxEndpoints } from './endpoints.js';
 import {
   ensureRelay,
   forgetBoxFromRelay,
@@ -115,20 +115,36 @@ export async function listBoxes(): Promise<ListedBox[]> {
             : undefined;
         const cachedWebUrl = webPort > 0 ? b.cloud?.previewUrls?.[webPort] : undefined;
         const webUrl = portlessWebUrl ?? cachedWebUrl;
+        const portlessVncBase =
+          b.portlessVncAlias !== undefined
+            ? (b.portlessVncUrl ?? `https://${b.portlessVncAlias}.localhost`)
+            : undefined;
+        const vncUrl =
+          portlessVncBase && b.vncPassword
+            ? `${portlessVncBase}/vnc.html?autoconnect=1&password=${encodeURIComponent(b.vncPassword)}`
+            : undefined;
+        const cloudEndpoints: BoxEndpoint[] = [];
+        if (webUrl) {
+          cloudEndpoints.push({
+            kind: 'web',
+            name: 'web',
+            containerPort: webPort,
+            url: webUrl,
+            reachable: true,
+          });
+        }
+        if (b.vncEnabled && b.vncPassword) {
+          cloudEndpoints.push({
+            kind: 'vnc',
+            name: 'vnc',
+            containerPort: b.vncContainerPort ?? 6080,
+            ...(vncUrl ? { url: vncUrl, reachable: true } : { reachable: false }),
+          });
+        }
         const endpoints: BoxEndpoints = {
           domain: webUrl ? safeHost(webUrl) : '',
           domainIsOrb: false,
-          endpoints: webUrl
-            ? [
-                {
-                  kind: 'web',
-                  name: 'web',
-                  containerPort: webPort,
-                  url: webUrl,
-                  reachable: true,
-                },
-              ]
-            : [],
+          endpoints: cloudEndpoints,
         };
         return {
           ...b,
@@ -309,24 +325,37 @@ export async function startBox(idOrName: string): Promise<StartedBox> {
       box.webHostPort = freshWebPort;
       await recordBox(box);
     }
-    // Docker reallocated the host port, so the Portless route now points at a
-    // stale port — re-register it. Best-effort and silent (startBox has no
-    // onLog); if the proxy/Portless is gone the box still works on loopback.
-    if (box.portlessAlias && box.webHostPort) {
-      try {
-        const portless = await detectPortless();
-        if (portless.installed) {
+  }
+  // Docker reallocated the ephemeral host ports above, so both Portless
+  // routes now point at stale ports — re-register them. Best-effort and
+  // silent (startBox has no onLog); if the proxy/Portless is gone the box
+  // still works on loopback.
+  if ((box.portlessAlias && box.webHostPort) || (box.portlessVncAlias && box.vncHostPort)) {
+    try {
+      const portless = await detectPortless();
+      if (portless.installed) {
+        let dirty = false;
+        if (box.portlessAlias && box.webHostPort) {
           await portlessAlias(box.portlessAlias, box.webHostPort);
           // The proxy's scheme/port can change between sessions — re-resolve.
           const url = await portlessGetUrl(box.portlessAlias);
           if (url !== box.portlessUrl) {
             box.portlessUrl = url;
-            await recordBox(box);
+            dirty = true;
           }
         }
-      } catch {
-        /* best-effort */
+        if (box.portlessVncAlias && box.vncHostPort) {
+          await portlessAlias(box.portlessVncAlias, box.vncHostPort);
+          const url = await portlessGetUrl(box.portlessVncAlias);
+          if (url !== box.portlessVncUrl) {
+            box.portlessVncUrl = url;
+            dirty = true;
+          }
+        }
+        if (dirty) await recordBox(box);
       }
+    } catch {
+      /* best-effort */
     }
   }
   // Relay's in-memory registry may have been lost if the relay restarted
@@ -477,12 +506,20 @@ export async function destroyBox(
       // best-effort — relay may be down or already wiped the entry
     }
   }
-  // Remove the Portless route so it doesn't dangle in the user's proxy config.
+  // Remove the Portless routes so they don't dangle in the user's proxy
+  // config. Web alias + VNC alias are independent — drop whichever was set.
   if (box.portlessAlias) {
     try {
       await portlessUnalias(box.portlessAlias);
     } catch {
       // best-effort — Portless may be uninstalled or the route already gone
+    }
+  }
+  if (box.portlessVncAlias) {
+    try {
+      await portlessUnalias(box.portlessVncAlias);
+    } catch {
+      // best-effort
     }
   }
   // Deregister each in-container worktree from the host main repo. Skip

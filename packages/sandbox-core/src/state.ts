@@ -83,6 +83,8 @@ function projectDockerFields(box: BoxRecord): DockerBoxFields {
     webHostPort: box.webHostPort,
     portlessAlias: box.portlessAlias,
     portlessUrl: box.portlessUrl,
+    portlessVncAlias: box.portlessVncAlias,
+    portlessVncUrl: box.portlessVncUrl,
     dockerVolume: box.dockerVolume,
     dockerCacheShared: box.dockerCacheShared,
     checkpointImage: box.checkpointImage,

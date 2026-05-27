@@ -43,6 +43,10 @@ export interface DockerBoxFields {
   portlessAlias?: string;
   /** Full user-facing URL the Portless proxy serves for this box. */
   portlessUrl?: string;
+  /** Portless route name registered for this box's noVNC port (`vnc-<box-name>`). */
+  portlessVncAlias?: string;
+  /** Full user-facing URL the Portless proxy serves for this box's VNC. */
+  portlessVncUrl?: string;
   /** Volume mounted at /var/lib/docker for the in-box dockerd. */
   dockerVolume?: string;
   /** True when this box's `dockerVolume` is the shared cache. */
@@ -202,6 +206,10 @@ export interface BoxRecord {
   portlessAlias?: string;
   /** Full user-facing URL the Portless proxy serves for this box. Docker only. */
   portlessUrl?: string;
+  /** Portless route name registered for this box's noVNC port (`vnc-<box-name>`). */
+  portlessVncAlias?: string;
+  /** Full user-facing URL the Portless proxy serves for this box's VNC. */
+  portlessVncUrl?: string;
   /** Volume mounted at /var/lib/docker for the in-box dockerd. Docker only. */
   dockerVolume?: string;
   /** True when this box's `dockerVolume` is the shared cache. Docker only. */
