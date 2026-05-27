@@ -118,6 +118,38 @@ export async function resolveCloudBackend(name: string): Promise<CloudBackend> {
   throw new Error(`no host executor for cloud backend '${name}'`);
 }
 
+/**
+ * Re-mint the preview URL for a cloud box's `port` after a transport-level
+ * failure (the host CloudBoxPoller saw ECONNREFUSED on the local port).
+ * Hetzner reopens its SSH ControlMaster + `-L` forward; Daytona's permanent
+ * CloudFront alias doesn't need refresh and this returns null.
+ *
+ * Takes the agentbox `boxId` (the one the relay knows), resolves it to the
+ * backend's sandboxId via `~/.agentbox/state.json` the same way
+ * `executeCloudAction` does, then asks the backend to refresh.
+ *
+ * Best-effort: any error during resolve/refresh returns null and the
+ * poller stays on the (broken) URL — the next poll will trip the same
+ * recovery hook on the next ECONNREFUSED. Throwing here would crash the
+ * poller; we'd rather keep retrying.
+ */
+export async function refreshCloudPreviewUrl(
+  backendName: string,
+  boxId: string,
+  port: number,
+): Promise<string | null> {
+  try {
+    const backend = await resolveCloudBackend(backendName);
+    if (!backend.refreshPreviewUrl) return null;
+    const lookup = await lookupCloudBox(boxId);
+    const handle: CloudHandle = { sandboxId: lookup.cloudSandboxId };
+    const url = await backend.refreshPreviewUrl(handle, port);
+    return url.url;
+  } catch {
+    return null;
+  }
+}
+
 export async function executeCloudAction(
   action: HostAction,
   deps: CloudActionExecutorDeps,

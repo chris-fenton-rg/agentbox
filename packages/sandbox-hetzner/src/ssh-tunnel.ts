@@ -134,11 +134,25 @@ export class SshTunnelManager {
   /**
    * Mint (or fetch the cached) `127.0.0.1:<localPort> → vps:127.0.0.1:<remotePort>`
    * forward. Returns the local port. Idempotent per (boxId, remotePort).
+   *
+   * The cached entry is only returned when the underlying ControlMaster is
+   * still alive — without that check we'd happily hand back a localPort that
+   * stopped listening when the master died (e.g. transient network blip,
+   * host sleep/wake). When the master is dead we drop ALL cached forwards
+   * for this box (they all share one tunnel) and re-mint from scratch.
    */
   async forward(boxId: string, remotePort: number): Promise<number> {
     const tunnel = this.getTunnelOrThrow(boxId);
     const cached = tunnel.forwards.get(remotePort);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined && (await this.isAlive(tunnel.controlPath))) {
+      return cached;
+    }
+    if (cached !== undefined) {
+      // Master died — every cached local port stopped listening. Drop them
+      // all; callers that still hold a stale `localPort` will get a fresh
+      // one on their next forward() call.
+      tunnel.forwards.clear();
+    }
     const localPort = await pickFreePort();
     const argv = [
       '-O', 'forward',
@@ -154,6 +168,43 @@ export class SshTunnelManager {
     }
     tunnel.forwards.set(remotePort, localPort);
     return localPort;
+  }
+
+  /**
+   * Tear down a dead ControlMaster + every cached forward for this box,
+   * then re-open from scratch. Idempotent — if the master is already alive
+   * the master open() is a no-op, but the cached forwards still get
+   * cleared so the next forward() call re-mints them. Returns when the
+   * master is open and the box's forwards map is empty (ready for fresh
+   * forward() calls).
+   *
+   * Use case: the cloud-poller observes ECONNREFUSED on the local port and
+   * asks the backend to refresh the preview URL — that path calls into
+   * here so the master + forward both come back fresh.
+   */
+  async refresh(opts: SshTunnelOpenOptions): Promise<void> {
+    const existing = this.boxes.get(opts.boxId);
+    if (existing) {
+      const alive = await this.isAlive(existing.controlPath);
+      if (!alive && existsSync(existing.controlPath)) {
+        // Stale socket from a dead master — best-effort cleanup, then reopen.
+        try {
+          await execa(
+            'ssh',
+            ['-O', 'exit', '-S', existing.controlPath, 'dummy'],
+            { reject: false },
+          );
+        } catch {
+          // ignore — `-O exit` on a dead master can fail
+        }
+        await rm(existing.controlPath, { force: true });
+      }
+      // Either way drop the cached forwards: even if the master happened to
+      // be alive, the caller asked us to refresh because *something*
+      // upstream (the local port) wasn't responding.
+      existing.forwards.clear();
+    }
+    await this.open(opts);
   }
 
   /** Tear down a single forward. Idempotent — unknown ports are no-ops. */

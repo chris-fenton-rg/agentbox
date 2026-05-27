@@ -140,6 +140,22 @@ export interface CloudBackend {
   previewUrl(h: CloudHandle, port: number): Promise<CloudPreviewUrl>;
 
   /**
+   * Optional: invalidate whatever cached transport state powers a previous
+   * `previewUrl(h, port)` and mint a fresh one. Used by the host
+   * CloudBoxPoller when the in-process URL stops responding (e.g. an SSH
+   * `-L` forward whose ControlMaster died after a host sleep/wake) — without
+   * this hook the poller would back off forever against a dead local port.
+   *
+   * Backends whose preview URL is permanent (Daytona's CloudFront alias)
+   * omit this and the poller treats a connection error as a transient blip
+   * to back off on. Backends that own the transport (Hetzner's SSH tunnel)
+   * implement this to tear down + reopen the master and re-mint the
+   * forward. Implementations MUST NOT silently return the same URL — return
+   * the new one (which may differ from the prior URL).
+   */
+  refreshPreviewUrl?(h: CloudHandle, port: number): Promise<CloudPreviewUrl>;
+
+  /**
    * Browser-bound signed preview URL with the auth token embedded in the URL
    * (no header needed). Used for `agentbox url` / `agentbox screen` — anywhere
    * the host hands the URL off to a browser. Distinct from `previewUrl()`

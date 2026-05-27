@@ -593,6 +593,24 @@ export const hetznerBackend: CloudBackend = {
     return this.previewUrl(h, port);
   },
 
+  async refreshPreviewUrl(h, port): Promise<CloudPreviewUrl> {
+    // Tear down the (likely dead) ControlMaster + every cached `-L` forward
+    // for this box and re-open from scratch. Called by the host
+    // CloudBoxPoller when ECONNREFUSED on the local port shows that the
+    // master died (host sleep/wake, transient network blip). Without this
+    // the poller would back off forever against a stale localPort.
+    const { state, vpsIp } = await ensureLiveTarget(h.sandboxId);
+    void state;
+    void vpsIp;
+    await tunnels.refresh({
+      boxId: h.sandboxId,
+      vpsHost: vpsIp,
+      identity: state.identity,
+    });
+    const localPort = await tunnels.forward(h.sandboxId, port);
+    return { url: `http://127.0.0.1:${String(localPort)}` };
+  },
+
   async startInBoxPortless(h, opts): Promise<void> {
     // Bring up a `portless` proxy *inside the VPS* mirroring the host's
     // mode so `<boxName>.localhost:<P>` resolves to the same content on

@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { executeCloudAction } from './host-actions.js';
+import { executeCloudAction, refreshCloudPreviewUrl } from './host-actions.js';
 import { HostActionQueue } from './host-action-queue.js';
 import { BoxNotices } from './notices.js';
 import {
@@ -17,6 +17,7 @@ import {
 import { askPrompt, isPromptAnswerBody, PendingPrompts, PromptSubscribers } from './prompts.js';
 import { BoxRegistry, EventBuffer } from './registry.js';
 import { BoxStatusStore, isValidBoxStatus } from './status-store.js';
+import { DEFAULT_BOX_RELAY_PORT } from './types.js';
 import type {
   BoxRegistration,
   BoxWorktree,
@@ -647,6 +648,13 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
                     });
                   }
                 }
+              : undefined,
+            // Self-heal a dead preview transport (hetzner SSH `-L` after a
+            // ControlMaster death). The relay strips the `cloud:` prefix
+            // the cloud-provider tags onto BoxRecord.container — what the
+            // backend's `get(sandboxId)` expects is the bare sandbox id.
+            recoverPreviewUrl: reg.backend
+              ? async () => refreshCloudPreviewUrl(reg.backend!, reg.boxId, DEFAULT_BOX_RELAY_PORT)
               : undefined,
             logger: log,
           });

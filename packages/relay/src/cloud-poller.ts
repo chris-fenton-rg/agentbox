@@ -44,6 +44,21 @@ export interface CloudBoxPollerDeps {
     action: HostAction,
     respond: (result: HostActionResult) => Promise<void>,
   ) => Promise<void> | void;
+  /**
+   * Optional: called when the poller observes a connection-level failure
+   * (ECONNREFUSED, ENOTFOUND, etc.) on `previewUrl`. Should re-establish
+   * whatever underlying transport powers the URL (e.g. reopen an SSH
+   * ControlMaster + re-mint its `-L` forward) and return the (possibly new)
+   * URL the poller should use from here on. Return `null`/`undefined` to
+   * keep the current URL.
+   *
+   * Use case: Hetzner's preview URLs are SSH `-L` forwards. If the
+   * ControlMaster dies (host sleep/wake, network blip), the local port
+   * stops listening — without this callback the poller would back off
+   * forever against a dead `127.0.0.1:<localPort>`. Daytona's preview is a
+   * permanent CloudFront alias and doesn't need this.
+   */
+  recoverPreviewUrl?: () => Promise<string | null | undefined>;
   logger?: (line: string) => void;
 }
 
@@ -71,6 +86,29 @@ const FAST_REQUEST_TIMEOUT_MS = 8_000;
 const FAST_MODE_DECAY_POLLS = 5;
 const STOPPED_TICK_MS = 250;
 
+/**
+ * True for connection-level failures — the local transport behind
+ * `previewUrl` is dead (refused, no route, no DNS, host unreachable),
+ * not a remote 5xx or a logical error. These are the cases where calling
+ * `recoverPreviewUrl` (e.g. Hetzner's SSH tunnel reopen) has a chance of
+ * actually fixing anything.
+ */
+function isConnectionLevelError(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | undefined)?.code;
+  if (code && CONNECTION_LEVEL_CODES.has(code)) return true;
+  const msg = err instanceof Error ? err.message : String(err);
+  // node:http surfaces the underlying error message rather than a code on
+  // some failure paths — match the well-known signatures too.
+  return /\b(ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|ECONNRESET|EPIPE)\b/.test(msg);
+}
+const CONNECTION_LEVEL_CODES = new Set([
+  'ECONNREFUSED',
+  'ENOTFOUND',
+  'EHOSTUNREACH',
+  'ECONNRESET',
+  'EPIPE',
+]);
+
 export class CloudBoxPoller {
   private stopped = false;
   private cursor = 0;
@@ -83,8 +121,19 @@ export class CloudBoxPoller {
    * within ~5 successful round-trips.
    */
   private fastModePolls = 0;
+  /**
+   * Mutable copy of `deps.previewUrl`. We don't read `deps.previewUrl`
+   * directly after construction because `recoverPreviewUrl` may hand us a
+   * new URL (e.g. Hetzner reopens its SSH ControlMaster and the `-L`
+   * forward gets a new ephemeral local port).
+   */
+  private currentPreviewUrl: string;
+  /** Guards against recovery storms — at most one recovery attempt in flight. */
+  private recovering: Promise<void> | null = null;
 
-  constructor(private readonly deps: CloudBoxPollerDeps) {}
+  constructor(private readonly deps: CloudBoxPollerDeps) {
+    this.currentPreviewUrl = deps.previewUrl;
+  }
 
   start(): void {
     if (this.loopPromise) return;
@@ -104,7 +153,7 @@ export class CloudBoxPoller {
    * and the in-box agent finally sees the answer.
    */
   async respond(actionId: string, result: HostActionResult): Promise<void> {
-    const base = this.deps.previewUrl.replace(/\/+$/, '');
+    const base = this.currentPreviewUrl.replace(/\/+$/, '');
     const url = new URL(`${base}/bridge/action-result`);
     const isHttps = url.protocol === 'https:';
     const transport = isHttps ? httpsRequest : httpRequest;
@@ -202,6 +251,14 @@ export class CloudBoxPoller {
           this.fastModePolls = FAST_MODE_DECAY_POLLS;
         }
         this.log(`poll error: ${msg}`);
+        // A connection-level failure (`ECONNREFUSED`/`ENOTFOUND`/`EHOSTUNREACH`)
+        // usually means the transport behind `currentPreviewUrl` is dead, not
+        // that the box went away. Hetzner's SSH `-L` forward stops listening
+        // when the ControlMaster dies (host sleep/wake, network blip); the
+        // recovery hook reopens it and hands us a fresh URL.
+        if (this.deps.recoverPreviewUrl && isConnectionLevelError(err)) {
+          await this.tryRecoverPreviewUrl();
+        }
         await this.backoff();
       }
       // Successful poll decays fast-mode toward the default timeout.
@@ -222,8 +279,37 @@ export class CloudBoxPoller {
     await delay(this.currentBackoffMs);
   }
 
+  private async tryRecoverPreviewUrl(): Promise<void> {
+    if (!this.deps.recoverPreviewUrl) return;
+    // De-dupe: a poll storm shouldn't spawn N parallel recoveries.
+    if (this.recovering) {
+      await this.recovering;
+      return;
+    }
+    this.recovering = (async () => {
+      try {
+        const next = await this.deps.recoverPreviewUrl!();
+        if (typeof next === 'string' && next.length > 0 && next !== this.currentPreviewUrl) {
+          this.log(`preview URL recovered: ${this.currentPreviewUrl} → ${next}`);
+          this.currentPreviewUrl = next;
+          // Drop the backoff so the next loop iteration retries immediately
+          // against the fresh URL.
+          this.currentBackoffMs = 0;
+        } else if (typeof next === 'string' && next === this.currentPreviewUrl) {
+          this.log('preview URL recovered (unchanged)');
+          this.currentBackoffMs = 0;
+        }
+      } catch (err) {
+        this.log(`preview URL recover failed: ${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        this.recovering = null;
+      }
+    })();
+    await this.recovering;
+  }
+
   private async pollOnce(): Promise<BridgePollResponse> {
-    const base = this.deps.previewUrl.replace(/\/+$/, '');
+    const base = this.currentPreviewUrl.replace(/\/+$/, '');
     const url = new URL(`${base}/bridge/poll?since=${String(this.cursor)}`);
     const isHttps = url.protocol === 'https:';
     const transport = isHttps ? httpsRequest : httpRequest;
