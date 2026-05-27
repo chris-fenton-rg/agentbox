@@ -80,6 +80,7 @@ export {
   DEFAULT_OPENCODE_SESSION,
   ensureOpencodeInstalled,
   ensureOpencodeVolume,
+  seedOpencodePlugin,
   OPENCODE_FORWARDED_ENV_KEYS,
   OpencodeSessionError,
   opencodeSessionInfo,

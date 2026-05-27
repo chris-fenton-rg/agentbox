@@ -21,6 +21,8 @@ export const DEFAULT_OPENCODE_SESSION = 'opencode';
 const CONTAINER_OPENCODE_DIR = '/home/vscode/.local/share/opencode';
 /** Relocated config dir (a subdir of the volume); the value of `OPENCODE_CONFIG_DIR`. */
 const CONTAINER_OPENCODE_CONFIG_DIR = '/home/vscode/.local/share/opencode/config';
+/** Image-baked AgentBox OpenCode plugin (copied in from packages/sandbox-docker/scripts/). */
+const IN_BOX_OPENCODE_PLUGIN_PATH = '/usr/local/share/agentbox/opencode-agentbox-plugin.js';
 
 export interface OpencodeConfigSpec {
   /** Resolved Docker volume name mounted at the OpenCode data dir. */
@@ -147,6 +149,42 @@ export async function ensureOpencodeVolume(
     { reject: false },
   );
   return { created, synced: false };
+}
+
+/**
+ * Seed the AgentBox state-reporting plugin into the OpenCode config volume
+ * from the image-baked copy ({@link IN_BOX_OPENCODE_PLUGIN_PATH}) as
+ * `<volume>/config/plugins/agentbox-state.js`. OpenCode auto-loads any
+ * JS/TS file under `$OPENCODE_CONFIG_DIR/plugins/` at startup; the plugin
+ * subscribes to OpenCode's event bus and shells `agentbox-ctl opencode-state`
+ * for each lifecycle transition.
+ *
+ * Re-seeded on every create/start (image-versioned) so an image upgrade
+ * propagates. Best-effort — a failure must not fail box creation.
+ */
+export async function seedOpencodePlugin(
+  volume: string,
+  image: string,
+): Promise<{ seeded: boolean }> {
+  try {
+    const { stdout } = await execa('docker', [
+      'run',
+      '--rm',
+      '--user',
+      '0',
+      '-v',
+      `${volume}:/dst`,
+      image,
+      'sh',
+      '-c',
+      `{ [ -f ${IN_BOX_OPENCODE_PLUGIN_PATH} ] && mkdir -p /dst/config/plugins && ` +
+        `cp -a ${IN_BOX_OPENCODE_PLUGIN_PATH} /dst/config/plugins/agentbox-state.js && ` +
+        `chown -R 1000:1000 /dst/config/plugins && echo SEEDED; } || true`,
+    ]);
+    return { seeded: stdout.includes('SEEDED') };
+  } catch {
+    return { seeded: false };
+  }
 }
 
 export interface OpencodeMountResult {
