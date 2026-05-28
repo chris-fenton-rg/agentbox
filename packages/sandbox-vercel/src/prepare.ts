@@ -165,8 +165,11 @@ async function snapshotExists(
   creds: Partial<{ token: string; teamId: string; projectId: string }>,
 ): Promise<boolean> {
   try {
-    await Snapshot.get({ snapshotId, ...creds });
-    return true;
+    const snap = await Snapshot.get({ snapshotId, ...creds });
+    // `Snapshot.get` resolves even for a deleted/failed snapshot (status field),
+    // so a bare "didn't throw" wrongly skip-passes a tombstone. Only a 'created'
+    // snapshot is bootable — anything else means rebuild.
+    return snap.status === 'created';
   } catch {
     return false;
   }
