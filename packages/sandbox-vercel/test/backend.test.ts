@@ -112,6 +112,19 @@ describe('vercelBackend.destroy', () => {
     expect(snapDelete).toHaveBeenCalled();
   });
 
+  it('does NOT delete the source snapshot a box still sits on (protects the base)', async () => {
+    const snapDelete = vi.fn(async () => undefined);
+    // currentSnapshotId === sourceSnapshotId → the box never made its own
+    // snapshot; deleting it would nuke the shared base/checkpoint.
+    const sb = fakeSandbox({ currentSnapshotId: 'snap_base', sourceSnapshotId: 'snap_base' });
+    mocks.get.mockResolvedValue(sb);
+    mocks.snapshotGet.mockResolvedValue({ delete: snapDelete });
+
+    await vercelBackend.destroy({ sandboxId: 'box-1' });
+    expect((sb.delete as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
+    expect(snapDelete).not.toHaveBeenCalled();
+  });
+
   it('is idempotent when the sandbox is already gone', async () => {
     mocks.get.mockRejectedValue(new Error('not_found'));
     await expect(vercelBackend.destroy({ sandboxId: 'gone' })).resolves.toBeUndefined();
