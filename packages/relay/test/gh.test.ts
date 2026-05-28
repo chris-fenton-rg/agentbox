@@ -26,6 +26,15 @@ describe('injectPrCreateHead', () => {
     ]);
   });
 
+  it('does not double-inject when the -H shorthand is already present', () => {
+    expect(injectPrCreateHead('create', 'agentbox/box-one', ['-H', 'feat/x'])).toEqual([
+      '-H',
+      'feat/x',
+    ]);
+    expect(injectPrCreateHead('create', 'agentbox/box-one', ['-Hfeat/x'])).toEqual(['-Hfeat/x']);
+    expect(injectPrCreateHead('create', 'agentbox/box-one', ['-H=feat/x'])).toEqual(['-H=feat/x']);
+  });
+
   it('leaves args unchanged when no usable branch resolved', () => {
     expect(injectPrCreateHead('create', undefined, ['--title', 'T'])).toEqual(['--title', 'T']);
     expect(injectPrCreateHead('create', '', ['--title', 'T'])).toEqual(['--title', 'T']);
@@ -48,6 +57,12 @@ describe('prCreateNeedsHead', () => {
     expect(
       prCreateNeedsHead('create', injectPrCreateHead('create', 'agentbox/box-one', ['--title', 'T'])),
     ).toBe(false);
+  });
+
+  it('is false when the -H shorthand supplied a head (no false refusal)', () => {
+    expect(prCreateNeedsHead('create', ['-H', 'feat/x', '--title', 'T'])).toBe(false);
+    expect(prCreateNeedsHead('create', ['-Hfeat/x'])).toBe(false);
+    expect(prCreateNeedsHead('create', ['-H=feat/x'])).toBe(false);
   });
 
   it('is false for non-create ops', () => {

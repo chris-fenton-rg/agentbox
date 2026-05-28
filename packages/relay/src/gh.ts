@@ -44,7 +44,7 @@ export const GH_PR_READ_ONLY_OPS: ReadonlySet<GhPrOp> = new Set(['view', 'list']
  * (`gh` infers head from the cwd's HEAD, which is the user's own branch — or
  * an untracked one, which aborts with "you must first push the current branch
  * to a remote, or use the --head flag"). Only injected for `create`, only when
- * the caller didn't already pass `--head`, and only when we resolved a real
+ * the caller didn't already pass `--head` (or its `-H` shorthand), and only when we resolved a real
  * branch (not empty / detached `HEAD`). The host CLI's `agentbox git pr create`
  * already injects this; the relay covers the in-box `agentbox-ctl git pr` /
  * `gh pr` path, which forwards args verbatim.
@@ -61,7 +61,10 @@ export function injectPrCreateHead(
 }
 
 function hasHeadArg(args: string[]): boolean {
-  return args.some((a) => a === '--head' || a.startsWith('--head='));
+  // `gh pr create` accepts `--head`, `--head=<b>`, and the `-H` shorthand in
+  // its `-H <b>` / `-H<b>` / `-H=<b>` forms. Recognize all so an explicit head
+  // neither gets double-injected nor triggers the no-head refusal.
+  return args.some((a) => a === '--head' || a.startsWith('--head=') || a.startsWith('-H'));
 }
 
 /**
