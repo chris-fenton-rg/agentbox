@@ -42,13 +42,18 @@ function defaultCommand(kind: AttachKind, opts?: BuildAttachOptions): string {
 
 /**
  * Resolve the compiled attach-helper entry. In the monorepo it sits next to
- * this module in `dist/`. (Publishing the standalone CLI needs the helper
- * staged into the CLI runtime tree — tracked in docs/vercel-backlog.md.)
+ * this module in `dist/`. In the published standalone CLI the vercel package is
+ * bundled into the CLI's `dist/index.js`, so the helper is staged separately
+ * into `runtime/vercel/attach-helper.js` (next to `dist/`) by
+ * `apps/cli/scripts/stage-runtime.mjs` — mirrors `findStagedCliRuntimeRoot()`
+ * in runtime-assets.ts.
  */
 function resolveAttachHelperPath(): string {
   const candidates = [
     resolve(SELF, 'attach-helper.js'),
     resolve(SELF, '..', 'dist', 'attach-helper.js'),
+    resolve(SELF, '..', 'runtime', 'vercel', 'attach-helper.js'),
+    resolve(SELF, '..', '..', 'runtime', 'vercel', 'attach-helper.js'),
   ];
   const hit = candidates.find((p) => existsSync(p));
   if (!hit) {

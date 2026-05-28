@@ -150,12 +150,12 @@ agentbox/<box>` shows the commit, then try `agentbox-ctl git pull` and a `gh pr`
    preserved). **Upgrade:** a ttyd / WebSocket terminal over `sandbox.domain(port)`
    (WebSocket works through the domain proxy — noVNC relies on it) — needs a ttyd
    binary in the snapshot + a ws client in `attach-helper.ts`, and the 4th port.
-9. **Published-CLI asset staging.** `buildVercelAttach` resolves `attach-helper.js`
-   next to its own dist (monorepo only); `runtime-assets.ts` resolves `provision.sh`
-   + ctl/shims from monorepo paths. The standalone `@madarco/agentbox` bundle needs
-   all of these staged into its runtime tree via `apps/cli/scripts/stage-runtime.mjs`
-   + a `runtime/vercel/` resolver branch. Until then, `--provider vercel` only works
-   from a monorepo checkout, not the published CLI.
+9. [x] **Published-CLI asset staging.** Done — `stage-runtime.mjs` now stages a
+   `runtime/vercel/` tree (attach-helper.js + provision.sh + ctl/shims + baked
+   config) mirroring the candidates `runtime-assets.ts` already resolved, and
+   `build-attach.ts`'s `resolveAttachHelperPath()` gained the `runtime/vercel/`
+   (next-to-dist) candidate for the bundled CLI. Verified: all 11 runtime assets
+   resolve from the staged tree with the monorepo fallback disabled.
 10. **Builder cleanup after `prepare`.** We deliberately do NOT `delete()` the
     builder sandbox after `snapshot()` (in case delete cascades to the snapshot).
     Confirm a snapshot survives its source's deletion; if so, delete the builder
