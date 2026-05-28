@@ -73,6 +73,22 @@ describe('relay server', () => {
     expect(r.body).toMatchObject({ ok: true });
   });
 
+  it('healthz reports pid and AGENTBOX_CLI_ENTRY capability so ensureRelay can reclaim a crippled relay', async () => {
+    const prev = process.env.AGENTBOX_CLI_ENTRY;
+    try {
+      delete process.env.AGENTBOX_CLI_ENTRY;
+      const without = await fetchJson(handle, 'GET', '/healthz');
+      expect(without.body).toMatchObject({ ok: true, pid: process.pid, cliEntry: false });
+
+      process.env.AGENTBOX_CLI_ENTRY = '/some/cli/index.js';
+      const withEntry = await fetchJson(handle, 'GET', '/healthz');
+      expect(withEntry.body).toMatchObject({ cliEntry: true });
+    } finally {
+      if (prev === undefined) delete process.env.AGENTBOX_CLI_ENTRY;
+      else process.env.AGENTBOX_CLI_ENTRY = prev;
+    }
+  });
+
   it('rejects /events without a bearer token', async () => {
     const r = await fetchJson(handle, 'POST', '/events', { body: { type: 'x' } });
     expect(r.status).toBe(401);
