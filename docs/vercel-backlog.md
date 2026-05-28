@@ -171,9 +171,11 @@ agentbox/<box>` shows the commit, then try `agentbox-ctl git pull` and a `gh pr`
 
 ### P2 — deferred (parity niceties, not blocking)
 
-13. **`agentbox checkpoint list` aggregate view** shows only docker + daytona
-    (hetzner is also absent). Add vercel (and hetzner) to the merged list in
-    `apps/cli/src/commands/checkpoint.ts`.
+13. [x] **`agentbox checkpoint list` aggregate view.** Done — `ls` now merges all
+    four providers (docker + daytona + hetzner + vercel) via a `CLOUD_BACKENDS`
+    loop, and `set-default` / `rm` are provider-complete too (set-default accepts
+    `hetzner`/`vercel`; rm removes their snapshots and sweeps the
+    `defaultCheckpointVercel` dangling pointer). `apps/cli/src/commands/checkpoint.ts`.
 14. **Per-project snapshot tier** — the daytona/hetzner `projects[<hash>]`
     optimization that skips workspace/credential re-seeding on repeat creates for
     the same project. `prepared-state.ts` is single-tier (base only) today.
