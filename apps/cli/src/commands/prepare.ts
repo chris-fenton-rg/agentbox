@@ -195,6 +195,96 @@ async function showStatus(opts: { onlyProvider?: string }): Promise<void> {
   process.stdout.write(lines.join('\n') + '\n');
 }
 
+export interface RunPrepareOptions {
+  /** Snapshot name (Daytona only). */
+  name?: string;
+  /** Rebuild even if the image / snapshot already exists. */
+  force?: boolean;
+  /** Skip the Daytona cost-notice. */
+  yes?: boolean;
+  /** Host workspace dir (defaults to `process.cwd()`). */
+  cwd?: string;
+  /** Suppress the closing skill-install tip (the install wizard already does its own skill step). */
+  suppressTip?: boolean;
+  /** Suppress the post-prepare status block. */
+  suppressStatus?: boolean;
+}
+
+/**
+ * Run `provider.prepare` for `providerName`. Extracted so the install wizard
+ * can drive the same code path as `agentbox prepare --provider X`.
+ * Caller is responsible for any `intro(...)` framing; this function manages
+ * its own spinner inside.
+ */
+export async function runPrepare(providerName: string, opts: RunPrepareOptions = {}): Promise<void> {
+  if (!isKnownProvider(providerName)) {
+    process.stderr.write(
+      'error: --provider must be one of: docker, daytona, hetzner, vercel\n',
+    );
+    process.exit(1);
+  }
+
+  if (providerName === 'daytona' && !opts.yes && process.stdin.isTTY) {
+    process.stdout.write(
+      'This will trigger a Daytona image build (~7 min cold, ~seconds with cache) and ' +
+        'register a named snapshot in your org.\n' +
+        'Re-run with --yes to skip this notice.\n',
+    );
+  }
+
+  const provider = await getProvider(providerName);
+  if (typeof provider.prepare !== 'function') {
+    log.error(`provider '${providerName}' does not implement prepare`);
+    process.exit(1);
+  }
+
+  const cwd = opts.cwd ?? process.cwd();
+  const sp = spinner();
+  sp.start(`preparing ${providerName}…`);
+  try {
+    const result = await provider.prepare({
+      name: opts.name,
+      hostWorkspace: cwd,
+      force: opts.force,
+      onLog: (line) => sp.message(line.slice(0, 80)),
+    });
+    if (result.snapshotName !== undefined) {
+      sp.stop(`prepared ${providerName}: snapshot '${result.snapshotName}'`);
+      try {
+        const written = await setConfigValue(
+          'project',
+          'box.image',
+          result.snapshotName,
+          cwd,
+        );
+        log.success(`box.image = ${result.snapshotName} (written to ${written.path})`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log.warn(
+          `prepared snapshot '${result.snapshotName}', but failed to pin it into the project config: ${msg}\n` +
+            `Run \`agentbox config set --project box.image ${result.snapshotName}\` manually.`,
+        );
+      }
+    } else {
+      sp.stop(`prepared ${providerName}`);
+    }
+
+    if (!opts.suppressStatus) {
+      process.stdout.write('\n');
+      await showStatus({ onlyProvider: providerName });
+    }
+    if (!opts.suppressTip) {
+      log.info(
+        'tip: install the agentbox host skill so Claude Code on this machine can drive AgentBox for you:\n' +
+          '  npx skills add https://github.com/madarco/agentbox --skill agentbox',
+      );
+    }
+  } catch (err) {
+    sp.stop(`prepare failed: ${describeError(err)}`);
+    throw err;
+  }
+}
+
 export const prepareCommand = new Command('prepare')
   .description(
     'Build base sandbox images / snapshots, or show what is already prepared across providers.',
@@ -218,69 +308,16 @@ export const prepareCommand = new Command('prepare')
     }
 
     const providerName = opts.provider.trim();
-    if (!isKnownProvider(providerName)) {
-      process.stderr.write(
-        `error: --provider must be one of: docker, daytona, hetzner\n`,
-      );
-      process.exit(1);
-    }
-
     intro(`preparing ${providerName} base image`);
-    if (providerName === 'daytona' && !opts.yes && process.stdin.isTTY) {
-      process.stdout.write(
-        'This will trigger a Daytona image build (~7 min cold, ~seconds with cache) and ' +
-          'register a named snapshot in your org.\n' +
-          'Re-run with --yes to skip this notice.\n',
-      );
-    }
-
-    const provider = await getProvider(providerName);
-    if (typeof provider.prepare !== 'function') {
-      log.error(`provider '${providerName}' does not implement prepare`);
-      process.exit(1);
-    }
-
-    const sp = spinner();
-    sp.start(`preparing ${providerName}…`);
-    try {
-      const result = await provider.prepare({
-        name: opts.name,
-        hostWorkspace: process.cwd(),
-        force: opts.force,
-        onLog: (line) => sp.message(line.slice(0, 80)),
-      });
-      if (result.snapshotName !== undefined) {
-        sp.stop(`prepared ${providerName}: snapshot '${result.snapshotName}'`);
-        try {
-          const written = await setConfigValue(
-            'project',
-            'box.image',
-            result.snapshotName,
-            process.cwd(),
-          );
-          log.success(`box.image = ${result.snapshotName} (written to ${written.path})`);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          log.warn(
-            `prepared snapshot '${result.snapshotName}', but failed to pin it into the project config: ${msg}\n` +
-              `Run \`agentbox config set --project box.image ${result.snapshotName}\` manually.`,
-          );
-        }
-      } else {
-        sp.stop(`prepared ${providerName}`);
-      }
-
-      // Show the relevant status section after a successful prepare.
-      process.stdout.write('\n');
-      await showStatus({ onlyProvider: providerName });
-      log.info(
-        'tip: install the agentbox host skill so Claude Code on this machine can drive AgentBox for you:\n' +
-          '  npx skills add https://github.com/madarco/agentbox --skill agentbox',
-      );
-    } catch (err) {
-      sp.stop(`prepare failed: ${describeError(err)}`);
-      process.exit(1);
-    }
+    // Errors propagate to `program.parseAsync().catch` so they reach the user
+    // via `console.error` — a bare `catch { process.exit(1) }` here would
+    // silently swallow getProvider() failures (e.g. an ensureCredentials cancel)
+    // that fall outside runPrepare's inner spinner error handler.
+    await runPrepare(providerName, {
+      name: opts.name,
+      force: opts.force,
+      yes: opts.yes,
+    });
   });
 
 /**
