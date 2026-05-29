@@ -58,8 +58,8 @@ const loginSub = new Command('login')
       }
       if (!process.stdin.isTTY) {
         process.stderr.write(
-          'vercel login needs an interactive terminal — set VERCEL_OIDC_TOKEN ' +
-            '(via `vercel env pull`) or the VERCEL_TOKEN trio in the environment for non-interactive use.\n',
+          'vercel login needs an interactive terminal — set the VERCEL_TOKEN trio ' +
+            '(or VERCEL_OIDC_TOKEN) in the environment or in ~/.agentbox/secrets.env for non-interactive use.\n',
         );
         process.exitCode = 1;
         return;

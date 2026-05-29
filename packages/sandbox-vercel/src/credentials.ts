@@ -31,11 +31,11 @@ export interface EnsureVercelCredentialsOptions {
 }
 
 /**
- * First-run interactive setup for Vercel credentials. The recommended path is
- * OIDC (`vercel link && vercel env pull`), which the SDK reads from env /
- * `.env.local` automatically — for that case the user picks "OIDC" and we just
- * confirm it resolved. The access-token path persists a `VERCEL_TOKEN` trio to
- * `~/.agentbox/secrets.env`.
+ * First-run interactive setup for Vercel credentials. The access-token path
+ * persists a `VERCEL_TOKEN` trio to `~/.agentbox/secrets.env` (the canonical
+ * store, matching daytona/hetzner). OIDC is also supported, but the token must
+ * be present in the shell env or in `~/.agentbox/secrets.env` — agentbox does
+ * NOT harvest `.env.local` (that file belongs to the app being developed).
  *
  * No-op when credentials are already configured. Silent no-op when stdin isn't
  * a TTY so scripted/CI callers get the SDK's "not configured" error instead of
@@ -52,18 +52,18 @@ export async function ensureVercelCredentials(
   intro('Vercel setup');
   note(
     `AgentBox needs Vercel credentials to provision sandboxes.\n` +
-      `OIDC (quickest for short interactive work): run \`vercel link\` then \`vercel env pull\` (auto-detected; dev token expires ~12h, no headless refresh).\n` +
-      `Access token (recommended for long ops like \`agentbox prepare\` + CI): personal access token + team id + project id (doesn't expire on the 12h cycle).`,
+      `Access token (recommended for long ops like \`agentbox prepare\` + CI): personal access token + team id + project id (doesn't expire on the 12h cycle) — saved to \`~/.agentbox/secrets.env\`.\n` +
+      `OIDC (short interactive work): export VERCEL_OIDC_TOKEN in your shell or add it to \`~/.agentbox/secrets.env\` (dev token expires ~12h, no headless refresh). AgentBox does not read \`.env.local\`.`,
     'Credentials required',
   );
 
   const mode = await select({
     message: 'How do you want to authenticate?',
     options: [
-      { value: 'oidc', label: 'OIDC token (vercel env pull) — quickest for short interactive work' },
       { value: 'token', label: 'Access token (VERCEL_TOKEN + team + project) — best for prepare/CI, no 12h expiry' },
+      { value: 'oidc', label: 'OIDC token (VERCEL_OIDC_TOKEN in env / secrets.env) — quickest for short interactive work' },
     ],
-    initialValue: 'oidc',
+    initialValue: 'token',
   });
   if (isCancel(mode)) {
     log.warn('Vercel setup cancelled — re-run `agentbox vercel login` when ready.');
@@ -72,19 +72,19 @@ export async function ensureVercelCredentials(
 
   if (mode === 'oidc') {
     note(
-      `Run these in your project, then re-run this command:\n` +
-        `  vercel link\n` +
-        `  vercel env pull\n` +
-        `This writes VERCEL_OIDC_TOKEN into .env.local (re-pull every ~12h; the dev token expires).`,
+      `Get an OIDC token with \`vercel link\` then \`vercel env pull\`, then make it visible to AgentBox by either:\n` +
+        `  export VERCEL_OIDC_TOKEN=<token>   # in this shell\n` +
+        `  echo "VERCEL_OIDC_TOKEN=<token>" >> ~/.agentbox/secrets.env\n` +
+        `Re-do every ~12h; the dev token expires. AgentBox does not harvest .env.local.`,
       'OIDC setup',
     );
-    // Re-read in case the user already pulled the token in another shell.
+    // Re-read in case the user already added the token to secrets.env.
     reloadVercelEnv();
     if (process.env.VERCEL_OIDC_TOKEN) {
       log.success('Found VERCEL_OIDC_TOKEN — Vercel is configured.');
       outro('Setup complete.');
     } else {
-      log.warn('No VERCEL_OIDC_TOKEN found yet — run the commands above, then re-run `agentbox vercel login`.');
+      log.warn('No VERCEL_OIDC_TOKEN found yet — set it as above, then re-run `agentbox vercel login`.');
     }
     return;
   }

@@ -4,18 +4,21 @@ import { resolve } from 'node:path';
 
 /**
  * Vercel env auto-loader. The `@vercel/sandbox` SDK reads `VERCEL_OIDC_TOKEN`
- * from `process.env` automatically; for the access-token fallback we read
- * `VERCEL_TOKEN` + `VERCEL_TEAM_ID` + `VERCEL_PROJECT_ID` and thread them into
- * every SDK call as explicit `Credentials`. We pull all of these in from
- * `~/.agentbox/secrets.env` (written by `agentbox vercel login`) and, for the
- * OIDC token specifically, from a project-local `.env.local` (the file
- * `vercel env pull` writes) so the SDK Just Works after a `vercel link`.
+ * from `process.env`; for the access-token path we read `VERCEL_TOKEN` +
+ * `VERCEL_TEAM_ID` + `VERCEL_PROJECT_ID` and thread them into every SDK call as
+ * explicit `Credentials`. We pull all of these in from `~/.agentbox/secrets.env`
+ * (written by `agentbox vercel login`) so the SDK Just Works after a one-time
+ * login — exactly the daytona/hetzner model.
  *
  * Lookup order (first wins; process.env is never overwritten):
  *   1. `process.env` (already set in the shell).
  *   2. `~/.agentbox/secrets.env` — written by `agentbox vercel login`.
- *   3. `<cwd>/.env.local` — for `VERCEL_OIDC_TOKEN` only (the `vercel env pull`
- *      target). The dev OIDC token expires after 12h; re-pull when it does.
+ *
+ * Project-level `.env` / `.env.local` are intentionally NOT consulted: those
+ * files belong to the app code being developed, and a `VERCEL_*` value there
+ * (e.g. a `vercel env pull` OIDC token, or the app's own deploy token) is meant
+ * for in-box code, not for the host CLI to harvest and provision sandboxes with.
+ * Put host credentials in `~/.agentbox/secrets.env` (or the shell env).
  *
  * Only Vercel-prefixed keys are imported; the rest of the file is left alone.
  * Idempotent and side-effect-free after the first call.
@@ -33,16 +36,12 @@ export function ensureVercelEnvLoaded(): void {
   if (loaded) return;
   loaded = true;
   importVercelFromFile(resolve(homedir(), '.agentbox', 'secrets.env'), VERCEL_KEYS);
-  // `.env.local` is the `vercel env pull` target — only harvest the OIDC token
-  // from it, never the rest of the app's env.
-  importVercelFromFile(resolve(process.cwd(), '.env.local'), ['VERCEL_OIDC_TOKEN']);
 }
 
 /**
- * Force a re-read of the secrets/`.env.local` files. Used by the interactive
- * `agentbox vercel login` flow after it tells the user to run `vercel env pull`
- * in another shell — the file may now carry a `VERCEL_OIDC_TOKEN` the first
- * (cached) load didn't see.
+ * Force a re-read of `~/.agentbox/secrets.env`. Used by the interactive
+ * `agentbox vercel login` flow after it persists the credential trio, so the
+ * same process can pick it up without a restart.
  */
 export function reloadVercelEnv(): void {
   loaded = false;

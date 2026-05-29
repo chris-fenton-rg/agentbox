@@ -32,7 +32,8 @@ implementation (per the project convention), not as end-of-PR cleanup.
 - [x] **Phase 1 — credentials + SDK loader.** OIDC (`VERCEL_OIDC_TOKEN`) and
   access-token trio (`VERCEL_TOKEN`/`VERCEL_TEAM_ID`/`VERCEL_PROJECT_ID`);
   `agentbox vercel login` + `--status`; env auto-load from
-  `~/.agentbox/secrets.env` and `.env.local`.
+  `~/.agentbox/secrets.env` only (project `.env`/`.env.local` are not harvested,
+  matching daytona/hetzner).
 - [x] **Phase 2 — `CloudBackend`.** provision/get/list/start/stop/pause/resume/
   destroy/state/exec/uploadFile/downloadFile/listFiles/previewUrl/
   signedPreviewUrl + snapshot helpers, all mapped to `@vercel/sandbox` 2.x.

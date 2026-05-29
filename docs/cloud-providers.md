@@ -445,12 +445,14 @@ Security → API Tokens page), validates it via `GET /locations`, and
 persists it to the same `~/.agentbox/secrets.env`. First-time use of
 `--provider hetzner` triggers the login prompt automatically.
 
-`agentbox vercel login` is the Vercel equivalent. Two auth modes: the
-**OIDC** path (`vercel link && vercel env pull` writes `VERCEL_OIDC_TOKEN` into
-`.env.local`, which the SDK reads directly), or an **access token** trio
-(`VERCEL_TOKEN` + `VERCEL_TEAM_ID` + `VERCEL_PROJECT_ID`) persisted to
-`~/.agentbox/secrets.env`. First-time use of `--provider vercel` triggers the
-prompt automatically.
+`agentbox vercel login` is the Vercel equivalent. Two auth modes: an **access
+token** trio (`VERCEL_TOKEN` + `VERCEL_TEAM_ID` + `VERCEL_PROJECT_ID`) persisted
+to `~/.agentbox/secrets.env`, or the **OIDC** path (`vercel link && vercel env
+pull` mints a `VERCEL_OIDC_TOKEN`; export it in your shell or add it to
+`~/.agentbox/secrets.env`). Like daytona/hetzner, agentbox reads credentials
+**only** from the shell env or `~/.agentbox/secrets.env` — project-local `.env` /
+`.env.local` are never harvested. First-time use of `--provider vercel` triggers
+the prompt automatically.
 
 **Which to use:** OIDC is the quickest for short-lived interactive work, but the
 dev token expires on a ~12h cycle and `resolveCredentials` has **no headless
