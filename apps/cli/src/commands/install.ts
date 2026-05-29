@@ -1,9 +1,38 @@
-import { intro, log, outro } from '@clack/prompts';
+/**
+ * `agentbox install` — interactive setup wizard:
+ *
+ *   1. Compact system compatibility check (one line).
+ *   2. Provider picker (single-select; docker default).
+ *   3. Provider login (skipped for docker; reuses each provider's existing
+ *      `ensure*Credentials` flow, including Vercel's "install sandbox CLI
+ *      then browser login" handling).
+ *   4. Confirm-then-run base image / snapshot prepare (default-yes for docker).
+ *   5. Install the host `/agentbox` skill files into Claude / Codex / OpenCode.
+ *   6. Write the first-run marker.
+ *   7. Tutorial outro.
+ *
+ * `--skills-only` runs just step 5 (the pre-wizard behavior of this command).
+ *
+ * `runInstallWizard` is also called from `index.ts` as a first-run auto-trigger
+ * when `~/.agentbox/setup-complete.json` is absent.
+ */
+
+import { confirm, intro, isCancel, log, note, outro, select, spinner } from '@clack/prompts';
 import { Command } from 'commander';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  formatCompact,
+  runProviderChecks,
+  runSystemChecks,
+  type CheckGroup,
+  type CheckResult,
+  type ProviderName,
+} from '../lib/doctor-checks.js';
+import { markSetupComplete } from '../lib/first-run.js';
+import { runPrepare } from './prepare.js';
 
 /** Marker on the line after the frontmatter of every skill we ship. Its
  *  presence in an existing target means we wrote it and may overwrite freely. */
@@ -15,20 +44,12 @@ const MANAGED_SENTINEL = '<!-- agentbox-managed:v1 -->';
 const LEGACY_INFO_MARKER = 'Drive AgentBox from the host:';
 
 interface InstallTarget {
-  /** Path relative to the bundled `share/host-skills/` dir. */
   src: string;
-  /** Absolute destination on the host. */
   dest: string;
-  /** When set, install only if this directory exists — i.e. the tool is set up
-   *  on this host. Absent dir = silently skip (don't write configs for a tool
-   *  the user doesn't use). */
+  /** Only install when this dir exists (i.e. the tool is set up on this host). */
   gateDir?: string;
 }
 
-/** The files `agentbox install` writes. Claude skills always install; the Codex
- *  prompt and OpenCode command install only when that tool's config dir exists.
- *  All three surface the same `/agentbox` fork command in their respective
- *  agent UIs (Codex shows it under `/prompts:`). */
 function installTargets(): InstallTarget[] {
   const home = homedir();
   const claudeSkills = join(home, '.claude', 'skills');
@@ -57,8 +78,8 @@ function installTargets(): InstallTarget[] {
 function resolveHostSkillsDir(): string {
   const here = dirname(fileURLToPath(import.meta.url));
   const candidates = [
-    resolve(here, '..', 'share', 'host-skills'), // bundled: dist/ -> ../share
-    resolve(here, '..', '..', 'share', 'host-skills'), // src: src/commands/ -> ../../share
+    resolve(here, '..', 'share', 'host-skills'),
+    resolve(here, '..', '..', 'share', 'host-skills'),
   ];
   for (const c of candidates) {
     if (existsSync(c)) return c;
@@ -68,13 +89,6 @@ function resolveHostSkillsDir(): string {
   );
 }
 
-interface InstallOptions {
-  force?: boolean;
-  dryRun?: boolean;
-}
-
-/** Decide whether we may write `target`. Missing or AgentBox-managed/legacy
- *  files are writable; a user-authored file is left alone unless --force. */
 function writableReason(target: string, force: boolean): 'new' | 'managed' | 'forced' | 'skip' {
   if (!existsSync(target)) return 'new';
   const existing = readFileSync(target, 'utf8');
@@ -84,61 +98,339 @@ function writableReason(target: string, force: boolean): 'new' | 'managed' | 'fo
   return force ? 'forced' : 'skip';
 }
 
+export interface InstallHostSkillsOptions {
+  force?: boolean;
+  dryRun?: boolean;
+  /** When true, suppress per-file log lines (the wizard wants one-line outcome). */
+  quiet?: boolean;
+}
+
+export interface InstallHostSkillsResult {
+  written: string[];
+  skipped: number;
+  /** Files that exist but were untouched because they're user-authored. */
+  blocked: string[];
+}
+
+/** Idempotent copy of the bundled host skill files. Used by both
+ *  `agentbox install --skills-only` and the wizard. */
+export function installHostSkills(opts: InstallHostSkillsOptions = {}): InstallHostSkillsResult {
+  const force = opts.force === true;
+  const dryRun = opts.dryRun === true;
+  const quiet = opts.quiet === true;
+  const srcDir = resolveHostSkillsDir();
+
+  const written: string[] = [];
+  const blocked: string[] = [];
+  let skipped = 0;
+
+  for (const t of installTargets()) {
+    const src = join(srcDir, t.src);
+    if (!existsSync(src)) {
+      if (!quiet) log.warn(`bundled file missing (skipped): ${src}`);
+      skipped++;
+      continue;
+    }
+    if (t.gateDir && !existsSync(t.gateDir)) continue;
+    const reason = writableReason(t.dest, force);
+    if (reason === 'skip') {
+      if (!quiet) log.warn(`user-modified file at ${t.dest}, skipping; pass --force to overwrite`);
+      blocked.push(t.dest);
+      skipped++;
+      continue;
+    }
+    if (dryRun) {
+      if (!quiet) log.info(`would write ${t.dest} (${reason})`);
+      written.push(t.dest);
+      continue;
+    }
+    mkdirSync(dirname(t.dest), { recursive: true });
+    writeFileSync(t.dest, readFileSync(src, 'utf8'));
+    written.push(t.dest);
+  }
+
+  return { written, skipped, blocked };
+}
+
+const PROVIDER_HINTS: Record<ProviderName, string> = {
+  docker: 'builds a ~1GB local image; no login needed',
+  hetzner: 'paste an API token from the Hetzner Console',
+  daytona: 'approve a browser sign-in link',
+  vercel: 'installs the Vercel sandbox CLI, then a browser sign-in',
+};
+
+const PROVIDER_LABEL: Record<ProviderName, string> = {
+  docker: 'Docker (local)',
+  hetzner: 'Hetzner (cloud VPS)',
+  daytona: 'Daytona (cloud sandbox)',
+  vercel: 'Vercel (cloud microVM)',
+};
+
+function ensureTty(): boolean {
+  if (process.stdin.isTTY && process.stdout.isTTY) return true;
+  process.stderr.write(
+    'agentbox install: an interactive terminal is required. ' +
+      'Run `agentbox <provider> login` and `agentbox prepare --provider <name>` instead.\n',
+  );
+  return false;
+}
+
+interface RunInstallWizardOptions {
+  /** Pre-pick the provider (skips the picker). */
+  provider?: string;
+  /** Auto-confirm the prepare step. */
+  yes?: boolean;
+  /** Forwarded to the embedded skill-copy step. */
+  force?: boolean;
+  dryRun?: boolean;
+  /** Set when the wizard was triggered automatically before another command. */
+  fromAutoTrigger?: boolean;
+}
+
+async function runProviderLogin(name: ProviderName): Promise<boolean> {
+  if (name === 'docker') return true;
+  if (name === 'daytona') {
+    const mod = await import('@agentbox/sandbox-daytona');
+    const status = await mod.getDaytonaStatus();
+    if (status.configured) {
+      log.info('daytona: already configured');
+      const rotate = await confirm({ message: 'Re-authenticate Daytona?', initialValue: false });
+      if (isCancel(rotate)) return false;
+      if (rotate) await mod.ensureDaytonaCredentials({ force: true });
+      return true;
+    }
+    await mod.ensureDaytonaCredentials();
+    return true;
+  }
+  if (name === 'hetzner') {
+    const mod = await import('@agentbox/sandbox-hetzner');
+    const status = mod.readHetznerCredStatus();
+    if (status.source !== 'none') {
+      log.info('hetzner: already configured');
+      const rotate = await confirm({ message: 'Re-authenticate Hetzner?', initialValue: false });
+      if (isCancel(rotate)) return false;
+      if (rotate) await mod.ensureHetznerCredentials({ force: true });
+      return true;
+    }
+    await mod.ensureHetznerCredentials();
+    return true;
+  }
+  // vercel
+  const mod = await import('@agentbox/sandbox-vercel');
+  const status = mod.readVercelCredStatus();
+  if (status.auth !== 'none') {
+    log.info(`vercel: already configured (${status.auth})`);
+    const rotate = await confirm({ message: 'Re-authenticate Vercel?', initialValue: false });
+    if (isCancel(rotate)) return false;
+    if (rotate) await mod.ensureVercelCredentials({ force: true });
+    return true;
+  }
+  await mod.ensureVercelCredentials();
+  return true;
+}
+
+function tutorialBody(provider: ProviderName): string {
+  // Docker is the default provider, so the prefix is implicit; the cloud
+  // providers need the explicit `agentbox <provider> claude` shorthand.
+  const startCmd = provider === 'docker' ? 'agentbox claude' : `agentbox ${provider} claude`;
+  return (
+    `Get started:\n` +
+    `  ${startCmd}        # or codex, opencode\n` +
+    `  Ctrl+a d                          # detach from the box\n` +
+    `  agentbox claude attach            # resume it later\n` +
+    `  agentbox install                  # set up another provider`
+  );
+}
+
+const KNOWN_PROVIDERS: ProviderName[] = ['docker', 'hetzner', 'daytona', 'vercel'];
+
+function isProviderName(s: string): s is ProviderName {
+  return (KNOWN_PROVIDERS as readonly string[]).includes(s);
+}
+
+/**
+ * Drive the setup wizard. Returns true on a clean run, false if the user
+ * cancelled at any prompt (the caller decides whether to write the marker —
+ * for the explicit `install` command we record completion even on cancel
+ * mid-flow, for the auto-trigger we do not).
+ */
+export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Promise<boolean> {
+  if (!ensureTty()) return false;
+
+  intro('AgentBox setup');
+
+  // 1) Compact system check (full detail lives in `agentbox doctor`).
+  const sysResults = await runSystemChecks();
+  const sysGroup: CheckGroup = { title: 'system', results: sysResults };
+  process.stdout.write('  ' + formatCompact([sysGroup]) + '\n');
+  const hardFail = sysResults.find((r: CheckResult) => r.status === 'fail');
+  if (hardFail) {
+    log.error(`system check failed: ${hardFail.label} — ${hardFail.detail}`);
+    log.info('run `agentbox doctor` for full detail');
+    const cont = await confirm({ message: 'Continue anyway?', initialValue: false });
+    if (isCancel(cont) || !cont) {
+      outro('aborted');
+      return false;
+    }
+  } else {
+    log.info('run `agentbox doctor` for the full per-check report');
+  }
+
+  // 2) Provider picker.
+  let providerName: ProviderName;
+  if (opts.provider) {
+    const candidate = opts.provider.trim();
+    if (!isProviderName(candidate)) {
+      log.error(`unknown --provider: ${candidate}`);
+      return false;
+    }
+    providerName = candidate;
+  } else {
+    const picked = await select<ProviderName>({
+      message: 'Which provider do you want to set up?',
+      initialValue: 'docker',
+      options: KNOWN_PROVIDERS.map((p) => ({
+        value: p,
+        label: PROVIDER_LABEL[p],
+        hint: PROVIDER_HINTS[p],
+      })),
+    });
+    if (isCancel(picked)) {
+      outro('cancelled');
+      return false;
+    }
+    providerName = picked;
+  }
+
+  // 3) Login (skip docker).
+  if (providerName !== 'docker') {
+    const loggedIn = await runProviderLogin(providerName);
+    if (!loggedIn) {
+      outro('cancelled');
+      return false;
+    }
+  }
+
+  // 4) Optional remote/build prepare.
+  const prepareMsg =
+    providerName === 'docker'
+      ? 'Build the box image now? (~1GB, a few minutes)'
+      : `Bake the ${providerName} base snapshot now? (a few minutes, uses cloud time)`;
+  const wantPrepare = opts.yes
+    ? true
+    : await confirm({ message: prepareMsg, initialValue: true });
+  if (isCancel(wantPrepare)) {
+    outro('cancelled');
+    return false;
+  }
+  if (wantPrepare) {
+    try {
+      await runPrepare(providerName, {
+        cwd: process.cwd(),
+        yes: true,
+        suppressStatus: true,
+        suppressTip: true,
+      });
+    } catch (err) {
+      log.warn(
+        `prepare failed: ${err instanceof Error ? err.message : String(err)} — you can rerun \`agentbox prepare --provider ${providerName}\` later`,
+      );
+    }
+  } else {
+    log.info(
+      `skipped — the ${providerName} base will build lazily on first \`agentbox ${providerName === 'docker' ? '' : providerName + ' '}create\``,
+    );
+  }
+
+  // 5) Host /agentbox skill (idempotent).
+  const sp = spinner();
+  sp.start('installing host /agentbox skill…');
+  let skillRes: InstallHostSkillsResult;
+  try {
+    skillRes = installHostSkills({ force: opts.force, dryRun: opts.dryRun, quiet: true });
+    if (skillRes.written.length > 0) {
+      sp.stop(`host skill: wrote ${String(skillRes.written.length)} file(s)`);
+    } else {
+      sp.stop(`host skill: nothing to write (${String(skillRes.skipped)} skipped)`);
+    }
+    if (skillRes.blocked.length > 0) {
+      log.warn(
+        `user-modified host skill file(s) left in place: ${skillRes.blocked.join(', ')}\n` +
+          'pass `agentbox install --skills-only --force` to overwrite',
+      );
+    }
+  } catch (err) {
+    sp.stop('host skill: failed');
+    log.warn(err instanceof Error ? err.message : String(err));
+  }
+
+  // 6) First-run marker (so the auto-trigger doesn't fire again).
+  markSetupComplete(providerName);
+
+  // 7) Tutorial outro.
+  note(tutorialBody(providerName), 'Next steps');
+
+  // Brief check post-setup so the user sees what's now ready.
+  const providerGroup = await runProviderChecks(providerName);
+  process.stdout.write('  ' + formatCompact([sysGroup, providerGroup]) + '\n');
+
+  outro(
+    opts.fromAutoTrigger
+      ? 'Setup complete — continuing with your command…'
+      : 'Setup complete',
+  );
+  return true;
+}
+
+interface InstallOptions {
+  skillsOnly?: boolean;
+  force?: boolean;
+  dryRun?: boolean;
+  provider?: string;
+  yes?: boolean;
+}
+
 export const installCommand = new Command('install')
   .description(
-    "Install AgentBox's host-side /agentbox fork command into Claude (~/.claude/skills), and — when detected — into Codex (~/.codex/prompts) and OpenCode (~/.config/opencode/commands). Idempotent.",
+    'Interactive setup wizard: system check, pick a provider, log in, prepare its base image/snapshot, and install the host /agentbox skill. `--skills-only` runs just the skill install.',
   )
-  .option('--force', 'overwrite existing files even if not AgentBox-managed')
+  .option('--skills-only', 'only install the host /agentbox skill files (no wizard, no login, no prepare)')
+  .option('--force', 'overwrite existing skill files even if not AgentBox-managed')
   .option('--dry-run', 'print what would be written without changing anything')
-  .action((opts: InstallOptions) => {
-    intro('Installing AgentBox host commands...');
-    const force = opts.force === true;
-    const dryRun = opts.dryRun === true;
-
-    let srcDir: string;
-    try {
-      srcDir = resolveHostSkillsDir();
-    } catch (err) {
-      log.error(err instanceof Error ? err.message : String(err));
-      process.exit(1);
-    }
-
-    const written: string[] = [];
-    let skipped = 0;
-
-    for (const t of installTargets()) {
-      const src = join(srcDir, t.src);
-      if (!existsSync(src)) {
-        log.warn(`bundled file missing (skipped): ${src}`);
-        skipped++;
-        continue;
+  .option(
+    '-p, --provider <name>',
+    'pre-select the provider to set up (docker | daytona | hetzner | vercel)',
+  )
+  .option('-y, --yes', 'auto-confirm the prepare step')
+  .action(async (opts: InstallOptions) => {
+    if (opts.skillsOnly) {
+      intro('Installing AgentBox host commands...');
+      let res: InstallHostSkillsResult;
+      try {
+        res = installHostSkills({ force: opts.force, dryRun: opts.dryRun });
+      } catch (err) {
+        log.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
       }
-      // Tool not set up on this host — skip silently (don't seed configs for a
-      // tool the user doesn't use).
-      if (t.gateDir && !existsSync(t.gateDir)) continue;
-      const reason = writableReason(t.dest, force);
-      if (reason === 'skip') {
-        log.warn(`user-modified file at ${t.dest}, skipping; pass --force to overwrite`);
-        skipped++;
-        continue;
+      if (opts.dryRun) {
+        outro(
+          `dry-run: ${String(res.written.length)} file(s) would be written, ${String(res.skipped)} skipped`,
+        );
+        return;
       }
-      if (dryRun) {
-        log.info(`would write ${t.dest} (${reason})`);
-        written.push(t.dest);
-        continue;
+      if (res.written.length === 0) {
+        outro(`nothing installed (${String(res.skipped)} skipped)`);
+        return;
       }
-      mkdirSync(dirname(t.dest), { recursive: true });
-      writeFileSync(t.dest, readFileSync(src, 'utf8'));
-      written.push(t.dest);
-    }
-
-    if (dryRun) {
-      outro(`dry-run: ${String(written.length)} file(s) would be written, ${String(skipped)} skipped`);
+      outro(`installed: ${res.written.join(', ')}`);
       return;
     }
-    if (written.length === 0) {
-      outro(`nothing installed (${String(skipped)} skipped)`);
-      return;
-    }
-    outro(`installed: ${written.join(', ')}`);
+
+    const ok = await runInstallWizard({
+      provider: opts.provider,
+      yes: opts.yes,
+      force: opts.force,
+      dryRun: opts.dryRun,
+    });
+    if (!ok) process.exit(1);
   });

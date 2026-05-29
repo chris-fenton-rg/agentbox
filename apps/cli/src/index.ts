@@ -34,7 +34,9 @@ import { destroyCommand } from './commands/destroy.js';
 import { downloadCommand } from './commands/download.js';
 import { driveCommand } from './commands/drive.js';
 import { forkCommand } from './commands/fork.js';
-import { installCommand } from './commands/install.js';
+import { installCommand, runInstallWizard } from './commands/install.js';
+import { doctorCommand } from './commands/doctor.js';
+import { isFirstRun } from './lib/first-run.js';
 import { gitCommand } from './commands/git.js';
 import { listCommand } from './commands/list.js';
 import { logsCommand } from './commands/logs.js';
@@ -110,13 +112,54 @@ program.addCommand(vercelCommand);
 program.addCommand(dockerCommand);
 program.addCommand(updateCommand);
 program.addCommand(installCommand);
+program.addCommand(doctorCommand);
 
 program.configureHelp({ visibleCommands: () => [] });
 program.addHelpText('after', () => '\n' + buildGroupedHelp(program));
 
 await applyEngineOverrideAtStartup();
 
-program.parseAsync(rewriteProviderPrefix(process.argv)).catch((err: unknown) => {
+const argv = rewriteProviderPrefix(process.argv);
+
+// First-run auto-trigger: if the user has never completed `agentbox install`,
+// drop them through the wizard before running their actual command, then
+// fall through. Skipped for the wizard / doctor themselves, for help/version,
+// for internal/background workers, and any non-TTY invocation (CI must not
+// hang on a prompt — they get the existing per-provider credential errors).
+const FIRST_RUN_EXEMPT = new Set([
+  'install',
+  'doctor',
+  'help',
+  'relay',
+  '_run-queued-job',
+  'drive',
+  'screen',
+]);
+
+function isFirstRunHookEligible(args: readonly string[]): boolean {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return false;
+  const rest = args.slice(2);
+  if (rest.length === 0) return false;
+  for (const a of rest) {
+    if (a === '--help' || a === '-h' || a === '--version' || a === '-V') return false;
+  }
+  const first = rest[0];
+  if (typeof first !== 'string' || first.startsWith('-')) return false;
+  if (FIRST_RUN_EXEMPT.has(first)) return false;
+  return true;
+}
+
+if (isFirstRun() && isFirstRunHookEligible(argv)) {
+  try {
+    await runInstallWizard({ fromAutoTrigger: true });
+  } catch (err) {
+    process.stderr.write(
+      `install wizard failed: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+  }
+}
+
+program.parseAsync(argv).catch((err: unknown) => {
   console.error(err);
   process.exit(1);
 });
