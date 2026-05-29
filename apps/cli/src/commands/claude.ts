@@ -40,6 +40,7 @@ import {
   MissingAgentCredsError,
 } from '../lib/queue/assert-creds.js';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
+import { applyClaudeSkipPermissions } from '../lib/skip-permissions.js';
 import { parseMaxOption } from '../lib/queue/parse-max-option.js';
 import { submitQueueJob } from '../lib/queue/submit.js';
 import {
@@ -92,6 +93,7 @@ function pickCreateOpts(opts: ClaudeCreateOptions): import('@agentbox/relay').Qu
     sharedDockerCache: opts.sharedDockerCache,
     portless: opts.portless,
     sessionName: opts.sessionName,
+    dangerouslySkipPermissions: opts.dangerouslySkipPermissions,
     memory: opts.memory,
     cpus: opts.cpus,
     pidsLimit: opts.pidsLimit,
@@ -157,6 +159,8 @@ interface ClaudeCreateOptions {
   isolateClaudeConfig?: boolean;
   withPlaywright?: boolean;
   withEnv?: boolean;
+  /** --dangerously-skip-permissions / --no-...: per-box override of claude.dangerouslySkipPermissions. */
+  dangerouslySkipPermissions?: boolean;
   /** --carry-yes (or AGENTBOX_CARRY_YES=1): auto-approve the carry: block. */
   carryYes?: boolean;
   /** --carry <mode>: 'skip' disables carry for this run (also AGENTBOX_CARRY=skip). */
@@ -210,6 +214,8 @@ function buildClaudeCliOverrides(opts: ClaudeCreateOptions): Partial<UserConfig>
   if (opts.sharedDockerCache === true) box.dockerCacheShared = true;
   const claude: NonNullable<UserConfig['claude']> = {};
   if (opts.sessionName !== undefined) claude.sessionName = opts.sessionName;
+  if (opts.dangerouslySkipPermissions !== undefined)
+    claude.dangerouslySkipPermissions = opts.dangerouslySkipPermissions;
   const out: Partial<UserConfig> = {};
   if (Object.keys(box).length > 0) out.box = box;
   if (Object.keys(claude).length > 0) out.claude = claude;
@@ -377,6 +383,14 @@ export const claudeCommand = new Command('claude')
     'use a per-box ~/.claude volume instead of the shared agentbox-claude-config',
   )
   .option('--with-playwright', 'also install @playwright/cli@latest globally inside the box')
+  .option(
+    '--dangerously-skip-permissions',
+    'launch claude with --dangerously-skip-permissions (auto-accept tool use); on by default since boxes are isolated',
+  )
+  .option(
+    '--no-dangerously-skip-permissions',
+    'do not pass --dangerously-skip-permissions to claude in this box',
+  )
   .option(
     '--with-env',
     'copy host env/config files (.env*, secrets.toml, agentbox.yaml, ...) into /workspace at create time (gitignore-bypassing)',
@@ -619,6 +633,9 @@ export const claudeCommand = new Command('claude')
     if (wiz.action === 'launch-with-prompt' && wiz.initialPrompt) {
       effectiveClaudeArgs = buildPromptArgs('claude-code', wiz.initialPrompt, claudeArgs);
     }
+    // Auto-accept tool use by default (boxes are isolated). One injection here
+    // flows to both the docker session start and the cloud attach below.
+    effectiveClaudeArgs = applyClaudeSkipPermissions(effectiveClaudeArgs, cfg.effective);
 
     // Validate branch selection before any provider work so a typo doesn't
     // leave a half-created box.
@@ -840,6 +857,8 @@ export const claudeCommand = new Command('claude')
 
 interface ClaudeStartOptions {
   sessionName?: string;
+  /** Inherited from the parent `claude` command via optsWithGlobals. */
+  dangerouslySkipPermissions?: boolean;
   syncConfig?: boolean; // commander: --no-sync-config => false; default true
   attachIn?: string; // raw `--attach-in <mode>` value, validated below.
   inline?: boolean; // -i / --inline: shortcut for --attach-in same.
@@ -860,6 +879,12 @@ async function startOrAttachClaude(
   const attachIn = resolveAttachInOption(opts);
   const cliOverrides: Partial<UserConfig> = {};
   if (opts.sessionName) cliOverrides.claude = { sessionName: opts.sessionName };
+  if (opts.dangerouslySkipPermissions !== undefined) {
+    cliOverrides.claude = {
+      ...cliOverrides.claude,
+      dangerouslySkipPermissions: opts.dangerouslySkipPermissions,
+    };
+  }
   if (attachIn !== undefined) cliOverrides.attach = { openIn: attachIn };
   const cfg = await loadEffectiveConfig(box.workspacePath, { cliOverrides });
   const sessionName = cfg.effective.claude.sessionName;
@@ -968,7 +993,7 @@ async function startOrAttachClaude(
     onProgress: (line) => s.message(clampSpinnerLine(line)),
   });
 
-  let effectiveArgs = claudeArgs;
+  let effectiveArgs = applyClaudeSkipPermissions(claudeArgs, cfg.effective);
   if (resumePrepared) {
     s.message('uploading claude session into box');
     try {
@@ -1129,8 +1154,14 @@ const claudeStartCommand = new Command('start')
           return;
         }
         const cfg = await loadEffectiveConfig(box.workspacePath, {
-          cliOverrides: attachIn ? { attach: { openIn: attachIn } } : {},
+          cliOverrides: {
+            ...(attachIn ? { attach: { openIn: attachIn } } : {}),
+            ...(opts.dangerouslySkipPermissions !== undefined
+              ? { claude: { dangerouslySkipPermissions: opts.dangerouslySkipPermissions } }
+              : {}),
+          },
         });
+        effectiveClaudeArgs = applyClaudeSkipPermissions(effectiveClaudeArgs, cfg.effective);
         if (resumePrepared) {
           try {
             const provider = await providerForBox(box);

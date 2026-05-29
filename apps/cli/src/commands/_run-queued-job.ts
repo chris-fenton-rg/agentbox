@@ -29,6 +29,7 @@ import { resolveClaudeAuth } from '../auth.js';
 import { resolveLimits } from '../limits.js';
 import { openCommandLog } from '../lib/log-file.js';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
+import { applyClaudeSkipPermissions, applyCodexSkipPermissions } from '../lib/skip-permissions.js';
 
 export const runQueuedJobCommand = new Command('_run-queued-job')
   .description('internal: run a queued background agent job (do not invoke directly)')
@@ -185,7 +186,7 @@ async function runDockerJob(
     log.write(`starting claude session`);
     await startClaudeSession({
       container: result.record.container,
-      claudeArgs: promptedArgs,
+      claudeArgs: applyClaudeSkipPermissions(promptedArgs, cfg.effective),
       sessionName: cfg.effective.claude.sessionName,
       boxName: result.record.name,
     });
@@ -197,7 +198,7 @@ async function runDockerJob(
     log.write(`starting codex session`);
     await startCodexSession({
       container: result.record.container,
-      codexArgs: promptedArgs,
+      codexArgs: applyCodexSkipPermissions(promptedArgs, cfg.effective),
       sessionName: cfg.effective.codex.sessionName,
     });
   } else if (job.agent === 'opencode') {
@@ -232,6 +233,15 @@ function buildOverridesFromJob(job: QueueJob): Partial<UserConfig> {
     if (job.agent === 'claude-code') out.claude = { sessionName: opts.sessionName };
     else if (job.agent === 'codex') out.codex = { sessionName: opts.sessionName };
     else if (job.agent === 'opencode') out.opencode = { sessionName: opts.sessionName };
+  }
+  // Per-box `--no-dangerously-skip-permissions` must survive the queue round-trip
+  // so the worker honors the user's safety opt-out instead of the built-in `true`.
+  if (opts.dangerouslySkipPermissions !== undefined) {
+    if (job.agent === 'claude-code') {
+      out.claude = { ...out.claude, dangerouslySkipPermissions: opts.dangerouslySkipPermissions };
+    } else if (job.agent === 'codex') {
+      out.codex = { ...out.codex, dangerouslySkipPermissions: opts.dangerouslySkipPermissions };
+    }
   }
   return out;
 }

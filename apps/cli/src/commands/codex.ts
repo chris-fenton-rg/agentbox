@@ -42,6 +42,7 @@ import {
 } from '../lib/queue/assert-creds.js';
 import { parseMaxOption } from '../lib/queue/parse-max-option.js';
 import { submitQueueJob } from '../lib/queue/submit.js';
+import { applyCodexSkipPermissions } from '../lib/skip-permissions.js';
 import {
   ATTACH_IN_HELP,
   INLINE_HELP,
@@ -86,6 +87,7 @@ function pickCodexCreateOpts(opts: CodexCreateOptions): import('@agentbox/relay'
     sharedDockerCache: opts.sharedDockerCache,
     portless: opts.portless,
     sessionName: opts.sessionName,
+    dangerouslySkipPermissions: opts.dangerouslySkipPermissions,
     memory: opts.memory,
     cpus: opts.cpus,
     pidsLimit: opts.pidsLimit,
@@ -135,6 +137,8 @@ interface CodexCreateOptions {
   isolateCodexConfig?: boolean;
   withPlaywright?: boolean;
   withEnv?: boolean;
+  /** --dangerously-skip-permissions / --no-...: per-box override of codex.dangerouslySkipPermissions. */
+  dangerouslySkipPermissions?: boolean;
   /** --carry-yes (or AGENTBOX_CARRY_YES=1): auto-approve the carry: block. */
   carryYes?: boolean;
   /** --carry <mode>: 'skip' disables carry for this run (also AGENTBOX_CARRY=skip). */
@@ -184,6 +188,8 @@ function buildCodexCliOverrides(opts: CodexCreateOptions): Partial<UserConfig> {
   if (opts.sharedDockerCache === true) box.dockerCacheShared = true;
   const codex: NonNullable<UserConfig['codex']> = {};
   if (opts.sessionName !== undefined) codex.sessionName = opts.sessionName;
+  if (opts.dangerouslySkipPermissions !== undefined)
+    codex.dangerouslySkipPermissions = opts.dangerouslySkipPermissions;
   const out: Partial<UserConfig> = {};
   if (Object.keys(box).length > 0) out.box = box;
   if (Object.keys(codex).length > 0) out.codex = codex;
@@ -323,6 +329,14 @@ export const codexCommand = new Command('codex')
     'use a per-box ~/.codex volume instead of the shared agentbox-codex-config',
   )
   .option('--with-playwright', 'also install @playwright/cli@latest globally inside the box')
+  .option(
+    '--dangerously-skip-permissions',
+    'launch codex with --dangerously-bypass-approvals-and-sandbox (never prompt for approval); on by default since boxes are isolated',
+  )
+  .option(
+    '--no-dangerously-skip-permissions',
+    'do not pass --dangerously-bypass-approvals-and-sandbox to codex in this box',
+  )
   .option(
     '--with-env',
     'copy host env/config files (.env*, secrets.toml, agentbox.yaml, ...) into /workspace at create time (gitignore-bypassing)',
@@ -547,7 +561,7 @@ export const codexCommand = new Command('codex')
         binary: 'codex',
         sessionName: cfg.effective.codex.sessionName,
         mode: 'codex',
-        extraArgs: codexArgs,
+        extraArgs: applyCodexSkipPermissions(codexArgs, cfg.effective),
         verbose: opts.verbose === true,
         openIn: cfg.effective.attach.openIn,
         attach: opts.attach !== false,
@@ -639,7 +653,7 @@ export const codexCommand = new Command('codex')
         },
       });
 
-      let effectiveCodexArgs = codexArgs;
+      let effectiveCodexArgs = applyCodexSkipPermissions(codexArgs, cfg.effective);
       if (resumePrepared) {
         s.message('uploading codex session into box');
         cmdLog.write('uploading codex session into box');
@@ -716,6 +730,8 @@ export const codexCommand = new Command('codex')
 
 interface CodexStartOptions {
   sessionName?: string;
+  /** Inherited from the parent `codex` command via optsWithGlobals. */
+  dangerouslySkipPermissions?: boolean;
   syncConfig?: boolean; // commander: --no-sync-config => false; default true
   attachIn?: string; // raw `--attach-in <mode>` value, validated below.
   inline?: boolean; // -i / --inline: shortcut for --attach-in same.
@@ -736,6 +752,12 @@ async function startOrAttachCodex(
   const attachIn = resolveAttachInOption(opts);
   const cliOverrides: Partial<UserConfig> = {};
   if (opts.sessionName) cliOverrides.codex = { sessionName: opts.sessionName };
+  if (opts.dangerouslySkipPermissions !== undefined) {
+    cliOverrides.codex = {
+      ...cliOverrides.codex,
+      dangerouslySkipPermissions: opts.dangerouslySkipPermissions,
+    };
+  }
   if (attachIn !== undefined) cliOverrides.attach = { openIn: attachIn };
   const cfg = await loadEffectiveConfig(box.workspacePath, { cliOverrides });
   const sessionName = cfg.effective.codex.sessionName;
@@ -806,7 +828,7 @@ async function startOrAttachCodex(
     onProgress: (line) => s.message(clampSpinnerLine(line)),
   });
 
-  let effectiveArgs = codexArgs;
+  let effectiveArgs = applyCodexSkipPermissions(codexArgs, cfg.effective);
   if (resumePrepared) {
     s.message('uploading codex session into box');
     try {
@@ -951,8 +973,14 @@ const codexStartCommand = new Command('start')
           return;
         }
         const cfg = await loadEffectiveConfig(box.workspacePath, {
-          cliOverrides: attachIn ? { attach: { openIn: attachIn } } : {},
+          cliOverrides: {
+            ...(attachIn ? { attach: { openIn: attachIn } } : {}),
+            ...(opts.dangerouslySkipPermissions !== undefined
+              ? { codex: { dangerouslySkipPermissions: opts.dangerouslySkipPermissions } }
+              : {}),
+          },
         });
+        effectiveCodexArgs = applyCodexSkipPermissions(effectiveCodexArgs, cfg.effective);
         if (resumePrepared) {
           try {
             const provider = await providerForBox(box);

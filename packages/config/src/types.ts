@@ -57,9 +57,11 @@ export interface UserConfig {
   };
   claude?: {
     sessionName?: string;
+    dangerouslySkipPermissions?: boolean;
   };
   codex?: {
     sessionName?: string;
+    dangerouslySkipPermissions?: boolean;
   };
   opencode?: {
     sessionName?: string;
@@ -153,9 +155,11 @@ export interface EffectiveConfig {
   };
   claude: {
     sessionName: string;
+    dangerouslySkipPermissions: boolean;
   };
   codex: {
     sessionName: string;
+    dangerouslySkipPermissions: boolean;
   };
   opencode: {
     sessionName: string;
@@ -268,9 +272,11 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   },
   claude: {
     sessionName: 'claude',
+    dangerouslySkipPermissions: true,
   },
   codex: {
     sessionName: 'codex',
+    dangerouslySkipPermissions: true,
   },
   opencode: {
     sessionName: 'opencode',
@@ -495,9 +501,21 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     description: 'tmux session name for `agentbox claude`.',
   },
   {
+    key: 'claude.dangerouslySkipPermissions',
+    type: 'bool',
+    description:
+      'Launch claude in new boxes with --dangerously-skip-permissions (auto-accept tool use). Safe because boxes are isolated; on by default. Override per-box with --no-dangerously-skip-permissions.',
+  },
+  {
     key: 'codex.sessionName',
     type: 'string',
     description: 'tmux session name for `agentbox codex`.',
+  },
+  {
+    key: 'codex.dangerouslySkipPermissions',
+    type: 'bool',
+    description:
+      'Launch codex in new boxes with --dangerously-bypass-approvals-and-sandbox (never prompt for approval). Safe because boxes are isolated; on by default. Override per-box with --no-dangerously-skip-permissions.',
   },
   {
     key: 'opencode.sessionName',
