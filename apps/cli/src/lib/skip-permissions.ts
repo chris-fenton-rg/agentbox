@@ -40,7 +40,13 @@ const CODEX_CONFLICTING = new Set([
 ]);
 
 function inject(args: string[], flag: string, conflicting: Set<string>): string[] {
-  if (args.some((a) => conflicting.has(a))) return args;
+  // Match both `--permission-mode plan` and `--permission-mode=plan` — the flag
+  // name is everything before the first `=` when the user uses inline syntax.
+  const hasConflict = args.some((a) => {
+    const eq = a.indexOf('=');
+    return conflicting.has(eq === -1 ? a : a.slice(0, eq));
+  });
+  if (hasConflict) return args;
   return [flag, ...args];
 }
 

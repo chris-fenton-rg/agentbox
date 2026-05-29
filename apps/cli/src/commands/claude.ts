@@ -93,6 +93,7 @@ function pickCreateOpts(opts: ClaudeCreateOptions): import('@agentbox/relay').Qu
     sharedDockerCache: opts.sharedDockerCache,
     portless: opts.portless,
     sessionName: opts.sessionName,
+    dangerouslySkipPermissions: opts.dangerouslySkipPermissions,
     memory: opts.memory,
     cpus: opts.cpus,
     pidsLimit: opts.pidsLimit,

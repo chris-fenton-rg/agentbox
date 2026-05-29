@@ -42,6 +42,7 @@ import { providerForBox } from '../provider/registry.js';
 import { NEW_BOX_ID, NEW_BOX_LABEL, type SidebarBox } from '../dashboard/sidebar.js';
 import { buildCloudAttachInnerCommand } from './_cloud-attach.js';
 import { handleLifecycleError } from './_errors.js';
+import { applyClaudeSkipPermissions, applyCodexSkipPermissions } from '../lib/skip-permissions.js';
 
 interface DashboardOptions {
   project?: boolean;

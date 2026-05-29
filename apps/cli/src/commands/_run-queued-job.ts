@@ -234,5 +234,14 @@ function buildOverridesFromJob(job: QueueJob): Partial<UserConfig> {
     else if (job.agent === 'codex') out.codex = { sessionName: opts.sessionName };
     else if (job.agent === 'opencode') out.opencode = { sessionName: opts.sessionName };
   }
+  // Per-box `--no-dangerously-skip-permissions` must survive the queue round-trip
+  // so the worker honors the user's safety opt-out instead of the built-in `true`.
+  if (opts.dangerouslySkipPermissions !== undefined) {
+    if (job.agent === 'claude-code') {
+      out.claude = { ...out.claude, dangerouslySkipPermissions: opts.dangerouslySkipPermissions };
+    } else if (job.agent === 'codex') {
+      out.codex = { ...out.codex, dangerouslySkipPermissions: opts.dangerouslySkipPermissions };
+    }
+  }
   return out;
 }

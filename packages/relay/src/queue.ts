@@ -85,6 +85,8 @@ export interface QueueJobCreateOpts {
   sharedDockerCache?: boolean;
   portless?: boolean;
   sessionName?: string;
+  /** Per-box override of `<agent>.dangerouslySkipPermissions` (`--no-...`). */
+  dangerouslySkipPermissions?: boolean;
   memory?: string;
   cpus?: string;
   pidsLimit?: string;

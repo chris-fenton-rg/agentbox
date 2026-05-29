@@ -87,6 +87,7 @@ function pickCodexCreateOpts(opts: CodexCreateOptions): import('@agentbox/relay'
     sharedDockerCache: opts.sharedDockerCache,
     portless: opts.portless,
     sessionName: opts.sessionName,
+    dangerouslySkipPermissions: opts.dangerouslySkipPermissions,
     memory: opts.memory,
     cpus: opts.cpus,
     pidsLimit: opts.pidsLimit,
