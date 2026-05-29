@@ -228,28 +228,25 @@ agentbox/<box>` shows the commit, then try `agentbox-ctl git pull` and a `gh pr`
     loop, and `set-default` / `rm` are provider-complete too (set-default accepts
     `hetzner`/`vercel`; rm removes their snapshots and sweeps the
     `defaultCheckpointVercel` dangling pointer). `apps/cli/src/commands/checkpoint.ts`.
-14. **Per-project snapshot tier** — the daytona/hetzner `projects[<hash>]`
-    optimization that skips workspace/credential re-seeding on repeat creates for
-    the same project. `prepared-state.ts` is single-tier (base only) today.
-    **Plan (host):**
-    - `packages/sandbox-vercel/src/prepared-state.ts` currently stores only
-      `{ schema, base: { snapshotId, contextSha256, ... } }`. Add a
-      `projects?: Record<string, { snapshotId, workspaceSha?, createdAt }>` tier
-      keyed by `hashProjectPath(projectRoot)` (the same hash `@agentbox/config`
-      already exports and that the cloud-checkpoint store uses).
-    - On `create --provider vercel`: after a successful first create for a project,
-      capture a project snapshot (the box post-workspace-seed + cred-seed) and
-      record it under `projects[<hash>]`. On the next create for the same project,
-      boot from that snapshot and **skip** `seedCloudWorkspace` + agent-cred seeding
-      (the snapshot already carries them) — mirror how `cloud-provider.create`
-      already skips the seed when `snapshotName` is set.
-    - Mirror the daytona/hetzner implementation — grep `projects[` /
-      `projectDirSegment` in `packages/sandbox-daytona` + `packages/sandbox-hetzner`
-      for the established shape (invalidation on `contextSha`/cli-stamp change, and
-      a freshness policy so a stale project snapshot is rebuilt).
-    - Verify: two sequential `create`s for the same workspace — the second should
-      skip the workspace seed (watch the create log for "skipping workspace seed")
-      and be materially faster.
+14. ~~**Per-project snapshot tier** (`projects[<hash>]` in `prepared-state.ts`).~~
+    **Closed — redundant.** The per-project snapshot tier already exists: it's
+    the `agentbox checkpoint create --set-default` + `box.defaultCheckpointVercel`
+    flow (validated live in P0 #6). On a repeat `create`,
+    `resolveDefaultCheckpoint(cfg, 'vercel')` → `req.checkpointRef` →
+    `resolveCloudCheckpoint` → `backend.provision({ snapshot })` boots from the
+    project snapshot and `cloud-provider.ts` logs "skipping workspace seed —
+    snapshot already contains /workspace"; the supervisor restarts services from
+    `agentbox.yaml`. The cloud-checkpoint store is already keyed by
+    `hashProjectPath(projectRoot)`, so it *is* per-project. See
+    `docs/cloud-create-flow.md` §"base vs project snapshot".
+    - **Auto-capture is already handled** by the `/agentbox-setup` skill, which
+      runs `agentbox-ctl checkpoint --name setup --replace --set-default` at the
+      end of setup (`apps/cli/share/agentbox-setup/SKILL.md`) — cross-provider, so
+      no core `afterFirstCreate` hook is needed.
+    - The proposed `projects[<hash>]` prepared-state map would be a *second*
+      per-project snapshot registry duplicating the checkpoint store. It was
+      modelled on a never-wired Hetzner `projects` field (since removed). Not
+      building it.
 15. [x] **`agentbox prune --provider vercel`.** Done — generalized the daytona-only
     `pruneDaytona` into a provider-agnostic `pruneCloud` over a
     `CLOUD_PRUNE_PROVIDERS` list, so `--provider vercel` (and `hetzner`, also
