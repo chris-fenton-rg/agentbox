@@ -22,7 +22,7 @@ describe('getUser', () => {
   it('returns the user on 200', async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, { user: { id: 'u1', username: 'me' } }));
     await expect(getUser('vca_x')).resolves.toEqual({ id: 'u1', username: 'me' });
-    const [url, init] = fetchMock.mock.calls[0];
+    const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe('https://api.vercel.com/v2/user');
     expect((init as RequestInit).headers).toMatchObject({ Authorization: 'Bearer vca_x' });
   });
@@ -42,7 +42,7 @@ describe('listProjects', () => {
       { id: 'prj_1', name: 'a' },
       { id: 'prj_2', name: 'b' },
     ]);
-    expect(fetchMock.mock.calls[0][0]).toContain('teamId=team_1');
+    expect(fetchMock.mock.calls[0]![0]).toContain('teamId=team_1');
   });
 
   it('returns [] when the response has no projects', async () => {
@@ -58,7 +58,7 @@ describe('createProject', () => {
       id: 'prj_new',
       name: 'agentbox',
     });
-    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const init = fetchMock.mock.calls[0]![1] as RequestInit;
     expect(init.method).toBe('POST');
     expect(JSON.parse(init.body as string)).toEqual({ name: 'agentbox' });
   });

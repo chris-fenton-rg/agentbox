@@ -8,6 +8,9 @@ const VERCEL_KEYS = [
   'VERCEL_TOKEN',
   'VERCEL_TEAM_ID',
   'VERCEL_PROJECT_ID',
+  // Cleared so a CLI-login marker (set by cli-auth.test.ts in the same worker,
+  // or present in the dev machine's secrets.env) can't leak into these cases.
+  'VERCEL_AUTH_SOURCE',
   // Point HOME at a nonexistent dir so the loader can't pick up a real
   // ~/.agentbox/secrets.env on the dev machine running the test.
 ] as const;
