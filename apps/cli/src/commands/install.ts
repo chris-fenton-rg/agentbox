@@ -39,12 +39,121 @@ import { runPrepare } from './prepare.js';
 const MANAGED_SENTINEL = '<!-- agentbox-managed:v1 -->';
 
 /** Compact half-block "agentbox" wordmark shown above the wizard's clack gutter.
- *  Brand blue (256-color 39) echoes the dashboard sidebar; dropped when NO_COLOR. */
+ *  Brand blue (256-color 39) echoes the dashboard sidebar. */
+const LOGO_L1 = '▄▀█ █▀▀ █▀▀ █▄░█ ▀█▀ █▄▄ █▀█ ▀▄▀';
+const LOGO_L2 = '█▀█ █▄█ ██▄ █░▀█ ░█░ █▄█ █▄█ █░█';
+const LOGO_WIDTH = LOGO_L1.length; // both lines are the same cell width
+
+/** Static fallback banner (no animation): solid brand blue, dropped when NO_COLOR. */
 const BANNER = (() => {
-  const art = '▄▀█ █▀▀ █▀▀ █▄░█ ▀█▀ █▄▄ █▀█ ▀▄▀\n' + '█▀█ █▄█ ██▄ █░▀█ ░█░ █▄█ █▄█ █░█';
+  const art = `${LOGO_L1}\n${LOGO_L2}`;
   const tinted = process.env.NO_COLOR ? art : `\x1b[38;5;39m${art}\x1b[0m`;
   return `\n${tinted}\n\n`;
 })();
+
+// Synchronized-output toggles (DECSET/DECRST 2026): terminals that support it
+// commit each animation frame atomically, avoiding tearing/flicker.
+const SYNC_BEGIN = '\x1b[?2026h';
+const SYNC_END = '\x1b[?2026l';
+const HIDE_CURSOR = '\x1b[?25l';
+const SHOW_CURSOR = '\x1b[?25h';
+
+/** Braille spinner frames for the "Checking system…" line shown under the logo. */
+const SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/** 256-color code for a logo cell `dist` columns from the shine band's center. */
+function shineColor(dist: number): number {
+  const d = Math.abs(dist);
+  if (d === 0) return 231; // white core
+  if (d === 1) return 159; // light cyan
+  if (d === 2) return 81; // cyan
+  return 39; // base brand blue
+}
+
+/** Render one logo line with the shine band centered at column `center`. */
+function paintLine(line: string, center: number): string {
+  let out = '';
+  let prev = -1;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    const c = shineColor(i - center);
+    if (c !== prev) {
+      out += `\x1b[38;5;${String(c)}m`;
+      prev = c;
+    }
+    out += ch;
+  }
+  return out + '\x1b[0m';
+}
+
+/**
+ * Draw the agentbox logo with a ~2s left-to-right "shine sweep", then settle to
+ * the solid brand-blue wordmark. Falls back to the instant static banner when a
+ * TTY isn't present or motion is suppressed (NO_COLOR / CI / AGENTBOX_NO_ANIM),
+ * leaving identical output to `BANNER` so `intro(...)` always starts clean.
+ */
+async function animateBanner(): Promise<void> {
+  if (
+    process.env.NO_COLOR ||
+    process.env.CI ||
+    process.env.AGENTBOX_NO_ANIM ||
+    !process.stdout.isTTY
+  ) {
+    process.stdout.write(BANNER);
+    return;
+  }
+
+  const restoreCursor = (): void => {
+    process.stdout.write(SHOW_CURSOR);
+  };
+  process.once('exit', restoreCursor);
+  process.once('SIGINT', restoreCursor);
+
+  const frameMs = 45;
+  // Band starts just off the left edge and exits past the right edge.
+  const start = -3;
+  const end = LOGO_WIDTH + 2;
+
+  // Layout reserved under the logo (so the sweep isn't pinned to the terminal's
+  // bottom edge): L2, a blank row, the "Checking system…" status row, then a
+  // trailing blank pad row. Reserve them up front (scrolling the view up if we
+  // are near the bottom), then return to the logo's first row to animate.
+  // Each frame redraws both logo lines + the status line, then moves the cursor
+  // back up to the logo's first row so the next frame paints in place.
+  const down = 4; // L2(+1) + blank(+2) + status(+3) + blank pad(+4)
+  process.stdout.write(`\n${HIDE_CURSOR}`);
+  process.stdout.write('\n'.repeat(down) + `\x1b[${String(down)}A`);
+
+  const statusLine = (spin: string): string =>
+    `  \x1b[38;5;51m${spin}\x1b[0m \x1b[38;5;245mChecking system…\x1b[0m`;
+
+  for (let center = start; center <= end; center++) {
+    const spin = SPIN[Math.floor((center - start) / 2) % SPIN.length];
+    const frame =
+      SYNC_BEGIN +
+      paintLine(LOGO_L1, center) +
+      '\n' +
+      paintLine(LOGO_L2, center) +
+      '\n\n\x1b[2K' + // down to the status row (col 0), clear it
+      statusLine(spin) +
+      '\x1b[3A\r' + // back up to the logo's first row
+      SYNC_END;
+    process.stdout.write(frame);
+    await sleep(frameMs);
+  }
+
+  // Settle the wordmark to solid brand blue (status line stays), hold briefly.
+  process.stdout.write(SYNC_BEGIN + `\x1b[38;5;39m${LOGO_L1}\n${LOGO_L2}\x1b[0m` + SYNC_END);
+  await sleep(250);
+
+  // Clear the status row and leave the cursor one blank line below the logo so
+  // the real (instant) system check prints its result there via `intro(...)`.
+  process.stdout.write(SYNC_BEGIN + '\n\x1b[2K\n\x1b[2K' + SHOW_CURSOR + SYNC_END);
+  process.removeListener('exit', restoreCursor);
+  process.removeListener('SIGINT', restoreCursor);
+}
 
 /** Substring unique to the pre-rename `agentbox` host skill. Lets `install`
  *  replace it in place during the agentbox → agentbox-info rename even though
@@ -268,7 +377,7 @@ function isProviderName(s: string): s is ProviderName {
 export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Promise<boolean> {
   if (!ensureTty()) return false;
 
-  process.stdout.write(BANNER);
+  await animateBanner();
   intro('Check system compatibility');
 
   // 1) Compact system check (full detail lives in `agentbox doctor`).
