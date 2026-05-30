@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { log } from '@clack/prompts';
 import { Command, InvalidArgumentError } from 'commander';
+import { hostOpenCommand } from '@agentbox/sandbox-core';
 import type { BoxRecord } from '@agentbox/core';
 import type { StatusReply, WaitReadyReply } from '@agentbox/ctl';
 import { loadEffectiveConfig, type IdeFlavor as ConfigIdeFlavor, type UserConfig } from '@agentbox/config';
@@ -307,10 +308,10 @@ async function launchOne(flavor: IdeFlavor, folderUri: string): Promise<LaunchRe
   const cliCode = await spawnCommand(profile.cli, ['--folder-uri', folderUri]);
   if (cliCode !== 127) return { code: cliCode, flavor, via: 'cli' };
   log.warn(
-    `\`${profile.cli}\` not found in PATH; falling back to \`open ${profile.protocolScheme}://...\` (the %2B URL-encoding bug may break attach)`,
+    `\`${profile.cli}\` not found in PATH; falling back to \`${hostOpenCommand()} ${profile.protocolScheme}://...\` (the %2B URL-encoding bug may break attach)`,
   );
   const url = `${profile.protocolScheme}://${folderUri.replace(/^vscode-remote:\/\//, 'vscode-remote/')}`;
-  const fallback = await spawnCommand('open', [url]);
+  const fallback = await spawnCommand(hostOpenCommand(), [url]);
   return { code: fallback, flavor, via: 'open' };
 }
 

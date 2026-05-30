@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { log } from '@clack/prompts';
+import { hostOpenCommand } from '@agentbox/sandbox-core';
 import {
   detectEngine,
   getBoxHostPaths,
@@ -119,7 +120,7 @@ export const urlCommand = new Command('url')
         return;
       }
 
-      const opened = spawnSync('open', [url], { stdio: 'inherit' });
+      const opened = spawnSync(hostOpenCommand(), [url], { stdio: 'inherit' });
       if (opened.status !== 0) {
         throw new Error(`open ${url} failed (exit ${String(opened.status ?? 'n/a')})`);
       }

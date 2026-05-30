@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { executeCloudAction, refreshCloudPreviewUrl } from './host-actions.js';
 import { HostActionQueue } from './host-action-queue.js';
 import { BoxNotices } from './notices.js';
+import { hostOpenCommand } from '@agentbox/sandbox-core';
 import {
   assertGhReady,
   checkoutGuards,
@@ -569,7 +570,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             )
               .then((verdict) => {
                 if (verdict.answer === 'y' && !verdict.cancelled) {
-                  void runHostCommand(['open', url], BROWSER_OPEN_RPC_TIMEOUT_MS);
+                  void runHostCommand([hostOpenCommand(), url], BROWSER_OPEN_RPC_TIMEOUT_MS);
                 }
               })
               .catch(() => {

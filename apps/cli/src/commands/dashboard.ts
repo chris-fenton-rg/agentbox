@@ -31,7 +31,7 @@ import {
   waitForTmuxPaneContent,
   type ListedBox,
 } from '@agentbox/sandbox-docker';
-import { readState } from '@agentbox/sandbox-core';
+import { hostOpenCommand, readState } from '@agentbox/sandbox-core';
 import type { BoxRecord } from '@agentbox/core';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { resolveClaudeAuth } from '../auth.js';
@@ -557,9 +557,9 @@ export const dashboardCommand = new Command('dashboard')
         } catch {
           // Best-effort — still open the viewer even if the box isn't running.
         }
-        detach('open', [url]);
+        detach(hostOpenCommand(), [url]);
         if (exposedWebUrl) {
-          detach('open', [exposedWebUrl]);
+          detach(hostOpenCommand(), [exposedWebUrl]);
           return 'Opening VNC + web in browser…';
         }
         return 'Opening VNC in browser…';
@@ -569,7 +569,7 @@ export const dashboardCommand = new Command('dashboard')
         const box = (await listBoxes()).find((b) => b.id === boxId);
         if (!box) return 'box not found';
         const { url } = webTarget(box);
-        detach('open', [url]);
+        detach(hostOpenCommand(), [url]);
         return `Opening ${url.replace(/^https?:\/\//, '')}…`;
       };
 

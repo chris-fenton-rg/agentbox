@@ -23,6 +23,19 @@ already works, what's been fixed, and the remaining macOS-only host assumptions.
     permission-denied branch and the healthy `reachable` path render correctly,
     and the daytona/hetzner/vercel credential checks run without crashing.
 
+- **Host browser/file opening uses `xdg-open` on Linux.** Added
+  `hostOpenCommand()` to `@agentbox/sandbox-core` (`darwin` -> `open`, `linux` ->
+  `xdg-open`) with a unit test, and routed every host-side launcher through it
+  instead of the hardcoded macOS `open`:
+  - apps/cli: `url`, `screen`, `code` (CLI-missing fallback), `open` (sshfs mount
+    reveal), `dashboard` (VNC/web/code openers)
+  - relay: the box-initiated "open link on host" path (`host-actions.ts`,
+    `server.ts`)
+  - cloud login dashboards: daytona / vercel / hetzner `credentials.ts`
+  - `sandbox-docker` checkpoint/export reveal (`host-export.ts`)
+  - Verified live on the Ubuntu VM: `agentbox url <box>` launches via `xdg-open`
+    (not `open`) — see the dev-VM E2E below.
+
 ## How to test on Linux
 
 `scripts/linux-dev-vm.sh` manages a **persistent** clean Ubuntu VM on Hetzner
@@ -71,11 +84,6 @@ agentbox doctor                                   # inspect the report
 These were found while scoping the doctor change. None are needed for `doctor`
 itself; they block the wider "drive everything from Linux" goal.
 
-- **Browser open uses the macOS `open` command** — needs `xdg-open` (or `$BROWSER`)
-  on Linux:
-  - `apps/cli/src/commands/url.ts:122`
-  - `apps/cli/src/commands/screen.ts:147`
-  - `apps/cli/src/commands/code.ts:313`
 - **Host terminal spawning is iTerm2/AppleScript-only.** `detectHostTerminal()`
   only recognizes tmux + iTerm2; `spawnInITerm2()` shells out to `osascript`
   (`apps/cli/src/terminal/host.ts`, see the "macOS-only by design" comment near the
