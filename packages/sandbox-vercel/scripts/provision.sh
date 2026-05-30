@@ -272,10 +272,14 @@ if [ -z "$CHROME_BIN" ] || [ ! -x "$CHROME_BIN" ]; then
   exit 70
 fi
 # Fail loud if a shared lib is missing — this is where an incomplete AL2023 dep
-# set surfaces at bake time instead of at first agent-browser launch.
-if ldd "$CHROME_BIN" | grep -q 'not found'; then
+# set surfaces at bake time instead of at first agent-browser launch. Capture
+# ldd's output first (|| true): under `set -euo pipefail` a non-zero ldd exit
+# would otherwise dominate the `ldd | grep` pipeline and make the missing-libs
+# check a silent no-op even when 'not found' lines are present.
+LDD_OUT="$(ldd "$CHROME_BIN" 2>&1 || true)"
+if printf '%s\n' "$LDD_OUT" | grep -q 'not found'; then
   echo "provision.sh: Chromium has unresolved shared libs:" >&2
-  ldd "$CHROME_BIN" | grep 'not found' >&2
+  printf '%s\n' "$LDD_OUT" | grep 'not found' >&2
   exit 71
 fi
 ln -sf "$CHROME_BIN" /usr/local/bin/chromium
