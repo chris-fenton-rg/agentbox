@@ -106,9 +106,11 @@ const FLASH_DURATION_MS = 2000;
 const RAPID_RECONNECT_MS = 8000;
 /** Give up reconnecting after this many consecutive rapid failures (crash loop). */
 const MAX_RAPID_RECONNECTS = 3;
-/** A drop within this long of a checkpoint notice is treated as a reboot
- *  (the box snapshot stops it a beat before the host clears the notice). */
-const CHECKPOINT_DROP_GRACE_MS = 20_000;
+/** A drop within this long of a checkpoint notice clearing is still treated as
+ *  a reboot — only to bridge a tiny SSE-vs-pty event race (the box stops, and
+ *  thus the pty drops, while the notice is still active, so this rarely fires).
+ *  Kept short so a clean exit shortly after a checkpoint isn't misread. */
+const CHECKPOINT_DROP_GRACE_MS = 4000;
 
 /** Per-action confirmation text shown in the footer flash. */
 const ACTION_FLASH: Record<Exclude<LeaderAction, 'detach'>, string> = {
@@ -514,9 +516,11 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   const router: InputRouter = createInputRouter({
     onForward: (b) => {
       // While reconnecting there's no live pty to write to. Swallow input, but
-      // let Ctrl+C (0x03) abort the reconnect wait so the user can bail out.
+      // let a bare Ctrl+C (a lone 0x03 byte) abort the reconnect wait so the
+      // user can bail out. Match exactly — a pasted/coalesced buffer that merely
+      // contains 0x03 must not trip the abort.
       if (reconnecting) {
-        if (b.includes(0x03)) reconnectAbort?.abort();
+        if (b.length === 1 && b[0] === 0x03) reconnectAbort?.abort();
         return;
       }
       // node-pty wants utf8 strings; stdin is binary safe via Buffer.
@@ -788,6 +792,11 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     });
     wireOutput();
     lastSpawnAt = Date.now();
+    // The checkpoint that caused this drop is consumed — clear its tracking so a
+    // clean exit in the reconnected session isn't misclassified as another
+    // reboot (a fresh checkpoint sets these again via onNotice).
+    checkpointNoticeAt = 0;
+    checkpointNoticeClearedAt = 0;
     // Re-assert the scroll region (the fresh session repaints into it) and
     // repaint chrome so the footer/band survive the respawn.
     process.stdout.write(`\x1b[1;${String(innerNow)}r`);
