@@ -257,6 +257,11 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   // `recomputeBand` derives the band visibility from prompt > notice > question.
   let capturingPrompt: PromptAskEvent | null = null;
   let activeNotice: BoxNoticeEvent | null = null;
+  // The "box rebooting — reconnecting…" banner, owned solely by reconnectFlow.
+  // Kept separate from `activeNotice` (which the SSE notice callbacks mutate) so
+  // a real notice-set/clear arriving mid-reconnect can't clobber or prematurely
+  // dismiss it. Takes precedence over everything while a reconnect is in flight.
+  let reconnectBanner: string | null = null;
   let noticeFrame = 0;
   let questionPayload: ClaudeQuestionPayload | null = null;
   let bandState: AlertBandState | null = null;
@@ -321,7 +326,9 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   // question state has no one-line footer renderer — sidebar marker only).
   const recomputeFooter = (): void => {
     const collapsed = bandState !== null && bandReservedRows === 0;
-    if (collapsed && capturingPrompt) {
+    if (collapsed && reconnectBanner) {
+      footerState = { kind: 'notice', message: reconnectBanner, frame: noticeFrame };
+    } else if (collapsed && capturingPrompt) {
       footerState = { kind: 'prompt', prompt: capturingPrompt };
     } else if (collapsed && activeNotice) {
       footerState = { kind: 'notice', message: activeNotice.message, frame: noticeFrame };
@@ -338,7 +345,11 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   // a question is the agent waiting for the user. When nothing is active the
   // band collapses entirely.
   const recomputeBand = (): void => {
-    if (capturingPrompt) {
+    if (reconnectBanner) {
+      // While reconnecting nothing else is actionable (stdin is swallowed, the
+      // box is down), so the banner outranks prompt/notice/question.
+      bandState = { kind: 'notice', message: reconnectBanner, frame: noticeFrame };
+    } else if (capturingPrompt) {
       bandState = { kind: 'prompt', prompt: capturingPrompt };
     } else if (activeNotice) {
       bandState = { kind: 'notice', message: activeNotice.message, frame: noticeFrame };
@@ -715,7 +726,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     const controller = new AbortController();
     reconnecting = true; // swallow stdin (no live pty) while we re-establish
     reconnectAbort = controller;
-    activeNotice = { id: 'reconnect', kind: 'checkpoint', message: 'box rebooting — reconnecting…' };
+    reconnectBanner = 'box rebooting — reconnecting…';
     startSpinner();
     applyBandChange();
     let spec: { command: string; argv: string[]; env?: Record<string, string> } | null = null;
@@ -726,8 +737,10 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     } finally {
       reconnecting = false;
       reconnectAbort = null;
-      activeNotice = null;
-      stopSpinner();
+      reconnectBanner = null;
+      // A real checkpoint notice may have arrived via SSE during the reconnect;
+      // keep the spinner running if so, only stop it when nothing animates.
+      if (!activeNotice) stopSpinner();
       applyBandChange();
     }
     if (spec) {

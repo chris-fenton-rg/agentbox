@@ -206,16 +206,20 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
       }
     }
     if (signal.aborted) return null;
-    // Release the previous attach's per-call resources (SSH tunnel / token)
-    // before minting fresh ones against the resumed box.
-    if (spec.cleanup) {
+    // Mint the fresh attach FIRST, then release the previous one's per-call
+    // resources (SSH tunnel / token). Order matters: if buildAttach throws,
+    // `spec` still points at the old spec (uncleaned), so the outer `finally`
+    // cleans it exactly once — building-then-cleaning avoids the double-cleanup
+    // that the reverse order would cause on a buildAttach failure.
+    const prev = spec;
+    spec = await buildAttach(box, 'agent', { sessionName: args.sessionName, command });
+    if (prev.cleanup) {
       try {
-        await spec.cleanup();
+        await prev.cleanup();
       } catch {
         // best-effort
       }
     }
-    spec = await buildAttach(box, 'agent', { sessionName: args.sessionName, command });
     return { command: spec.argv[0]!, argv: spec.argv.slice(1), env: spec.env };
   };
 
