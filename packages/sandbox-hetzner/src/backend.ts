@@ -432,7 +432,11 @@ export const hetznerBackend: CloudBackend = {
   async start(h: CloudHandle): Promise<void> {
     const id = Number.parseInt(h.sandboxId, 10);
     await client().powerOn(id);
-    // Wait for ssh to come back so callers can immediately exec.
+    // The API reports `running` ~10-30s before sshd actually accepts
+    // connections. Callers (the provider's `reEnsureCloudBox` relaunch) SSH-exec
+    // immediately after start()/resume(), so wait for the API state AND for ssh
+    // to be ready — otherwise the first exec hits `Connection refused` and the
+    // daemons never get relaunched. Mirrors the provision flow's waitForSsh.
     await pollUntil(
       `server ${h.sandboxId} running`,
       async () => {
@@ -441,6 +445,18 @@ export const hetznerBackend: CloudBackend = {
       },
       { deadlineMs: ACTION_DEADLINE_MS, intervalMs: 2_000, maxIntervalMs: 8_000 },
     );
+    const server = await getServerStrict(id);
+    const vpsIp = server.public_net.ipv4?.ip;
+    if (!vpsIp) {
+      throw new Error(`hetzner: server ${h.sandboxId} has no IPv4 address after start`);
+    }
+    const state = await ensurePerBoxState(h.sandboxId);
+    const up = await waitForSsh(buildSshTarget(state, vpsIp), PROVISION_SSH_DEADLINE_MS);
+    if (!up) {
+      throw new Error(
+        `hetzner: ssh on ${vpsIp} did not come up within ${String(PROVISION_SSH_DEADLINE_MS / 1000)}s after start`,
+      );
+    }
   },
 
   async stop(h: CloudHandle): Promise<void> {
