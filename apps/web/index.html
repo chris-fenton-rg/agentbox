@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AgentBox — Teleport for agents</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --paper: #f6f6f3;
+    --panel: #ffffff;
+    --ink: #16181c;
+    --ink-2: #3d434c;
+    --muted: #7b818b;
+    --faint: #a4a9b0;
+    --line: #e3e3dd;
+    --line-2: #ededea;
+    --accent: #128a4f;
+    --accent-soft: #eaf4ee;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --sans: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; text-decoration: none; }
+  .mono { font-family: var(--mono); }
+  .accent { color: var(--accent); }
+
+  /* center column with hairline frame */
+  .frame {
+    max-width: 920px;
+    margin: 0 auto;
+    border-left: 1px solid var(--line);
+    border-right: 1px solid var(--line);
+    background: var(--paper);
+    min-height: 100vh;
+  }
+  .pad { padding-left: 40px; padding-right: 40px; }
+  @media (max-width: 640px){ .pad { padding-left: 22px; padding-right: 22px; } .frame { border-left: none; border-right: none; } }
+
+  /* row separators */
+  .rule { border-top: 1px solid var(--line); }
+
+  /* ── TOP BAR ── */
+  header.top {
+    display: flex; align-items: center; justify-content: space-between;
+    height: 56px;
+    border-bottom: 1px solid var(--line);
+    font-family: var(--mono); font-size: 13px;
+  }
+  .top .brand { display: flex; align-items: center; gap: 9px; font-weight: 600; }
+  .top .mark { width: 18px; height: 18px; border: 1.5px solid var(--ink); display: grid; place-items: center; font-size: 11px; border-radius: 3px; }
+  .top nav { display: flex; gap: 26px; color: var(--muted); }
+  .top nav a:hover { color: var(--ink); }
+  .top .src { color: var(--accent); }
+  .top .src:hover { text-decoration: underline; }
+  @media (max-width: 640px){ .top nav { display: none; } }
+
+  /* ── META STRIP ── */
+  .meta {
+    display: flex; flex-wrap: wrap; gap: 0;
+    border-bottom: 1px solid var(--line);
+    font-family: var(--mono); font-size: 12px; color: var(--muted);
+  }
+  .meta span { padding: 9px 18px; border-right: 1px solid var(--line); }
+  .meta span:last-child { border-right: none; }
+  .meta b { color: var(--ink); font-weight: 500; }
+
+  /* ── HERO ── */
+  .hero { padding-top: 64px; padding-bottom: 52px; }
+  .kicker { font-family: var(--mono); font-size: 12.5px; color: var(--accent); letter-spacing: 0.04em; margin-bottom: 22px; }
+  .hero h1 {
+    font-size: clamp(34px, 6vw, 54px);
+    line-height: 1.05;
+    letter-spacing: -0.035em;
+    font-weight: 600;
+    margin-bottom: 22px;
+  }
+  .hero h1 .dim { color: var(--faint); }
+  .hero p.lede { font-size: clamp(15px, 2vw, 17.5px); color: var(--ink-2); max-width: 54ch; line-height: 1.62; margin-bottom: 34px; }
+  .hero p.lede b { font-weight: 500; }
+
+  /* command line */
+  .runline {
+    display: flex; align-items: center; gap: 0;
+    border: 1px solid var(--line); border-radius: 8px;
+    background: var(--panel); overflow: hidden;
+    font-family: var(--mono); font-size: 15px;
+    max-width: 460px;
+  }
+  .runline .body { padding: 13px 16px; display: flex; align-items: center; gap: 10px; flex: 1; }
+  .runline .p { color: var(--accent); }
+  .runline .pkg { color: var(--muted); }
+  .runline .k { color: var(--ink); }
+  .runline button {
+    border: none; border-left: 1px solid var(--line);
+    background: var(--paper); color: var(--muted);
+    width: 46px; align-self: stretch; cursor: pointer;
+    display: grid; place-items: center; transition: color .15s, background .15s;
+  }
+  .runline button:hover { color: var(--accent); background: var(--accent-soft); }
+  .runline button svg { width: 14px; height: 14px; }
+
+  .runlink {
+    display: inline-flex; align-items: center; gap: 6px;
+    margin-top: 16px; font-family: var(--mono); font-size: 12.5px; color: var(--muted);
+    transition: color .15s;
+  }
+  .runlink span { color: var(--accent); transition: transform .15s; }
+  .runlink:hover { color: var(--accent); }
+  .runlink:hover span { transform: translateX(3px); }
+
+  /* ── ARCHITECTURE DIAGRAM ── */
+  .diagram { padding-top: 36px; padding-bottom: 32px; }
+  .dg { display: flex; align-items: stretch; gap: 16px; }
+  .dg-host { flex: 0 1 252px; }
+  .dg-vm { flex: 1 1 auto; }
+  .dg-arrow { display: flex; flex-direction: column; align-items: center; gap: 5px; color: var(--accent); flex-shrink: 0; }
+  .dg-arrow svg { width: 58px; height: 24px; }
+  .dg-arrow-lbl { font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; color: var(--accent); text-transform: uppercase; }
+  @media (max-width: 680px){
+    .dg { flex-direction: column; }
+    .dg-arrow { justify-content: center; transform: rotate(90deg); padding: 4px 0; }
+  }
+
+  .dg-panel { border: 1px solid var(--line); border-radius: 11px; background: var(--panel); padding: 18px; height: 100%; }
+  .dg-vm.dg-panel { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(18,138,79,0.05); }
+
+  .dg-h { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+  .dg-h .ico { color: var(--accent); width: 22px; height: 22px; flex-shrink: 0; }
+  .dg-h .t { font-family: var(--mono); font-weight: 600; font-size: 15px; letter-spacing: -0.01em; white-space: nowrap; }
+  .dg-h .badge { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11px; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 3px 9px; }
+  .dg-h .badge svg { width: 12px; height: 12px; }
+
+  .dg-sub { display: flex; flex-direction: column; gap: 11px; }
+  .dg-card { display: flex; align-items: center; gap: 12px; border: 1px solid var(--line-2); border-radius: 8px; padding: 12px 13px; background: var(--paper); }
+  .dg-card .ico { color: var(--accent); width: 19px; height: 19px; flex-shrink: 0; }
+  .dg-card .lbl { font-family: var(--mono); font-size: 12.5px; line-height: 1.3; }
+  .dg-card .lbl small { display: block; color: var(--muted); font-size: 11px; font-weight: 400; }
+
+  .dg-grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 11px; margin-bottom: 13px; }
+  .dg-tile { border: 1px solid var(--line-2); border-radius: 8px; padding: 14px 8px 12px; background: var(--paper); text-align: center; }
+  .dg-tile .ico { color: var(--accent); margin: 0 auto 9px; display: block; line-height: 0; }
+  .dg-tile .ico svg { width: 26px; height: 26px; margin: 0 auto; }
+  .dg-h .ico svg, .dg-card .ico svg { width: 100%; height: 100%; display: block; }
+  .dg-tile .t { font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
+  .dg-tile small { display: block; color: var(--muted); font-size: 10.5px; margin-top: 3px; }
+
+  .dg-did { border: 1px dashed var(--accent); border-radius: 8px; padding: 14px 13px 13px; }
+  .dg-did .did-t { font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; color: var(--accent); text-align: center; margin-bottom: 12px; }
+  .dg-did .did-row { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+
+  .diagram .lbl { font-family: var(--mono); font-size: 11.5px; color: var(--muted); padding-top: 26px; }
+
+  /* diagram — animation */
+  .dg-tile { position: relative; }
+  .dg-run { position: absolute; top: 9px; right: 9px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  .dg-run::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--accent); animation: dg-ping 1.8s ease-out infinite; animation-delay: inherit; }
+  @keyframes dg-ping { 0% { transform: scale(1); opacity: .55; } 80%, 100% { transform: scale(3.4); opacity: 0; } }
+
+  .dg-wire { animation: dg-march .9s linear infinite; }
+  @keyframes dg-march { to { stroke-dashoffset: -18; } }
+  .dg-packet { animation: dg-fly 2.4s cubic-bezier(.55,0,.45,1) infinite; }
+  @keyframes dg-fly {
+    0% { transform: translateX(0); opacity: 0; }
+    12% { opacity: 1; }
+    74% { opacity: 1; }
+    100% { transform: translateX(43px); opacity: 0; }
+  }
+  .dg-arrow-lbl { animation: dg-pulse 2.4s ease-in-out infinite; }
+  @keyframes dg-pulse { 0%, 100% { opacity: .5; } 40% { opacity: 1; } }
+
+  .dg-vm.dg-panel { animation: dg-breath 3.6s ease-in-out infinite; }
+  @keyframes dg-breath {
+    0%, 100% { box-shadow: 0 0 0 3px rgba(18,138,79,0.05); }
+    50% { box-shadow: 0 0 0 5px rgba(18,138,79,0.11); }
+  }
+
+  /* entrance — default visible; one-shot animation when scrolled into view */
+  @keyframes dg-enter { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+  .dg.in .dg-host { animation: dg-enter .55s ease both; }
+  .dg.in .dg-arrow { animation: dg-enter .55s ease .30s both; }
+  .dg.in .dg-vm { animation: dg-enter .55s ease .12s both, dg-breath 3.6s ease-in-out .9s infinite; }
+  .dg.in .dg-grid3 .dg-tile:nth-child(1) { animation: dg-enter .5s ease .34s both; }
+  .dg.in .dg-grid3 .dg-tile:nth-child(2) { animation: dg-enter .5s ease .44s both; }
+  .dg.in .dg-grid3 .dg-tile:nth-child(3) { animation: dg-enter .5s ease .54s both; }
+  .dg.in .dg-did { animation: dg-enter .5s ease .62s both; }
+  .dg-tile { transition: border-color .2s; }
+  .dg-tile:hover { border-color: var(--accent); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .dg-wire, .dg-packet, .dg-arrow-lbl, .dg-run::after, .dg .dg-vm.dg-panel,
+    .dg.in .dg-host, .dg.in .dg-arrow, .dg.in .dg-vm, .dg.in .dg-tile, .dg.in .dg-did { animation: none !important; }
+  }
+
+  /* ── diagram — interactive teleport ── */
+  .dg { position: relative; }
+  .accent { color: var(--accent); }
+  .neg { color: #c1542b; }
+
+  /* host cards: buttons reset + affordance */
+  .dg-card.xfer, .dg-card.stay {
+    width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer;
+    background: var(--paper); border: 1px solid var(--line-2);
+    -webkit-tap-highlight-color: transparent;
+    transition: border-color .18s, transform .12s, box-shadow .18s, background .18s;
+  }
+  .dg-card.xfer:hover { border-color: var(--accent); transform: translateY(-1px); box-shadow: 0 3px 10px -6px rgba(18,138,79,.5); }
+  .dg-card.xfer:active { transform: translateY(0); }
+  .dg-card .go { margin-left: auto; color: var(--accent); font-family: var(--mono); font-size: 15px; opacity: .45; transition: opacity .18s, transform .18s; }
+  .dg-card.xfer:hover .go { opacity: 1; transform: translateX(3px); }
+  .dg-card.sending { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 2px rgba(18,138,79,.14); }
+  .dg-card.info { cursor: pointer; }
+  .dg-card#c-http { -webkit-tap-highlight-color: transparent; transition: border-color .18s, background .18s, box-shadow .18s; }
+  .dg-card#c-http .go { margin-left: auto; color: var(--accent); font-family: var(--mono); font-size: 14px; opacity: .5; transition: opacity .18s, transform .18s; }
+  .dg-card#c-http:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .dg-card#c-http:hover .go { opacity: 1; transform: translateX(2px); }
+  .host-badge { color: var(--muted); border-color: var(--line); }
+
+  /* stay (git creds) — clicking shows it's pinned to host */
+  .dg-card.stay .go.lock-go { color: var(--faint); font-size: 9px; }
+  .dg-card.stay:hover { border-color: #c1542b; }
+  .dg-card.stay:hover .go.lock-go { color: #c1542b; }
+  .dg-card.stay.blocked { border-color: #c1542b; background: rgba(193,84,43,.06); box-shadow: 0 0 0 2px rgba(193,84,43,.14); animation: dg-shake .42s ease; }
+  .dg-card.stay.blocked .ico { color: #c1542b; }
+  @keyframes dg-shake { 0%,100%{transform:translateX(0)} 18%{transform:translateX(-4px)} 38%{transform:translateX(4px)} 58%{transform:translateX(-3px)} 78%{transform:translateX(2px)} }
+
+  /* VM mounts — destinations that fill in on teleport */
+  .dg-mounts { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; margin-bottom: 13px; }
+  .dg-mount {
+    display: flex; align-items: center; gap: 10px;
+    border: 1px dashed var(--faint); border-radius: 8px; padding: 11px 12px; background: transparent;
+    transition: border-color .3s, background .3s, color .3s;
+  }
+  .dg-mount .ico { color: var(--faint); width: 18px; height: 18px; flex-shrink: 0; transition: color .3s; }
+  .dg-mount .lbl { font-family: var(--mono); font-size: 12px; color: var(--muted); line-height: 1.25; }
+  .dg-mount .lbl small { display: block; font-size: 10px; color: var(--faint); }
+  .dg-mount .chk { margin-left: auto; width: 15px; height: 15px; color: var(--accent); opacity: 0; transform: scale(.5); transition: opacity .3s, transform .3s; }
+  .dg-mount .chk svg { width: 100%; height: 100%; display: block; }
+  .dg-mount.filled { border-style: solid; border-color: var(--accent); background: var(--accent-soft); }
+  .dg-mount.filled .ico { color: var(--accent); }
+  .dg-mount.filled .lbl { color: var(--ink); }
+  .dg-mount.filled .lbl small { color: var(--accent); }
+  .dg-mount.filled .lbl small.ph { display: none; }
+  .dg-mount.filled .lbl small.done { display: block; }
+  .dg-mount .lbl small.done { display: none; }
+  .dg-mount.filled .chk { opacity: 1; transform: scale(1); }
+  .dg-mount.recv { animation: dg-recv .6s ease; }
+  @keyframes dg-recv { 0%{ transform: scale(1);} 34%{ transform: scale(1.045);} 100%{transform:scale(1);} }
+
+  /* the flying teleport packet */
+  .fly {
+    position: absolute; z-index: 6; width: 13px; height: 13px; margin: -6.5px 0 0 -6.5px;
+    border-radius: 3px; background: var(--accent); box-shadow: 0 0 0 4px rgba(18,138,79,.16), 0 0 14px rgba(18,138,79,.5);
+    opacity: 0; pointer-events: none;
+    transition: transform .72s cubic-bezier(.5,.02,.3,1), opacity .72s ease;
+  }
+
+  /* clickable arrow */
+  .dg-arrow { cursor: pointer; transition: color .18s; }
+  .dg-arrow:hover { color: #0e6f3f; }
+  .dg-arrow:hover .dg-arrow-lbl { opacity: 1; }
+  #dg-status b { color: var(--ink); font-weight: 500; }
+
+  /* discoverable toolbar row */
+  .dg-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 20px; }
+  .dg-toolbar-lbl { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); margin-right: 2px; }
+  .dg-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 12.5px; font-weight: 500; color: var(--ink-2);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 7px;
+    padding: 8px 13px; cursor: pointer; -webkit-tap-highlight-color: transparent;
+    white-space: nowrap;
+    box-shadow: 0 1px 2px rgba(16,24,40,.05);
+    transition: border-color .16s, color .16s, background .16s, box-shadow .16s;
+  }
+  .dg-btn .d { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; display: grid; place-items: center; transition: background .16s; }
+  .dg-btn .d.x, .dg-btn.neg .d.x { width: auto; height: auto; background: transparent !important; color: #c1542b; font-size: 12px; font-weight: 700; line-height: 1; }
+  .dg-btn .go { color: var(--accent); opacity: .55; transition: opacity .16s, transform .16s; }
+  .dg-btn:hover { border-color: var(--accent); color: var(--ink); background: var(--accent-soft); box-shadow: 0 1px 2px rgba(16,24,40,.08); }
+  .dg-btn:hover .go { opacity: 1; transform: translateX(2px); }
+  .dg-btn:active { box-shadow: inset 0 1px 2px rgba(16,24,40,.1); }
+  .dg-btn.neg .d { background: #c1542b; }
+  .dg-btn.neg .go { color: #c1542b; font-size: 8px; }
+  .dg-btn.neg:hover { border-color: #c1542b; background: rgba(193,84,43,.06); color: #c1542b; }
+  .dg-btn.struck { border-color: #c1542b; color: #c1542b; background: rgba(193,84,43,.06); }
+  .dg-btn.struck .go { color: #c1542b; }
+  .dg-btn.done { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
+  .dg-btn.flash { animation: dg-btnflash .5s ease; }
+  @keyframes dg-btnflash { 0%{ box-shadow: 0 0 0 0 rgba(18,138,79,0);} 32%{ box-shadow: 0 0 0 4px rgba(18,138,79,.2);} 100%{ box-shadow: 0 1px 2px rgba(16,24,40,.05);} }
+
+  .dg-card.stay.pinned { border-color: #c1542b; background: rgba(193,84,43,.05); }
+  .dg-card.stay.pinned .ico { color: #c1542b; }
+  .dg-card.stay.pinned .lbl { color: #c1542b; }
+  .dg-card.stay.pinned .lbl small { color: #c1542b; }
+  .dg-card.stay.pinned .go.lock-go { color: #c1542b; }
+
+  /* git push sequence states */
+  .dg-card.stay { transition: border-color .25s, background .25s, color .25s; }
+  .dg-card.stay.pushing { border-color: #b07d12; background: rgba(176,125,18,.07); }
+  .dg-card.stay.pushing .ico, .dg-card.stay.pushing .lbl, .dg-card.stay.pushing .lbl small { color: #b07d12; }
+  .dg-card.stay.pushing .lbl small::after { content: ''; display: inline; animation: dg-dots 1.1s steps(1) infinite; }
+  @keyframes dg-dots { 0%{ content: ''; } 25%{ content: '.'; } 50%{ content: '..'; } 75%{ content: '...'; } 100%{ content: ''; } }
+  .dg-card.stay.pushing .go.lock-go { color: #b07d12; }
+  .dg-card.stay.pushed { border-color: var(--accent); background: var(--accent-soft); }
+  .dg-card.stay.pushed .ico, .dg-card.stay.pushed .lbl, .dg-card.stay.pushed .lbl small { color: var(--accent); }
+  .dg-card.stay.pushed .go.lock-go { color: var(--accent); }
+
+  /* changeset packet flying back to host */
+  .fly.fly-diff { border-radius: 2px; background: #b07d12; box-shadow: 0 0 0 4px rgba(176,125,18,.16), 0 0 14px rgba(176,125,18,.5); }
+
+  .dg-card.info { transition: border-color .25s, background .25s, box-shadow .25s; }
+  .dg-card.info.flash { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 2px rgba(18,138,79,.14); }
+  .dg-card#c-services.flash { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 2px rgba(18,138,79,.14); transition: border-color .25s, background .25s, box-shadow .25s; }
+
+  /* http-tunnel connector to services */
+  .dg-conn { position: absolute; inset: 0; pointer-events: none; z-index: 4; overflow: visible; transition: opacity .4s; }
+  .dg-conn.out { opacity: 0; }
+  .dg-conn-path { fill: none; stroke: var(--accent); stroke-width: 1.8; stroke-dasharray: 5 5; animation: dg-march2 .7s linear infinite; }
+  @keyframes dg-march2 { to { stroke-dashoffset: -20; } }
+  .dg-conn-arrow { fill: var(--accent); }
+
+  /* VM box — stacked layers imply many parallel boxes */
+  .dg-vm-wrap { flex: 1 1 auto; position: relative; }
+  .dg-vm-wrap .dg-vm { position: relative; z-index: 1; height: 100%; }
+  .dg-vm-stack {
+    position: absolute; inset: 0; border-radius: 11px;
+    border: 1px solid var(--accent); background: var(--panel); pointer-events: none;
+  }
+  .dg-vm-stack.s1 { transform: translate(11px, 11px); opacity: .58; z-index: 0; }
+  .dg-vm-stack.s2 { transform: translate(22px, 22px); opacity: .32; z-index: 0; }
+  @media (max-width: 520px){
+    .dg-vm-stack.s1 { transform: translate(7px, 7px); }
+    .dg-vm-stack.s2 { transform: translate(14px, 14px); }
+  }
+
+  @media (max-width: 480px){ .dg-toolbar-lbl { width: 100%; margin-bottom: 2px; } }
+
+  @media (prefers-reduced-motion: reduce) {
+    .fly { transition: opacity .3s; }
+    .dg-card.stay.blocked, .dg-mount.recv { animation: none !important; }
+  }
+
+  /* ── SECTIONS ── */
+  .sec { padding-top: 52px; padding-bottom: 52px; }
+  .sec-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 30px; }
+  .sec-no { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+  .sec-head h2 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
+  .sec-head .hint { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-left: auto; }
+
+  /* feature list */
+  .flist { display: flex; flex-direction: column; }
+  .fitem { display: grid; grid-template-columns: 150px 1fr; gap: 24px; padding: 18px 0; border-top: 1px solid var(--line-2); }
+  .fitem:first-child { border-top: none; }
+  .fitem .name { font-family: var(--mono); font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 9px; }
+  .fitem .name .sq { color: var(--accent); }
+  .fitem p { color: var(--ink-2); font-size: 14.5px; line-height: 1.55; }
+  .fitem p b { font-weight: 500; }
+  @media (max-width: 560px){ .fitem { grid-template-columns: 1fr; gap: 6px; } }
+
+  /* command table */
+  .ctable { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel); }
+  .cgroup-h { font-family: var(--mono); font-size: 11px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--faint); padding: 12px 18px; background: var(--paper); border-bottom: 1px solid var(--line-2); border-top: 1px solid var(--line); }
+  .ctable .cgroup-h:first-child { border-top: none; }
+  .crow { display: grid; grid-template-columns: 190px 1fr; gap: 18px; padding: 11px 18px; border-top: 1px solid var(--line-2); align-items: baseline; }
+  .crow:first-of-type { border-top: none; }
+  .crow code { font-family: var(--mono); font-size: 13px; color: var(--accent); white-space: nowrap; }
+  .crow span { color: var(--ink-2); font-size: 13.5px; line-height: 1.45; }
+  @media (max-width: 560px){ .crow { grid-template-columns: 1fr; gap: 3px; } }
+
+  /* providers compact */
+  .ptable { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 12px 18px; border-bottom: 1px solid var(--line-2); }
+  thead th { background: var(--panel); font-family: var(--mono); font-weight: 500; font-size: 12.5px; }
+  thead th.col { color: var(--accent); }
+  tbody td:first-child { font-family: var(--mono); font-size: 12.5px; color: var(--ink); }
+  tbody td { color: var(--muted); }
+  tbody tr:last-child td { border-bottom: none; }
+  .yes { color: var(--accent); font-weight: 600; }
+  .warn { color: #b07d12; }
+
+  /* install */
+  .inst { display: grid; grid-template-columns: 1fr 290px; gap: 28px; align-items: start; }
+  @media (max-width: 640px){ .inst { grid-template-columns: 1fr; } }
+  .inst .note { color: var(--ink-2); font-size: 14px; line-height: 1.6; margin-top: 18px; }
+  .req { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 18px 20px; }
+  .req h4 { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); margin-bottom: 14px; }
+  .req ul { list-style: none; display: flex; flex-direction: column; gap: 10px; }
+  .req li { display: flex; gap: 10px; font-size: 13.5px; color: var(--ink-2); }
+  .req li .c { color: var(--accent); font-family: var(--mono); }
+  .req li b { font-weight: 500; color: var(--ink); }
+  .req li .mono { font-size: 12.5px; }
+
+  /* footer */
+  footer { border-top: 1px solid var(--line); padding: 26px 0; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 14px; font-family: var(--mono); font-size: 12.5px; color: var(--faint); }
+  footer .links { display: flex; gap: 20px; }
+  footer .links a { color: var(--muted); }
+  footer .links a:hover { color: var(--accent); }
+  footer b { color: var(--ink); font-weight: 500; }
+</style>
+</head>
+<body>
+<div class="frame">
+
+  <!-- TOP BAR -->
+  <header class="top pad">
+    <a href="#top" class="brand"><span class="mark">▣</span> agentbox</a>
+    <nav>
+      <a href="#how">how it works</a>
+      <a href="#cli">cli</a>
+      <a href="#providers">providers</a>
+      <a href="#install">install</a>
+    </nav>
+    <a class="src" href="https://github.com/madarco/agentbox" target="_blank" rel="noopener">github ↗</a>
+  </header>
+
+  <!-- META STRIP -->
+  <div class="meta pad">
+    <span><b>npm</b> @madarco/agentbox</span>
+    <span><b>license</b> MIT</span>
+    <span><b>envs</b> Local Docker · Vercel · Hetzner · Daytona</span>
+    <span><b>os</b> macOS · Linux</span>
+  </div>
+
+  <!-- HERO -->
+  <section class="hero pad" id="top">
+    <div class="kicker">// self-hosted agent sandboxes</div>
+    <h1>One command teleport<br /><span class="dim">for agents, in parallel.</span></h1>
+    <p class="lede">Move your project into a dedicated VM — local or in the cloud — and launch <b>Claude Code</b>, <b>Codex</b>, or <b>Open Code</b> inside it. Each box is isolated, checkpointed, and runs on hardware you control.</p>
+    <div class="runline">
+      <div class="body">
+        <span class="p">$</span>
+        <span class="k"><span class="pkg">npx </span>@madarco/agentbox claude</span>
+      </div>
+      <button data-copy="npx @madarco/agentbox claude" aria-label="Copy">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M3.5 10.5h-1a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v1"/></svg>
+      </button>
+    </div>
+    <a class="runlink" href="#install">full install instructions <span>→</span></a>
+  </section>
+
+  <!-- DIAGRAM -->
+  <section class="diagram pad rule">
+
+    <div class="dg-toolbar" id="dg-toolbar">
+      <span class="dg-toolbar-lbl">actions</span>
+      <button class="dg-btn" data-act="workspace"><span class="d"></span>workspace<span class="go">→</span></button>
+      <button class="dg-btn" data-act="claude"><span class="d"></span>.claude<span class="go">→</span></button>
+      <button class="dg-btn neg" data-act="git"><span class="d"></span>git<span class="go">●</span></button>
+      <button class="dg-btn" data-act="http"><span class="d"></span>http tunnels<span class="go">⇌</span></button>
+    </div>
+
+    <div class="dg" id="dg">
+
+      <!-- HOST -->
+      <div class="dg-host dg-panel">
+        <div class="dg-h">
+          <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="13" rx="2"/><path d="M8 21h8M12 16v5"/></svg></span>
+          <span class="t">Host</span>
+          <span class="badge host-badge">your machine</span>
+        </div>
+        <div class="dg-sub">
+
+          <button class="dg-card xfer" data-target="t-workspace" data-msg="// <b>workspace</b> synced into <span class='accent'>/workspace</span> — your edits stay in sync both ways">
+            <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg></span>
+            <span class="lbl">workspace<small>your project files</small></span>
+            <span class="go">→</span>
+          </button>
+
+          <button class="dg-card xfer" data-target="t-claude" data-msg="// <b>.claude</b> credentials &amp; sessions injected into <span class='accent'>~/.claude</span> — the agent resumes where you left off">
+            <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="m11 12 7-7 3 3M16 7l2 2"/></svg></span>
+            <span class="lbl">.claude<small>credentials &amp; sessions</small></span>
+            <span class="go">→</span>
+          </button>
+
+          <button class="dg-card stay" data-msg="// <b class='neg'>git credentials never leave the host</b> — a push to a remote always asks for explicit permission">
+            <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
+            <span class="lbl">git credentials<small>never leave the host</small></span>
+            <span class="go lock-go">●</span>
+          </button>
+
+          <div class="dg-card info" id="c-http">
+            <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg></span>
+            <span class="lbl">HTTP tunnels<small>.localhost · portless</small></span>
+            <span class="go">⇌</span>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ARROW -->
+      <div class="dg-arrow" id="dg-arrow" role="button" tabindex="0" aria-label="Teleport everything into the box">
+        <svg viewBox="0 0 60 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <line class="dg-wire" x1="2" y1="12" x2="45" y2="12" stroke-dasharray="4 5"/>
+          <path d="M43 7l8 5-8 5"/>
+          <circle class="dg-packet" cx="2" cy="12" r="2.7" fill="currentColor" stroke="none"/>
+        </svg>
+        <span class="dg-arrow-lbl">teleport ▸</span>
+      </div>
+
+      <!-- VM BOX -->
+      <div class="dg-vm-wrap">
+      <span class="dg-vm-stack s2"></span>
+      <span class="dg-vm-stack s1"></span>
+      <div class="dg-vm dg-panel">
+        <div class="dg-h">
+          <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5V8Z"/><path d="m3 8 9 5 9-5M12 13v8"/></svg></span>
+          <span class="t">VM Box</span>
+          <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 5v6c0 5 3.5 8 8 11 4.5-3 8-6 8-11V5l-8-3Z"/></svg> isolated</span>
+        </div>
+
+        <!-- TELEPORTED-IN MOUNTS -->
+        <div class="dg-mounts">
+          <div class="dg-mount" id="t-workspace">
+            <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg></span>
+            <span class="lbl">/workspace<small class="ph">awaiting sync…</small><small class="done">synced · two-way</small></span>
+            <span class="chk"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.5 3.5L13 5"/></svg></span>
+          </div>
+          <div class="dg-mount" id="t-claude">
+            <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="m11 12 7-7 3 3M16 7l2 2"/></svg></span>
+            <span class="lbl">~/.claude<small class="ph">awaiting inject…</small><small class="done">injected · sessions</small></span>
+            <span class="chk"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.5 3.5L13 5"/></svg></span>
+          </div>
+        </div>
+
+        <div class="dg-grid3">
+          <div class="dg-tile">
+            <span class="dg-run" style="animation-delay:0s"></span>
+            <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m9 8-4 4 4 4M15 8l4 4-4 4"/></svg></span>
+            <div class="t">Code</div>
+            <small>VS Code / Cursor</small>
+          </div>
+          <div class="dg-tile">
+            <span class="dg-run" style="animation-delay:.6s"></span>
+            <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><path d="M12 9h9M7.5 14.5 3.5 20M16.5 14.5 20.5 20"/></svg></span>
+            <div class="t">Browser</div>
+            <small>Chromium</small>
+          </div>
+          <div class="dg-tile">
+            <span class="dg-run" style="animation-delay:1.2s"></span>
+            <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span>
+            <div class="t">webVNC</div>
+            <small>live screen</small>
+          </div>
+        </div>
+
+        <div class="dg-did">
+          <div class="did-t">Docker-in-Docker</div>
+          <div class="did-row">
+            <div class="dg-card">
+              <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></span>
+              <span class="lbl">DB</span>
+            </div>
+            <div class="dg-card" id="c-services">
+              <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg></span>
+              <span class="lbl">Services</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      </div>
+
+    </div>
+    <div class="lbl" id="dg-status">// click <b>workspace</b> or <b>.claude</b> on the host to teleport it into the box — or hit the <span class="accent">teleport ▸</span> arrow to send everything</div>
+  </section>
+
+  <!-- HOW IT WORKS -->
+  <section class="sec pad rule" id="how">
+    <div class="sec-head"><span class="sec-no">01</span><h2>How it works</h2></div>
+    <div class="flist">
+      <div class="fitem">
+        <div class="name"><span class="sq">▸</span> Teleport</div>
+        <p>Move your project to a dedicated VM — <b>local or in the cloud</b> — with a single command.</p>
+      </div>
+      <div class="fitem">
+        <div class="name"><span class="sq">▸</span> Automatic</div>
+        <p>Brings all your skills, plugins, and settings for <b>Claude Code</b>, <b>Codex</b>, and <b>Open Code</b>.</p>
+      </div>
+      <div class="fitem">
+        <div class="name"><span class="sq">▸</span> Full computer</div>
+        <p>Dedicated browser, screen sharing, persistent shells and a warmed-up <b>VS Code / Cursor</b> IDE in every box.</p>
+      </div>
+      <div class="fitem">
+        <div class="name"><span class="sq">▸</span> Checkpoints</div>
+        <p>Sub-1s startup from a previous checkpoint. <b>Auto-pause</b> to save cost and resources when idle.</p>
+      </div>
+      <div class="fitem">
+        <div class="name"><span class="sq">▸</span> Safe</div>
+        <p>Git credentials stay on your local machine. Pushing to a remote always goes through an explicit <b>permission request</b>.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- CLI -->
+  <section class="sec pad rule" id="cli">
+    <div class="sec-head"><span class="sec-no">02</span><h2>The CLI</h2></div>
+    <div class="ctable">
+      <div class="cgroup-h">create &amp; run</div>
+      <div class="crow"><code>agentbox create</code><span>Create and start a new agent box.</span></div>
+      <div class="crow"><code>agentbox claude</code><span>Create a sandboxed box and launch Claude Code in a detachable tmux session.</span></div>
+      <div class="crow"><code>agentbox &lt;provider&gt; claude</code><span>Launch sandboxed boxes on <b>Vercel</b>, <b>Hetzner</b>, <b>Daytona</b> or local <b>Docker</b>.</span></div>
+      <div class="crow"><code>agentbox &lt;provider&gt; codex</code><span>Same, for <b>Codex</b> and <b>Open Code</b> — any agent, any provider.</span></div>
+      <div class="crow"><code>agentbox claude attach 2</code><span>Reattach to a running Claude session on box <span class="mono">2</span>.</span></div>
+
+      <div class="cgroup-h">access</div>
+      <div class="crow"><code>agentbox url</code><span>Open a box's web app URL in the browser.</span></div>
+      <div class="crow"><code>agentbox screen</code><span>Open a box's VNC (noVNC) viewer.</span></div>
+      <div class="crow"><code>agentbox code</code><span>Open a box in VS Code or Cursor via Dev Containers.</span></div>
+      <div class="crow"><code>agentbox shell</code><span>Open an interactive bash shell in a box.</span></div>
+      <div class="crow"><code>agentbox dashboard</code><span>Box list plus the selected box's live agent session.</span></div>
+
+      <div class="cgroup-h">lifecycle</div>
+      <div class="crow"><code>start / stop</code><span>Start or stop a box, preserving its upper volume.</span></div>
+      <div class="crow"><code>pause / unpause</code><span>Freeze or resume a box — sub-second.</span></div>
+      <div class="crow"><code>destroy</code><span>Destroy a box and discard its upper volume.</span></div>
+      <div class="crow"><code>checkpoint</code><span>List and manage warm box-state checkpoints.</span></div>
+    </div>
+  </section>
+
+  <!-- PROVIDERS -->
+  <section class="sec pad rule" id="providers">
+    <div class="sec-head"><span class="sec-no">03</span><h2>Providers</h2><span class="hint">local or remote</span></div>
+    <div class="ptable">
+      <table>
+        <thead>
+          <tr><th>capability</th><th class="col">local docker</th><th class="col">hetzner</th><th class="col">daytona</th><th class="col">vercel</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>support</td><td><span class="yes">full</span></td><td><span class="yes">full</span></td><td><span class="warn">partial</span></td><td><span class="yes">full</span></td></tr>
+          <tr><td>base image</td><td>Dockerfile</td><td>setup script (Ubuntu)</td><td>Dockerfile</td><td>setup script</td></tr>
+          <tr><td>live snapshots</td><td><span class="yes">yes</span></td><td><span class="yes">yes</span></td><td>experimental</td><td><span class="yes">yes</span></td></tr>
+          <tr><td>private preview urls</td><td><span class="yes">portless · orbstack</span></td><td><span class="yes">portless</span></td><td><span class="yes">native</span></td><td><span class="yes">native</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- INSTALL -->
+  <section class="sec pad rule" id="install">
+    <div class="sec-head"><span class="sec-no">04</span><h2>Install</h2></div>
+    <div class="inst">
+      <div>
+        <div class="runline" style="max-width:none">
+          <div class="body">
+            <span class="p">$</span>
+            <span class="k"><span class="pkg">npm -g i </span>@madarco/agentbox<span class="pkg"> &amp;&amp; </span>agentbox install</span>
+          </div>
+          <button data-copy="npm -g i @madarco/agentbox && agentbox install" aria-label="Copy">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M3.5 10.5h-1a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v1"/></svg>
+          </button>
+        </div>
+        <p class="note">The first <span class="mono accent">agentbox create</span> builds the <span class="mono">agentbox/box:dev</span> image (~1 GB, one-time). Uses <span class="mono">portless</span> to give box web apps the same URL inside the box and on the host.</p>
+      </div>
+      <div class="req">
+        <h4>requirements</h4>
+        <ul>
+          <li><span class="c">›</span> <span><b>macOS or Linux</b> — arm64 or Intel</span></li>
+          <li><span class="c">›</span> <span><b>Docker</b> — Desktop or OrbStack</span></li>
+          <li><span class="c">›</span> <span><b>Node</b> <span class="mono">&gt;=20.10</span></span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer class="pad">
+    <div>Built by <b>Marco D'Alia</b> · MIT</div>
+    <div class="links">
+      <a href="https://github.com/madarco/agentbox" target="_blank" rel="noopener">github</a>
+      <a href="https://www.npmjs.com/package/@madarco/agentbox" target="_blank" rel="noopener">npm</a>
+      <a href="https://www.madarco.net" target="_blank" rel="noopener">madarco.net</a>
+    </div>
+  </footer>
+
+</div>
+
+<script>
+  document.querySelectorAll('[data-copy]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      navigator.clipboard.writeText(btn.dataset.copy).then(function () {
+        var prev = btn.innerHTML;
+        btn.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px"><path d="M3 8.5l3.5 3.5L13 5"/></svg>';
+        btn.style.color = 'var(--accent)';
+        setTimeout(function () { btn.innerHTML = prev; btn.style.color = ''; }, 1300);
+      });
+    });
+  });
+
+  // animate the architecture diagram into view
+  var dg = document.getElementById('dg');
+  if (dg) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) { dg.classList.add('in'); io.disconnect(); }
+      });
+    }, { threshold: 0.25 });
+    io.observe(dg);
+  }
+
+  // ── interactive teleport ──
+  (function () {
+    if (!dg) return;
+    var statusEl = document.getElementById('dg-status');
+    var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    function setStatus(html) { if (statusEl) statusEl.innerHTML = html; }
+    var initialStatus = statusEl ? statusEl.innerHTML : '';
+
+    var toolbar = document.getElementById('dg-toolbar');
+    function tbtn(act) { return toolbar ? toolbar.querySelector('.dg-btn[data-act="' + act + '"]') : null; }
+    function flash(el) { if (!el) return; el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); setTimeout(function () { el.classList.remove('flash'); }, 1200); }
+
+    function receive(mount) {
+      mount.classList.add('filled');
+      mount.classList.remove('recv');
+      void mount.offsetWidth;
+      mount.classList.add('recv');
+    }
+
+    function fly(src, dst, done, opts) {
+      opts = opts || {};
+      var dr = dg.getBoundingClientRect();
+      var s = src.getBoundingClientRect();
+      var d = dst.getBoundingClientRect();
+      var x0 = opts.back ? (s.left - dr.left + 12) : (s.right - dr.left - 12);
+      var y0 = s.top - dr.top + s.height / 2;
+      var x1 = opts.back ? (d.right - dr.left - 12) : (d.left - dr.left + 16);
+      var y1 = d.top - dr.top + d.height / 2;
+      var p = document.createElement('span');
+      p.className = 'fly' + (opts.cls ? ' ' + opts.cls : '');
+      p.style.left = x0 + 'px';
+      p.style.top = y0 + 'px';
+      dg.appendChild(p);
+      if (reduce) {
+        p.style.left = x1 + 'px'; p.style.top = y1 + 'px'; p.style.opacity = '1';
+        setTimeout(function () { p.style.opacity = '0'; }, 220);
+        setTimeout(function () { p.remove(); if (done) done(); }, 420);
+        return;
+      }
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          p.style.opacity = '1';
+          p.style.transform = 'translate(' + (x1 - x0) + 'px,' + (y1 - y0) + 'px) scale(.62)';
+        });
+      });
+      setTimeout(function () { p.style.opacity = '0'; }, 560);
+      setTimeout(function () { p.remove(); if (done) done(); }, 740);
+    }
+
+    function sendCard(card) {
+      if (!card) return;
+      var dst = document.getElementById(card.dataset.target);
+      if (!dst) return;
+      card.classList.add('sending');
+      setTimeout(function () { card.classList.remove('sending'); }, 720);
+      fly(card, dst, function () {
+        receive(dst);
+        setStatus(card.dataset.msg);
+        var b = tbtn(dst.id.replace('t-', ''));
+        if (b) b.classList.add('done');
+      });
+    }
+
+    dg.querySelectorAll('.dg-card.xfer').forEach(function (card) {
+      card.addEventListener('click', function () { sendCard(card); });
+    });
+
+    var stay = dg.querySelector('.dg-card.stay');
+    var stayLbl = stay ? stay.querySelector('.lbl small') : null;
+    var stayLblText = stayLbl ? stayLbl.textContent : '';
+    var gitBusy = false;
+
+    function gitToolBtn() { return tbtn('git'); }
+
+    function runGit() {
+      if (!stay || gitBusy) return;
+      gitBusy = true;
+      var btn = gitToolBtn();
+
+      // 1 — red rejection: can't push from inside the box
+      flash(btn);
+      stay.classList.add('pinned');
+      stay.classList.remove('blocked'); void stay.offsetWidth; stay.classList.add('blocked');
+      if (btn) { var dot = btn.querySelector('.d'); if (dot) { dot.classList.add('x'); dot.textContent = '\u2715'; } btn.classList.add('struck'); }
+      setStatus(stay.dataset.msg);
+
+      // 2 — copy the workspace changeset from the box back to the host
+      setTimeout(function () {
+        setStatus('// copying <b>workspace</b> changeset from the box back to the host\u2026');
+        var src = document.getElementById('t-workspace');
+        fly(src, stay, function () {
+          // 3 — host pushes with its own git credentials
+          stay.classList.remove('pinned');
+          stay.classList.add('pushing');
+          if (stayLbl) stayLbl.textContent = 'pushing to github';
+          setStatus('// <b>host</b> pushing to <span class="accent">github</span> with your local git credentials\u2026');
+
+          setTimeout(function () {
+            // 4 — done
+            stay.classList.remove('pushing');
+            stay.classList.add('pushed');
+            if (stayLbl) stayLbl.textContent = 'pushed \u2713';
+            setStatus('// <b class="accent">push complete</b> \u2014 files copied from the box, pushed by the host');
+
+            // 5 — reset to the initial state
+            setTimeout(function () {
+              stay.classList.remove('pinned', 'pushed', 'blocked');
+              if (stayLbl) stayLbl.textContent = stayLblText;
+              if (btn) { var d2 = btn.querySelector('.d'); if (d2) { d2.classList.remove('x'); d2.textContent = ''; } btn.classList.remove('struck'); }
+              setStatus(initialStatus);
+              gitBusy = false;
+            }, 1500);
+          }, 1600);
+        }, { back: true, cls: 'fly-diff' });
+      }, 520);
+    }
+
+    if (stay) {
+      stay.addEventListener('click', runGit);
+    }
+
+    var arrow = document.getElementById('dg-arrow');
+    if (arrow) {
+      var fireAll = function () {
+        var cards = dg.querySelectorAll('.dg-card.xfer');
+        setStatus('// teleporting <b>workspace</b> + <b>.claude</b> into the box…');
+        cards.forEach(function (c, i) { setTimeout(function () { sendCard(c); }, i * 320); });
+      };
+      arrow.addEventListener('click', fireAll);
+      arrow.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fireAll(); }
+      });
+    }
+
+    // discoverable toolbar row mirrors the in-diagram actions
+    function showConn(a, c) {
+      var dr = dg.getBoundingClientRect();
+      var ra = a.getBoundingClientRect(), rc = c.getBoundingClientRect();
+      var x0 = ra.right - dr.left, y0 = ra.top - dr.top + ra.height / 2;
+      var x1 = rc.left - dr.left, y1 = rc.top - dr.top + rc.height / 2;
+      var dx = Math.max(46, (x1 - x0) * 0.4);
+      var d = 'M ' + x0 + ' ' + y0 + ' C ' + (x0 + dx) + ' ' + y0 + ', ' + (x1 - dx) + ' ' + y1 + ', ' + x1 + ' ' + y1;
+      var uid = 'k' + Date.now();
+      var ns = 'http://www.w3.org/2000/svg';
+      var svg = document.createElementNS(ns, 'svg');
+      svg.setAttribute('class', 'dg-conn');
+      svg.setAttribute('width', dr.width);
+      svg.setAttribute('height', dr.height);
+      svg.innerHTML =
+        '<defs>' +
+        '<marker id="' + uid + 'e" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto"><path d="M0 0 L6.5 3 L0 6 Z" class="dg-conn-arrow"/></marker>' +
+        '<marker id="' + uid + 's" markerWidth="9" markerHeight="9" refX="0" refY="3" orient="auto"><path d="M6.5 0 L0 3 L6.5 6 Z" class="dg-conn-arrow"/></marker>' +
+        '</defs>' +
+        '<path d="' + d + '" class="dg-conn-path" marker-start="url(#' + uid + 's)" marker-end="url(#' + uid + 'e)"/>';
+      dg.appendChild(svg);
+      setTimeout(function () { svg.classList.add('out'); }, 3400);
+      setTimeout(function () { svg.remove(); }, 3900);
+    }
+    function runHttp() {
+      var httpCard = document.getElementById('c-http');
+      var svc = document.getElementById('c-services');
+      flash(httpCard);
+      flash(svc);
+      flash(tbtn('http'));
+      if (httpCard && svc) showConn(httpCard, svc);
+      setStatus('// <b>HTTP tunnels</b> <span class="accent">⇌</span> <b>Services</b> — <span class="accent">*.localhost</span> reaches services in the box’s Docker, same URL on host &amp; box');
+    }
+    var httpCardEl = document.getElementById('c-http');
+    if (httpCardEl) httpCardEl.addEventListener('click', runHttp);
+
+    if (toolbar) {
+      toolbar.querySelectorAll('.dg-btn').forEach(function (b) {
+        b.addEventListener('click', function () {
+          var act = b.dataset.act;
+          if (act === 'workspace') sendCard(dg.querySelector('.dg-card.xfer[data-target="t-workspace"]'));
+          else if (act === 'claude') sendCard(dg.querySelector('.dg-card.xfer[data-target="t-claude"]'));
+          else if (act === 'git') { runGit(); }
+          else if (act === 'http') { runHttp(); }
+        });
+      });
+    }
+  })();
+</script>
+</body>
+</html>
