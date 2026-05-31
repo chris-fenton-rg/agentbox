@@ -36,6 +36,15 @@ already works, what's been fixed, and the remaining macOS-only host assumptions.
   - Verified live on the Ubuntu VM: `agentbox url <box>` launches via `xdg-open`
     (not `open`) — see the dev-VM E2E below.
 
+- **Terminal attach on Linux: tmux only (by decision).** `detectHostTerminal()`
+  recognizes tmux via `$TMUX` on every host, so attach-in-new-window/pane works on
+  Linux when you're inside tmux. The iTerm2 path (`spawnInITerm2()` →
+  `osascript`, `apps/cli/src/terminal/host.ts`) stays macOS-only. We deliberately
+  do **not** recognize native Linux emulators (gnome-terminal / alacritty /
+  konsole) for now: outside tmux the caller falls back to attaching in the current
+  terminal (and `agentbox fork` passes `--no-attach`). Revisit only if there's
+  demand for native-emulator spawning.
+
 ## How to test on Linux
 
 `scripts/linux-dev-vm.sh` manages a **persistent** clean Ubuntu VM on Hetzner
@@ -84,11 +93,6 @@ agentbox doctor                                   # inspect the report
 These were found while scoping the doctor change. None are needed for `doctor`
 itself; they block the wider "drive everything from Linux" goal.
 
-- **Host terminal spawning is iTerm2/AppleScript-only.** `detectHostTerminal()`
-  only recognizes tmux + iTerm2; `spawnInITerm2()` shells out to `osascript`
-  (`apps/cli/src/terminal/host.ts`, see the "macOS-only by design" comment near the
-  top and `spawnInITerm2` ~L112-171). Linux needs tmux (already works) and/or a
-  native terminal-emulator launch path (gnome-terminal/konsole/alacritty/`$TERMINAL`).
 - **OrbStack-only fast paths assume macOS** and should be skipped on Linux (OrbStack
   is macOS-only; on Linux the docker socket / volume paths differ):
   - `packages/sandbox-docker/src/host-export.ts` (`orbstackVolumePath`, ~L138)
