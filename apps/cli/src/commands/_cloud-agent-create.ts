@@ -16,10 +16,10 @@
  * only runs when the caller pre-resolved a non-docker provider.
  */
 
-import { log, outro } from '@clack/prompts';
 import type { BoxRecord, CreateBoxRequest, Provider } from '@agentbox/core';
 import type { AttachOpenIn } from '@agentbox/config';
 import { makeProgressReporter } from '../lib/progress.js';
+import { printLaunchRecap } from '../lib/launch-recap.js';
 import { cloudAgentAttach } from './_cloud-attach.js';
 
 export interface CloudAgentCreateArgs {
@@ -71,12 +71,7 @@ export async function cloudAgentCreate(args: CloudAgentCreateArgs): Promise<void
       typeof result.record.projectIndex === 'number'
         ? `  ·  n ${String(result.record.projectIndex)}`
         : '';
-    s.stop(`box ${result.record.name} ready${nSuffix}`);
-    log.info(`id:        ${result.record.id}`);
-    log.info(`provider:  ${result.record.provider}`);
-    if (result.record.cloud?.sandboxId) {
-      log.info(`sandboxId: ${result.record.cloud.sandboxId}`);
-    }
+    s.stop(`box ready${nSuffix}`);
     let extraArgs = args.extraArgs;
     if (args.beforeStart) {
       const hook = await args.beforeStart(result.record);
@@ -84,13 +79,22 @@ export async function cloudAgentCreate(args: CloudAgentCreateArgs): Promise<void
         extraArgs = [...hook.agentArgsPrefix, ...(extraArgs ?? [])];
       }
     }
+    await printLaunchRecap({
+      record: result.record,
+      mode: args.mode,
+      reattach:
+        typeof result.record.projectIndex === 'number'
+          ? String(result.record.projectIndex)
+          : result.record.name,
+      workspacePath: args.request.workspacePath,
+      fromBranch: args.request.fromBranch,
+      useBranch: args.request.useBranch,
+      checkpointRef: args.request.checkpointRef,
+      attaching: args.attach !== false,
+    });
     if (args.attach === false) {
-      outro(
-        `session not started — attach with: agentbox ${args.mode} attach ${result.record.name}`,
-      );
       return;
     }
-    outro(`attaching ${args.mode} — Control+a d to detach, leaves the agent running`);
     await cloudAgentAttach({
       box: result.record,
       binary: args.binary,

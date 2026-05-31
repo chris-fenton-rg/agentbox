@@ -15,4 +15,8 @@ coverage/
 .vscode/
 .idea/
 
+# Claude Code session-specific runtime state (lock files, etc.) — keep
+# .claude/commands and other intentional config tracked.
+.claude/scheduled_tasks.lock
+
 TODO.md

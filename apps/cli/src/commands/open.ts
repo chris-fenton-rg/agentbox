@@ -4,6 +4,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { BoxRecord } from '@agentbox/core';
+import { hostOpenCommand } from '@agentbox/sandbox-core';
 import { openBoxInFinder } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
@@ -156,9 +157,10 @@ async function runCloudOpen(
   if (mount.exitCode !== 0) {
     throw new Error(`sshfs mount failed (exit ${String(mount.exitCode)}): ${mount.stderr || mount.stdout}`);
   }
-  // `open` on macOS reveals the dir in Finder. On non-macOS this is a no-op
-  // / error — degrade silently because the mount path is already printed.
-  await execa('open', [mountRoot], { reject: false });
+  // Reveal the mount in the OS file manager (Finder on macOS, the default
+  // handler via xdg-open on Linux). Best-effort — the mount path is already
+  // printed, so a missing opener degrades silently.
+  await execa(hostOpenCommand(), [mountRoot], { reject: false });
   process.stdout.write(`opened ${mountRoot}\n`);
   process.stdout.write(`unmount later with: agentbox open ${box.name} --unmount\n`);
 }

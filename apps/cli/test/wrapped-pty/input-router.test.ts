@@ -368,6 +368,35 @@ describe('input router (Ctrl+V image paste)', () => {
     await flushMicrotasks();
     expect(Buffer.concat(s.forwarded)).toEqual(Buffer.from('abcd\x16'));
   });
+
+  it('intercepts kitty-encoded Ctrl+V (ESC[118;5u): re-emits the same sequence', async () => {
+    const s = pasteSetup();
+    s.router.feed(Buffer.from('\x1b[118;5u', 'latin1'));
+    await flushMicrotasks();
+    expect(s.calls()).toBe(1);
+    expect(s.forwarded).toHaveLength(0); // nothing forwarded until the load finishes
+    s.resolveAll();
+    await flushMicrotasks();
+    expect(Buffer.concat(s.forwarded)).toEqual(Buffer.from('\x1b[118;5u', 'latin1'));
+  });
+
+  it('intercepts modifyOtherKeys Ctrl+V (ESC[27;5;118~)', async () => {
+    const s = pasteSetup();
+    s.router.feed(Buffer.from('\x1b[27;5;118~', 'latin1'));
+    await flushMicrotasks();
+    expect(s.calls()).toBe(1);
+    s.resolveAll();
+    await flushMicrotasks();
+    expect(Buffer.concat(s.forwarded)).toEqual(Buffer.from('\x1b[27;5;118~', 'latin1'));
+  });
+
+  it('does NOT intercept a non-ctrl kitty "v" (ESC[118u) — forwards verbatim', async () => {
+    const s = pasteSetup();
+    s.router.feed(Buffer.from('\x1b[118u', 'latin1'));
+    await flushMicrotasks();
+    expect(s.calls()).toBe(0);
+    expect(Buffer.concat(s.forwarded)).toEqual(Buffer.from('\x1b[118u', 'latin1'));
+  });
 });
 
 describe('input router (enhanced keyboard: kitty / modifyOtherKeys)', () => {

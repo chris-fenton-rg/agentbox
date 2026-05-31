@@ -11,7 +11,7 @@
  * "paste image from clipboard" binding reads the now-populated selection.
  *
  * All steps go through the provider-neutral `Provider` seam (`uploadPath` +
- * `exec`), so it works identically on docker / daytona / hetzner.
+ * `exec`), so it works identically on docker / daytona / hetzner / vercel.
  */
 
 import { rm } from 'node:fs/promises';

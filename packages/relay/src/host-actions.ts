@@ -19,7 +19,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CloudBackend, CloudHandle } from '@agentbox/core';
-import { findBox, readState } from '@agentbox/sandbox-core';
+import { findBox, hostOpenCommand, readState } from '@agentbox/sandbox-core';
 import {
   assertGhReady,
   checkoutGuards,
@@ -394,11 +394,11 @@ async function runBrowserOpenMirror(
       { ttlMs: TTL_MS },
     );
     if (verdict.answer === 'y' && !verdict.cancelled) {
-      // macOS `open` is the only supported launcher today (Daytona client is
-      // mac/Linux; on Linux the same call no-ops or errors — either way the
-      // box doesn't observe). Spawn detached so the relay loop isn't blocked.
+      // Open on the host's default handler (`open` on macOS, `xdg-open` on
+      // Linux). Spawn detached so the relay loop isn't blocked; the box never
+      // observes the outcome.
       const { spawn } = await import('node:child_process');
-      const child = spawn('open', [url], { stdio: 'ignore', detached: true });
+      const child = spawn(hostOpenCommand(), [url], { stdio: 'ignore', detached: true });
       child.unref();
     }
   } catch (err) {

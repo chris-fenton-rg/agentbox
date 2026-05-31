@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { sanitizeMnemonic } from '@agentbox/config';
+import { hostOpenCommand } from '@agentbox/sandbox-core';
 import type { ResolvedCarryEntry } from '@agentbox/core';
 import type { BoxStatus } from '@agentbox/ctl';
 import { execInBox } from './docker.js';
@@ -673,7 +674,7 @@ export async function openInFinder(
   }
 
   if (!opts.noOpen) {
-    const opened = await execa('open', [hostPath], { reject: false });
+    const opened = await execa(hostOpenCommand(), [hostPath], { reject: false });
     if (opened.exitCode !== 0) {
       throw new ExportError(`open ${hostPath} failed`, opened.stdout, opened.stderr);
     }

@@ -8,8 +8,11 @@ export type HostTerminal = 'tmux' | 'iterm2' | 'unknown';
  * when nested — when `TMUX` is set, the tmux CLI is the right primitive (it can
  * split the current pane / open a new window without going through AppleScript).
  *
- * macOS-only by design: the CLI itself is macOS-only (see CLAUDE.md), so we
- * don't try to recognize gnome-terminal / alacritty / Windows Terminal.
+ * tmux is recognized on every host (macOS + Linux) — its CLI is the portable
+ * primitive. The iTerm2 path is macOS-only (it drives AppleScript). On Linux we
+ * deliberately don't recognize native emulators (gnome-terminal / alacritty /
+ * konsole) yet: outside tmux the caller falls back to attaching in the current
+ * terminal. See docs/linux-host-backlog.md.
  */
 export function detectHostTerminal(env: NodeJS.ProcessEnv = process.env): HostTerminal {
   const tmux = env['TMUX'];
@@ -105,7 +108,7 @@ async function spawnInTmux(args: SpawnInNewTerminalArgs): Promise<SpawnInNewTerm
   }
   return {
     launched: true,
-    note: `Attached in new ${noteKind} — Ctrl+a d to detach the box's tmux session.`,
+    note: `Attached in new ${noteKind}.`,
   };
 }
 
@@ -166,7 +169,7 @@ async function spawnInITerm2(args: SpawnInNewTerminalArgs): Promise<SpawnInNewTe
   }
   return {
     launched: true,
-    note: `Attached in new ${noteKind} — Ctrl+a d to detach the box's tmux session.`,
+    note: `Attached in new ${noteKind}.`,
   };
 }
 

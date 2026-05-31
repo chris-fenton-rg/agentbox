@@ -56,6 +56,7 @@ import { providerForCreate } from '../provider/registry.js';
 import { prepareTeleport, TeleportError } from '../session-teleport/index.js';
 import { clampSpinnerLine } from '../spinner-line.js';
 import { makeProgressReporter } from '../lib/progress.js';
+import { printLaunchRecap } from '../lib/launch-recap.js';
 import { openCommandLog } from '../lib/log-file.js';
 import { resolveLimits } from '../limits.js';
 import { maybePromptPortless } from '../portless-prompt.js';
@@ -620,15 +621,21 @@ export const opencodeCommand = new Command('opencode')
         typeof result.record.projectIndex === 'number'
           ? `  ·  n ${String(result.record.projectIndex)}`
           : '';
-      s.stop(`box ${result.record.container} ready${nSuffix}`);
+      s.stop(`box ready${nSuffix}`);
 
+      await printLaunchRecap({
+        record: result.record,
+        mode: 'opencode',
+        reattach: reattachRef(result.record),
+        workspacePath: opts.workspace,
+        fromBranch,
+        useBranch,
+        checkpointRef,
+        attaching: opts.attach !== false,
+      });
       if (opts.attach === false) {
-        outro(
-          `session started — attach with: agentbox opencode attach ${reattachRef(result.record)}`,
-        );
         return;
       }
-      outro('attaching — Control+a d to detach, leaves opencode running');
       await attachOpencodeWrapped(
         result.record,
         sessionName,

@@ -63,6 +63,7 @@ import {
 } from '../session-teleport/index.js';
 import { clampSpinnerLine } from '../spinner-line.js';
 import { makeProgressReporter } from '../lib/progress.js';
+import { printLaunchRecap } from '../lib/launch-recap.js';
 import { maybeShowInstallHint } from '../lib/install-hint.js';
 import { openCommandLog } from '../lib/log-file.js';
 import { resolveLimits } from '../limits.js';
@@ -816,20 +817,26 @@ export const claudeCommand = new Command('claude')
         typeof result.record.projectIndex === 'number'
           ? `  ·  n ${String(result.record.projectIndex)}`
           : '';
-      s.stop(`box ${result.record.container} ready${nSuffix}`);
+      s.stop(`box ready${nSuffix}`);
       logPrune(rebuild);
       for (const f of rebuild.failed) {
         log.warn(`plugin install failed for ${f.dir}; claude may still load it. stderr:\n${f.stderr.trim()}`);
       }
       maybeShowInstallHint();
 
+      await printLaunchRecap({
+        record: result.record,
+        mode: 'claude',
+        reattach: reattachRef(result.record),
+        workspacePath: opts.workspace,
+        fromBranch,
+        useBranch,
+        checkpointRef,
+        attaching: opts.attach !== false,
+      });
       if (opts.attach === false) {
-        outro(
-          `session started — attach with: agentbox claude attach ${reattachRef(result.record)}`,
-        );
         return;
       }
-      outro('attaching — Control+a d to detach, leaves claude running');
       await attachClaudeWrapped(
         result.record,
         sessionName,
