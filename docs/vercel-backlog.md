@@ -262,8 +262,18 @@ agentbox/<box>` shows the commit, then try `agentbox-ctl git pull` and a `gh pr`
    hetzner unaffected). Verified live on a snapshot box: 6080 binds, `vnc.html`
    returns HTTP 200, web root `/usr/local/share/novnc`. The script is in the
    prepare context fingerprint, so the next `agentbox prepare` auto-rebakes.
-   (Minor follow-up: `autocutsel` isn't in the AL2023 bake, so VNC clipboard
-   sync is degraded there — the script already tolerates its absence.)
+   **Clipboard tooling resolved:** `xclip` and `autocutsel` are absent from the
+   AL2023 repos (unlike the Debian/Ubuntu apt path), which left the host->box
+   Ctrl+V image paste (`apps/cli/src/lib/paste-image.ts`) silently broken on
+   vercel and VNC clipboard sync degraded. `provision.sh` now builds both from
+   source (all deps in the AL2023 default repos), fail-loud. Requires a
+   re-`prepare` to take effect.
+   (Follow-up: building from source pulls a full toolchain into the bake and
+   adds ~minutes + snapshot size. We should instead ship pre-built `xclip` /
+   `autocutsel` binaries for AL2023 — bake them once and stage them as runtime
+   assets, the way the relay/ctl bins are staged — so the per-prepare bake just
+   drops the binaries in rather than compiling. Optionally `dnf remove` the
+   build toolchain after compiling in the meantime.)
 8. [x] **Attach is laggy.** Done — replaced the `send-keys`/`capture-pane` pump
    with the official Vercel `sandbox` CLI's real PTY. `buildVercelAttach` now emits
    `sbx exec --sudo [-i] --project <p> --scope <team> <name> -- sudo -u vscode -H

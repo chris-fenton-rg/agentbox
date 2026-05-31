@@ -47,6 +47,7 @@ const KEY_N_UP = 0x4e;
 const KEY_LEADER = 0x01; // Ctrl-a
 const KEY_CTRL_V = 0x16; // Ctrl-v — Claude Code's "paste image from clipboard"
 const KEY_A_LOW = 0x61; // 'a'
+const KEY_V_LOW = 0x76; // 'v'
 
 /**
  * A key decoded from an enhanced-keyboard escape sequence. TUIs like Claude Code
@@ -258,15 +259,18 @@ export function createInputRouter(opts: InputRouterOptions): InputRouter {
   };
 
   // Intercepted Ctrl+V: run the host→box image-paste hook, then re-emit the
-  // Ctrl+V so the inner program reads the (now-loaded) box clipboard. A press
-  // while one is in flight is dropped — the Ctrl+V was already swallowed by the
-  // caller, so there's nothing to forward.
-  const triggerPaste = (): void => {
+  // original keypress so the inner program reads the (now-loaded) box clipboard.
+  // `reemit` is the exact byte sequence we swallowed — a raw 0x16, or the CSI-u /
+  // modifyOtherKeys encoding when an enhanced keyboard protocol is active — so
+  // the inner program (Claude) sees the encoding it negotiated. A press while one
+  // is in flight is dropped — the Ctrl+V was already swallowed by the caller, so
+  // there's nothing to forward.
+  const triggerPaste = (reemit: Buffer): void => {
     if (pasteInFlight) return;
     pasteInFlight = true;
     const done = (): void => {
       pasteInFlight = false;
-      if (!disposed) opts.onForward(Buffer.from([KEY_CTRL_V]));
+      if (!disposed) opts.onForward(reemit);
     };
     void Promise.resolve()
       .then(() => onPasteImage?.())
@@ -333,11 +337,26 @@ export function createInputRouter(opts: InputRouterOptions): InputRouter {
           continue;
         }
       }
+      // Ctrl+V re-encoded by an enhanced keyboard protocol (kitty / modifyOtherKeys).
+      // The inner app (Claude) can flip this on, in which case the host terminal
+      // sends `ESC [ 118 ; 5 u` instead of a raw 0x16 — mirror the leader handling
+      // above so the paste hook still fires.
+      if (pasteEnabled && byte === KEY_ESC) {
+        const k = parseCsiKey(buf, i);
+        if (k && k.ctrl && k.code === KEY_V_LOW) {
+          flushChunk(i);
+          const seq = Buffer.from(buf.subarray(i, i + k.len));
+          i += k.len;
+          chunkStart = i; // swallow it; triggerPaste re-emits after the load
+          triggerPaste(seq);
+          continue;
+        }
+      }
       if (pasteEnabled && byte === KEY_CTRL_V) {
         flushChunk(i); // forward everything typed before the Ctrl+V
         i += 1;
         chunkStart = i; // swallow it; triggerPaste re-emits after the load
-        triggerPaste();
+        triggerPaste(Buffer.from([KEY_CTRL_V]));
         continue;
       }
       i += 1;

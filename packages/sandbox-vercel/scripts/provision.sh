@@ -235,6 +235,26 @@ fi
 sudo -u vscode -H mkdir -p /home/vscode/.vnc
 done_ "VNC stack (TigerVNC + websockify + noVNC)"
 
+step "X11 clipboard tools (xclip + autocutsel, built from source)"
+# xclip and autocutsel are NOT in the AL2023 repos (unlike Debian/Ubuntu where
+# docker + hetzner apt-install them). They are load-bearing: xclip backs the
+# host->box Ctrl+V image paste (apps/cli/src/lib/paste-image.ts), and autocutsel
+# keeps the VNC CLIPBOARD/PRIMARY selections in sync (agentbox-vnc-start). Build
+# both from source — all deps are in the AL2023 default repos. Fail loud: a
+# missing binary is a silently broken feature, not a skippable convenience.
+dnf install -y -q --allowerasing \
+  gcc make automake autoconf git \
+  libX11-devel libXmu-devel libXt-devel libXaw-devel
+git clone --depth 1 https://github.com/astrand/xclip /tmp/xclip
+( cd /tmp/xclip && autoreconf -i && ./configure --prefix=/usr/local && make && make install )
+rm -rf /tmp/xclip
+command -v xclip >/dev/null || { echo "provision.sh: xclip build failed"; exit 1; }
+git clone --depth 1 https://github.com/sigmike/autocutsel /tmp/autocutsel
+( cd /tmp/autocutsel && autoreconf -i && ./configure --prefix=/usr/local && make && make install )
+rm -rf /tmp/autocutsel
+command -v autocutsel >/dev/null || { echo "provision.sh: autocutsel build failed"; exit 1; }
+done_ "X11 clipboard tools (xclip + autocutsel, built from source)"
+
 step "agent CLIs (codex + opencode + agent-browser, global npm)"
 npm install -g @openai/codex opencode-ai agent-browser 2>&1 | tail -3 || \
   echo "provision.sh: one or more agent npm installs failed (continuing)"
