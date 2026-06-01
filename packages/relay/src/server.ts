@@ -7,16 +7,24 @@ import { hostOpenCommand } from '@agentbox/sandbox-core';
 import {
   assertGhReady,
   checkoutGuards,
+  GH_API_ENDPOINT_REFUSAL,
   GH_PR_READ_ONLY_OPS,
+  GH_RUN_READ_ONLY_OPS,
   injectPrCreateHead,
+  isAllowedGhApiEndpoint,
   isGhPrOp,
+  isGhRunOp,
   PR_CREATE_NO_HEAD_REFUSAL,
   prCreateNeedsHead,
   refuseCheckoutByDefault,
+  refuseGhApiWrite,
   refuseMergeBypass,
   runHostGh,
+  type GhApiRpcParams,
   type GhPrOp,
   type GhPrRpcParams,
+  type GhRunOp,
+  type GhRunRpcParams,
 } from './gh.js';
 import { hashRpcParams, HostInitiatedTokens } from './host-initiated.js';
 import { askPrompt, isPromptAnswerBody, PendingPrompts, PromptSubscribers } from './prompts.js';
@@ -470,6 +478,29 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           subscribers,
           hostInitiatedTokens,
         );
+        const status = result.exitCode === 0 ? 200 : 500;
+        send(res, status, result);
+        return;
+      }
+      if (body.method.startsWith('gh.run.')) {
+        const op = body.method.slice('gh.run.'.length);
+        if (!isGhRunOp(op)) {
+          send(res, 400, { error: `unknown gh.run.* op: ${op}` });
+          return;
+        }
+        const result = await handleGhRunRpc(
+          op,
+          reg,
+          body.params as GhRunRpcParams | undefined,
+          prompts,
+          subscribers,
+        );
+        const status = result.exitCode === 0 ? 200 : 500;
+        send(res, status, result);
+        return;
+      }
+      if (body.method === 'gh.api') {
+        const result = await handleGhApiRpc(reg, body.params as GhApiRpcParams | undefined);
         const status = result.exitCode === 0 ? 200 : 500;
         send(res, status, result);
         return;
@@ -1165,6 +1196,82 @@ async function handleGhPrRpc(
   // Never let `gh` fall back to the host repo's checked-out branch.
   if (prCreateNeedsHead(op, finalArgs)) return PR_CREATE_NO_HEAD_REFUSAL;
   return runHostGh(['pr', op, ...finalArgs], worktree.hostMainRepo);
+}
+
+/**
+ * `gh.run.<op>` (list / view / rerun). Runs `gh run …` in the host main repo
+ * so gh infers the GitHub repo from its remotes. `list` / `view` are read-only;
+ * `rerun` re-triggers CI and goes through the host confirm prompt. No
+ * host-initiated token path — this is an in-box-only surface.
+ */
+async function handleGhRunRpc(
+  op: GhRunOp,
+  reg: BoxRegistration,
+  params: GhRunRpcParams | undefined,
+  prompts: PendingPrompts,
+  subscribers: PromptSubscribers,
+): Promise<GitRpcResult> {
+  const containerPath = params?.path ?? '/workspace';
+  const worktree = resolveWorktree(reg, containerPath);
+  if (!worktree) {
+    return {
+      exitCode: 64,
+      stdout: '',
+      stderr: `no worktree registered for box ${reg.boxId} matching ${containerPath}`,
+    };
+  }
+  const ghReady = await assertGhReady();
+  if (ghReady) return ghReady;
+
+  const args = Array.isArray(params?.args)
+    ? params.args.filter((a): a is string => typeof a === 'string')
+    : [];
+
+  if (!GH_RUN_READ_ONLY_OPS.has(op)) {
+    const detail = args.join(' ').slice(0, 200);
+    const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
+      kind: 'confirm',
+      message: `Allow gh run ${op} from box ${reg.name}?`,
+      detail,
+      defaultAnswer: 'n',
+      context: { command: `gh run ${op}`, cwd: containerPath, argv: args },
+    });
+    if (verdict.answer !== 'y') {
+      return { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
+    }
+  }
+  return runHostGh(['run', op, ...args], worktree.hostMainRepo);
+}
+
+/**
+ * `gh.api`: read-only, allowlisted REST calls. Runs `gh api <endpoint> …` in
+ * the host main repo. The endpoint must match `GH_API_ALLOWED_ENDPOINTS` and
+ * the argv must not mutate (`refuseGhApiWrite`). Read-only ⇒ no prompt, same
+ * as `gh pr view`.
+ */
+async function handleGhApiRpc(
+  reg: BoxRegistration,
+  params: GhApiRpcParams | undefined,
+): Promise<GitRpcResult> {
+  const containerPath = params?.path ?? '/workspace';
+  const worktree = resolveWorktree(reg, containerPath);
+  if (!worktree) {
+    return {
+      exitCode: 64,
+      stdout: '',
+      stderr: `no worktree registered for box ${reg.boxId} matching ${containerPath}`,
+    };
+  }
+  const endpoint = typeof params?.endpoint === 'string' ? params.endpoint : '';
+  if (!isAllowedGhApiEndpoint(endpoint)) return GH_API_ENDPOINT_REFUSAL;
+  const args = Array.isArray(params?.args)
+    ? params.args.filter((a): a is string => typeof a === 'string')
+    : [];
+  const writeRefusal = refuseGhApiWrite(args);
+  if (writeRefusal) return writeRefusal;
+  const ghReady = await assertGhReady();
+  if (ghReady) return ghReady;
+  return runHostGh(['api', endpoint, ...args], worktree.hostMainRepo);
 }
 
 /**

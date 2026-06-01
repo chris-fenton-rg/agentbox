@@ -23,15 +23,22 @@ import { findBox, hostOpenCommand, readState } from '@agentbox/sandbox-core';
 import {
   assertGhReady,
   checkoutGuards,
+  GH_API_ENDPOINT_REFUSAL,
   GH_PR_READ_ONLY_OPS,
+  GH_RUN_READ_ONLY_OPS,
   injectPrCreateHead,
+  isAllowedGhApiEndpoint,
   isGhPrOp,
+  isGhRunOp,
   PR_CREATE_NO_HEAD_REFUSAL,
   prCreateNeedsHead,
   refuseCheckoutByDefault,
+  refuseGhApiWrite,
   refuseMergeBypass,
   runHostGh,
+  type GhApiRpcParams,
   type GhPrRpcParams,
+  type GhRunRpcParams,
 } from './gh.js';
 import { hashRpcParams, type HostInitiatedTokens } from './host-initiated.js';
 import { askPrompt, type PendingPrompts, type PromptSubscribers } from './prompts.js';
@@ -196,6 +203,12 @@ export async function executeCloudAction(
   if (action.method.startsWith('gh.pr.')) {
     return runGhPrRpc(action, deps);
   }
+  if (action.method.startsWith('gh.run.')) {
+    return runGhRunRpc(action, deps);
+  }
+  if (action.method === 'gh.api') {
+    return runGhApiRpc(action, deps);
+  }
   if (action.method === 'git.clone' || action.method === 'gh.repo.clone') {
     return {
       exitCode: 64,
@@ -350,6 +363,97 @@ async function runGhPrRpc(
   // Never let `gh` fall back to the host repo's checked-out branch.
   if (prCreateNeedsHead(op, finalArgs)) return PR_CREATE_NO_HEAD_REFUSAL;
   return runHostGh(['pr', op, ...finalArgs], lookup.workspacePath);
+}
+
+/**
+ * Cloud-side confirm gate for a write op. Mirrors the prompt / no-subscriber
+ * handling in `runGhPrRpc` (`AGENTBOX_GH_NO_SUB` deny/allow/prompt). Returns a
+ * ready-to-send denial `HostActionResult` to abort, or `null` to proceed.
+ */
+async function cloudWriteConfirm(
+  deps: CloudActionExecutorDeps,
+  command: string,
+  cwd: string | undefined,
+  args: string[],
+): Promise<HostActionResult | null> {
+  if (!deps.prompts || !deps.subscribers) return null;
+  const ctx = {
+    kind: 'confirm' as const,
+    message: `Allow ${command} from cloud box ${deps.boxName ?? deps.boxId}?`,
+    detail: args.join(' ').slice(0, 200),
+    defaultAnswer: 'n' as const,
+    context: { command, cwd, argv: args },
+  };
+  const hasSubscriber = deps.subscribers.forBox(deps.boxId).length > 0;
+  if (!hasSubscriber && process.env['AGENTBOX_PROMPT'] !== 'off') {
+    const noSubMode = (process.env['AGENTBOX_GH_NO_SUB'] ?? 'deny').toLowerCase();
+    if (noSubMode === 'deny') {
+      return {
+        exitCode: 10,
+        stdout: '',
+        stderr:
+          'denied automatically — no attached wrapper to confirm. Attach `agentbox claude` (or similar) and retry, or set AGENTBOX_GH_NO_SUB=allow.\n',
+      };
+    }
+    if (noSubMode === 'allow') {
+      deps.log?.(`${command} auto-approved (no subscribers, AGENTBOX_GH_NO_SUB=allow)`);
+      return null;
+    }
+    const verdict = await askPrompt(deps.prompts, deps.subscribers, deps.boxId, ctx, {
+      ttlMs: 5 * 60 * 1000,
+    });
+    return verdict.answer === 'y' ? null : { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
+  }
+  const verdict = await askPrompt(deps.prompts, deps.subscribers, deps.boxId, ctx);
+  return verdict.answer === 'y' ? null : { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
+}
+
+/**
+ * Cloud `gh.run.<op>` executor (list / view / rerun). `list` / `view` are
+ * silent reads; `rerun` re-triggers CI and goes through `cloudWriteConfirm`.
+ */
+async function runGhRunRpc(
+  action: HostAction,
+  deps: CloudActionExecutorDeps,
+): Promise<HostActionResult> {
+  const op = action.method.slice('gh.run.'.length);
+  if (!isGhRunOp(op)) {
+    return { exitCode: 64, stdout: '', stderr: `unknown gh.run.* op: ${op}\n` };
+  }
+  const params = (action.params ?? {}) as GhRunRpcParams;
+  const args = Array.isArray(params.args)
+    ? params.args.filter((a): a is string => typeof a === 'string')
+    : [];
+  const ghReady = await assertGhReady();
+  if (ghReady) return ghReady;
+  const lookup = await lookupCloudBox(deps.boxId);
+  if (!GH_RUN_READ_ONLY_OPS.has(op)) {
+    const denied = await cloudWriteConfirm(deps, `gh run ${op}`, params.path, args);
+    if (denied) return denied;
+  }
+  return runHostGh(['run', op, ...args], lookup.workspacePath);
+}
+
+/**
+ * Cloud `gh.api` executor. Read-only, allowlisted endpoints only — same guards
+ * as the docker `handleGhApiRpc`. No prompt (matches `gh pr view`).
+ */
+async function runGhApiRpc(
+  action: HostAction,
+  deps: CloudActionExecutorDeps,
+): Promise<HostActionResult> {
+  const params = (action.params ?? {}) as GhApiRpcParams;
+  const endpoint = typeof params.endpoint === 'string' ? params.endpoint : '';
+  if (!isAllowedGhApiEndpoint(endpoint)) return GH_API_ENDPOINT_REFUSAL;
+  const args = Array.isArray(params.args)
+    ? params.args.filter((a): a is string => typeof a === 'string')
+    : [];
+  const writeRefusal = refuseGhApiWrite(args);
+  if (writeRefusal) return writeRefusal;
+  const ghReady = await assertGhReady();
+  if (ghReady) return ghReady;
+  const lookup = await lookupCloudBox(deps.boxId);
+  return runHostGh(['api', endpoint, ...args], lookup.workspacePath);
 }
 
 /**

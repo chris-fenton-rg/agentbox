@@ -21,6 +21,8 @@ export const GH_PR_OPS = [
   'create',
   'view',
   'list',
+  'diff',
+  'checks',
   'comment',
   'review',
   'merge',
@@ -36,7 +38,114 @@ export function isGhPrOp(value: string): value is GhPrOp {
 }
 
 /** Read-only ops never trigger the host confirmation prompt. */
-export const GH_PR_READ_ONLY_OPS: ReadonlySet<GhPrOp> = new Set(['view', 'list']);
+export const GH_PR_READ_ONLY_OPS: ReadonlySet<GhPrOp> = new Set([
+  'view',
+  'list',
+  'diff',
+  'checks',
+]);
+
+/**
+ * Whitelisted subset of `gh run` ops exposed via RPC. `list` / `view` are
+ * read-only; `rerun` re-triggers CI (a write — gated by the host confirm
+ * prompt). `watch` is deliberately absent: it blocks until the run finishes,
+ * which doesn't fit the relay's buffered request/response model (the in-box
+ * `gh-shim` rejects it and points users at `gh run view`).
+ */
+export const GH_RUN_OPS = ['list', 'view', 'rerun'] as const;
+
+export type GhRunOp = (typeof GH_RUN_OPS)[number];
+
+export function isGhRunOp(value: string): value is GhRunOp {
+  return (GH_RUN_OPS as readonly string[]).includes(value);
+}
+
+/** Read-only `gh run` ops never trigger the host confirmation prompt. */
+export const GH_RUN_READ_ONLY_OPS: ReadonlySet<GhRunOp> = new Set(['list', 'view']);
+
+/**
+ * Allowlist of `gh api` endpoint patterns the relay will proxy. Read-only by
+ * design (see `refuseGhApiWrite`); this list is meant to grow one deliberate
+ * entry at a time. The optional trailing `(\?…)` lets agents embed GET query
+ * params in the path (e.g. `…/comments?per_page=50`) rather than via field
+ * flags, which the write guard rejects.
+ */
+export const GH_API_ALLOWED_ENDPOINTS: readonly RegExp[] = [
+  /^repos\/[^/]+\/[^/]+\/pulls\/\d+\/comments(\?.*)?$/,
+];
+
+/** True when `endpoint` matches an allowlisted `gh api` pattern. */
+export function isAllowedGhApiEndpoint(endpoint: string): boolean {
+  // Normalize a leading slash so `/repos/...` and `repos/...` both match.
+  const normalized = endpoint.replace(/^\/+/, '');
+  return GH_API_ALLOWED_ENDPOINTS.some((re) => re.test(normalized));
+}
+
+/** Ready-to-send refusal when a `gh api` endpoint isn't on the allowlist. */
+export const GH_API_ENDPOINT_REFUSAL: GitRpcResult = {
+  exitCode: 65,
+  stdout: '',
+  stderr:
+    'gh api: endpoint not allowlisted. Proxied endpoints (read-only): ' +
+    'repos/:owner/:repo/pulls/:number/comments\n',
+};
+
+/**
+ * Returns a ready-to-send refusal when a `gh api` invocation would mutate, or
+ * `null` when it's a safe read. `gh api` defaults to GET but silently switches
+ * to POST when given field flags (`-f`/`-F`/`--field`/`--raw-field`/`--input`),
+ * so we reject those as well as any explicit non-GET `--method`/`-X`.
+ */
+export function refuseGhApiWrite(args: string[]): GitRpcResult | null {
+  const refuse = (reason: string): GitRpcResult => ({
+    exitCode: 65,
+    stdout: '',
+    stderr: `gh api: ${reason} — only read-only (GET) calls are proxied\n`,
+  });
+  // `gh` uses Go's pflag, which accepts a short flag's value glued on
+  // (`-XPOST`, `-fbody=hi`) and the `=` form (`-X=POST`, `--method=POST`) in
+  // addition to the space-separated form. The box-side shim's positive flag
+  // allowlist rejects all of these, but this relay-side guard is the last
+  // line of defense for a direct `agentbox-ctl` call — so it must recognize
+  // every spelling, not just the exact-match one.
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i] ?? '';
+    // --method / -X with a separately-tokenized value.
+    if (arg === '-X' || arg === '--method') {
+      const value = (args[i + 1] ?? '').toLowerCase();
+      if (value !== 'get') return refuse(`non-GET method '${args[i + 1] ?? ''}'`);
+      i++; // consumed the value
+      continue;
+    }
+    // --method=VALUE / -X=VALUE / -XVALUE (glued short form).
+    const methodGlued =
+      arg.startsWith('--method=')
+        ? arg.slice('--method='.length)
+        : arg.startsWith('-X') && arg.length > 2
+          ? arg.slice(2).replace(/^=/, '')
+          : null;
+    if (methodGlued !== null) {
+      if (methodGlued.toLowerCase() !== 'get') return refuse(`non-GET method '${methodGlued}'`);
+      continue;
+    }
+    // Field flags in any spelling — these auto-switch gh api to POST. No
+    // read-only flag starts with -f / -F, so a prefix match is safe and
+    // catches the glued short forms (`-fbody=hi`, `-Fkey=val`).
+    if (
+      arg.startsWith('-f') ||
+      arg.startsWith('-F') ||
+      arg === '--field' ||
+      arg === '--raw-field' ||
+      arg === '--input' ||
+      arg.startsWith('--field=') ||
+      arg.startsWith('--raw-field=') ||
+      arg.startsWith('--input=')
+    ) {
+      return refuse(`field flag '${arg}' makes the request mutating`);
+    }
+  }
+  return null;
+}
 
 /**
  * Default `gh pr create`'s `--head` to the box's branch so the PR is for the
@@ -104,6 +213,24 @@ export interface GhPrRpcParams {
    * not weaken when host-initiated.
    */
   hostInitiated?: string;
+}
+
+/** Wire params for every `gh.run.<op>` method. In-box surface only (no token). */
+export interface GhRunRpcParams {
+  /** Container path the ctl ran in; used to pick the registered worktree. */
+  path?: string;
+  /** Pass-through argv (`--json`, `--limit`, `<run-id>`, …). */
+  args?: string[];
+}
+
+/** Wire params for the `gh.api` method. Read-only, allowlisted endpoints. */
+export interface GhApiRpcParams {
+  /** Container path the ctl ran in; used to pick the registered worktree. */
+  path?: string;
+  /** The REST endpoint, e.g. `repos/:owner/:repo/pulls/:number/comments`. */
+  endpoint?: string;
+  /** Pass-through argv (`--jq`, `--paginate`, `-H`, …). */
+  args?: string[];
 }
 
 const GH_RPC_TIMEOUT_MS = 120_000;

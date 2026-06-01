@@ -89,7 +89,7 @@ first_positional() {
 handle_pr() {
   local op="${1-}"; shift || true
   if [ -z "$op" ]; then
-    die "missing subcommand for 'gh pr'. Supported: view, list, create, comment, review, merge, checkout, close, reopen"
+    die "missing subcommand for 'gh pr'. Supported: view, list, diff, checks, create, comment, review, merge, checkout, close, reopen"
   fi
   local branch
   branch="$(box_branch)"
@@ -108,6 +108,20 @@ handle_pr() {
         set -- "$@" "--head" "$branch"
       fi
       exec "$CTL" gh pr list -- "$@"
+      ;;
+    diff)
+      strict_flags "gh pr diff" "--color|--name-only|--patch" "$@"
+      if [ -z "$(first_positional "--color" "$@")" ] && [ -n "$branch" ]; then
+        set -- "$branch" "$@"
+      fi
+      exec "$CTL" gh pr diff -- "$@"
+      ;;
+    checks)
+      strict_flags "gh pr checks" "--json|--required" "$@"
+      if [ -z "$(first_positional "--json" "$@")" ] && [ -n "$branch" ]; then
+        set -- "$branch" "$@"
+      fi
+      exec "$CTL" gh pr checks -- "$@"
       ;;
     create)
       strict_flags "gh pr create" "--fill|--draft|--title|--body|--base" "$@"
@@ -162,9 +176,66 @@ handle_pr() {
       exec "$CTL" gh pr checkout -- "$@"
       ;;
     *)
-      die "'gh pr $op' is not proxied (supported: view, list, create, comment, review, merge, checkout, close, reopen)"
+      die "'gh pr $op' is not proxied (supported: view, list, diff, checks, create, comment, review, merge, checkout, close, reopen)"
       ;;
   esac
+}
+
+handle_run() {
+  local op="${1-}"; shift || true
+  if [ -z "$op" ]; then
+    die "missing subcommand for 'gh run'. Supported: list, view, rerun"
+  fi
+  case "$op" in
+    list)
+      strict_flags "gh run list" "--json|--limit|-L|--workflow|-w|--branch|-b|--status|--user" "$@"
+      exec "$CTL" gh run list -- "$@"
+      ;;
+    view)
+      strict_flags "gh run view" "--json|--log|--log-failed|--job" "$@"
+      # gh run view needs a run-id OR a --job <id>; refuse when neither is
+      # present (host-side gh would otherwise try an interactive picker and
+      # fail without a TTY).
+      if [ -z "$(first_positional "--json|--job" "$@")" ] && ! needle_present "--job" "$@"; then
+        die "'gh run view' requires a positional <run-id> (or --job <job-id>)"
+      fi
+      exec "$CTL" gh run view -- "$@"
+      ;;
+    rerun)
+      strict_flags "gh run rerun" "--failed|--job" "$@"
+      if [ -z "$(first_positional "--job" "$@")" ] && ! needle_present "--job" "$@"; then
+        die "'gh run rerun' requires a positional <run-id> (or --job <job-id>)"
+      fi
+      exec "$CTL" gh run rerun -- "$@"
+      ;;
+    watch)
+      die "'gh run watch' is not proxied (it blocks until CI finishes). Poll status with 'gh run view <run-id>' instead."
+      ;;
+    *)
+      die "'gh run $op' is not proxied (supported: list, view, rerun)"
+      ;;
+  esac
+}
+
+handle_api() {
+  local endpoint="${1-}"
+  if [ -z "$endpoint" ] || [ "${endpoint:0:1}" = "-" ]; then
+    die "'gh api' requires a positional <endpoint> (e.g. repos/:owner/:repo/pulls/:number/comments)"
+  fi
+  shift
+  # Read-only subset: reject any flag that would mutate. `gh api` auto-switches
+  # to POST when given field flags, so those are rejected alongside an explicit
+  # non-GET --method/-X. The relay enforces this again server-side.
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      -X|--method|--method=*|-f|-F|--field|--field=*|--raw-field|--raw-field=*|--input|--input=*)
+        die "'gh api' is proxied read-only; mutating flag '$arg' is not allowed"
+        ;;
+    esac
+  done
+  strict_flags "gh api" "--jq|-q|--paginate|--cache|--hostname|-H|--header" "$@"
+  exec "$CTL" gh api "$endpoint" -- "$@"
 }
 
 handle_repo() {
@@ -218,7 +289,7 @@ handle_repo() {
 
 # Top-level dispatch.
 if [ $# -eq 0 ]; then
-  die "no subcommand. Supported: pr {view,list,create,comment,review,merge,checkout,close,reopen}, repo clone, auth status, --version"
+  die "no subcommand. Supported: pr {view,list,diff,checks,create,comment,review,merge,checkout,close,reopen}, run {list,view,rerun}, api <endpoint>, repo clone, auth status, --version"
 fi
 
 case "$1" in
@@ -232,7 +303,7 @@ case "$1" in
     ;;
   --help|-h)
     printf 'agentbox gh shim — strict subset.\n' >&2
-    printf 'Supported: pr {view,list,create,comment,review,merge,checkout,close,reopen}, repo clone, auth status, --version\n' >&2
+    printf 'Supported: pr {view,list,diff,checks,create,comment,review,merge,checkout,close,reopen}, run {list,view,rerun}, api <endpoint>, repo clone, auth status, --version\n' >&2
     printf 'Anything else is rejected. Run host `gh --help` for full upstream docs.\n' >&2
     ;;
   auth)
@@ -253,11 +324,19 @@ case "$1" in
     shift
     handle_pr "$@"
     ;;
+  run)
+    shift
+    handle_run "$@"
+    ;;
+  api)
+    shift
+    handle_api "$@"
+    ;;
   repo)
     shift
     handle_repo "$@"
     ;;
   *)
-    die "'gh $1' is not proxied (supported: pr {…}, repo clone, auth status, --version)"
+    die "'gh $1' is not proxied (supported: pr {…}, run {…}, api <endpoint>, repo clone, auth status, --version)"
     ;;
 esac

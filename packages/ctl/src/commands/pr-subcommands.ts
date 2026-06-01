@@ -2,7 +2,18 @@ import { Command, Option } from 'commander';
 import { postRpcAndExit } from '../relay-rpc.js';
 
 export interface PrSubcommandSpec {
-  op: 'create' | 'view' | 'list' | 'comment' | 'review' | 'merge' | 'checkout' | 'close' | 'reopen';
+  op:
+    | 'create'
+    | 'view'
+    | 'list'
+    | 'diff'
+    | 'checks'
+    | 'comment'
+    | 'review'
+    | 'merge'
+    | 'checkout'
+    | 'close'
+    | 'reopen';
   description: string;
 }
 
@@ -25,6 +36,8 @@ export const PR_SUBCOMMANDS: PrSubcommandSpec[] = [
   },
   { op: 'view', description: 'Run `gh pr view` on the host (read-only; no prompt).' },
   { op: 'list', description: 'Run `gh pr list` on the host (read-only; no prompt).' },
+  { op: 'diff', description: 'Run `gh pr diff` on the host (read-only; no prompt).' },
+  { op: 'checks', description: 'Run `gh pr checks` on the host (read-only; no prompt).' },
   { op: 'comment', description: 'Run `gh pr comment` on the host (prompted; visible to others).' },
   { op: 'review', description: 'Run `gh pr review` on the host (prompted; visible to others).' },
   {

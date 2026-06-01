@@ -227,6 +227,8 @@ const PR_OP_DESCRIPTIONS: Record<GhPrOp, string> = {
   create: "Open a PR for the box's branch (host `gh pr create`, no prompt).",
   view: 'Show a PR (read-only).',
   list: 'List PRs (read-only).',
+  diff: 'Show a PR diff (read-only).',
+  checks: "Show a PR's CI check status (read-only).",
   comment: 'Comment on a PR.',
   review: 'Review a PR.',
   merge:

@@ -49,17 +49,27 @@ export { hashRpcParams, HostInitiatedTokens } from './host-initiated.js';
 export {
   assertGhReady,
   checkoutGuards,
+  GH_API_ALLOWED_ENDPOINTS,
+  GH_API_ENDPOINT_REFUSAL,
   GH_PR_OPS,
   GH_PR_READ_ONLY_OPS,
+  GH_RUN_OPS,
+  GH_RUN_READ_ONLY_OPS,
   injectPrCreateHead,
+  isAllowedGhApiEndpoint,
   isGhPrOp,
+  isGhRunOp,
   PR_CREATE_NO_HEAD_REFUSAL,
   prCreateNeedsHead,
   refuseCheckoutByDefault,
+  refuseGhApiWrite,
   refuseMergeBypass,
   runHostGh,
+  type GhApiRpcParams,
   type GhPrOp,
   type GhPrRpcParams,
+  type GhRunOp,
+  type GhRunRpcParams,
 } from './gh.js';
 export { BoxStatusStore, isValidBoxStatus, type BoxStatusSnapshot } from './status-store.js';
 export {

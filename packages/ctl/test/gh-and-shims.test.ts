@@ -267,6 +267,128 @@ describe('gh-shim arg whitelist + branch injection', () => {
     }
   });
 
+  it('pr diff with no positional injects the current branch', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GH_SHIM, ['pr', 'diff'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout.trim()).toBe('STUB: gh pr diff -- agentbox/test-branch');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('pr checks --json injects branch and passes the field list', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GH_SHIM, ['pr', 'checks', '--json', 'name,state'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout).toContain('STUB: gh pr checks -- agentbox/test-branch --json name,state');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('run list forwards to ctl', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GH_SHIM, ['run', 'list', '--limit', '5'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout.trim()).toBe('STUB: gh run list -- --limit 5');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('run view forwards a run-id', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GH_SHIM, ['run', 'view', '12345', '--log-failed'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout.trim()).toBe('STUB: gh run view -- 12345 --log-failed');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('run view requires a run-id or --job', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GH_SHIM, ['run', 'view'], env);
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/requires a positional <run-id>/);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('run rerun forwards a run-id', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GH_SHIM, ['run', 'rerun', '12345'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout.trim()).toBe('STUB: gh run rerun -- 12345');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('run watch is rejected with a pointer to run view', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GH_SHIM, ['run', 'watch', '12345'], env);
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/not proxied/);
+      expect(out.stderr).toMatch(/gh run view/);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('api forwards an allowed endpoint to ctl', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GH_SHIM, ['api', 'repos/o/r/pulls/5/comments'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout.trim()).toBe('STUB: gh api repos/o/r/pulls/5/comments --');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('api requires a positional endpoint', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GH_SHIM, ['api', '--paginate'], env);
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/requires a positional <endpoint>/);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('api rejects a mutating method flag at the shim boundary', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GH_SHIM, ['api', 'repos/o/r/pulls/5/comments', '-X', 'POST'], env);
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/read-only/);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('api rejects field flags that would auto-POST', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GH_SHIM, ['api', 'repos/o/r/pulls/5/comments', '-f', 'body=hi'], env);
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/read-only/);
+    } finally {
+      env.cleanup();
+    }
+  });
+
   it('rejects unknown top-level subcommands (gh issue)', () => {
     const env = makeStubShell();
     try {
