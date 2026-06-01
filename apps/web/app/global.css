@@ -1,0 +1,420 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+
+/* Pull Tailwind utilities out of the fumadocs-ui components we render. */
+@source '../node_modules/fumadocs-ui/dist/**/*.js';
+
+/*
+ * Make Fumadocs' chrome (sidebar, TOC, nav) use IBM Plex too. Fumadocs uses the
+ * Tailwind `font-sans` / `font-mono` utilities (`--font-sans` / `--font-mono`),
+ * which we otherwise never set — so without this the chrome falls back to system
+ * fonts and looks off next to the IBM Plex body.
+ */
+@theme {
+  --font-sans: var(--font-agb-sans), 'IBM Plex Sans', system-ui, -apple-system,
+    sans-serif;
+  --font-mono: var(--font-agb-mono), 'IBM Plex Mono', ui-monospace, 'SF Mono',
+    Menlo, monospace;
+}
+
+/*
+ * AgentBox design tokens — copied verbatim from the marketing site (index.html
+ * :root) and the AgentBox Docs mockup. These drive the custom docs theme; the
+ * Fumadocs UI variables below are mapped onto them so the whole UI follows.
+ */
+:root {
+  --agb-paper: #f6f6f3;
+  --agb-panel: #ffffff;
+  --agb-ink: #16181c;
+  --agb-ink-2: #3d434c;
+  --agb-muted: #7b818b;
+  --agb-faint: #a4a9b0;
+  --agb-line: #e3e3dd;
+  --agb-line-2: #ededea;
+  --agb-accent: #128a4f;
+  --agb-accent-soft: #eaf4ee;
+  --agb-warn: #b07d12;
+  --agb-term: #15171b;
+}
+
+/*
+ * Light theme: map Fumadocs UI variables onto the AgentBox tokens. Scoped to
+ * :not(.dark) so it never clobbers Fumadocs' dark-mode backgrounds (the .dark
+ * block below only re-tints the accent green).
+ */
+:root:not(.dark) {
+  --color-fd-background: #f6f6f3;
+  --color-fd-foreground: #16181c;
+  --color-fd-muted: #f0f0ec;
+  --color-fd-muted-foreground: #7b818b;
+  --color-fd-popover: #ffffff;
+  --color-fd-popover-foreground: #16181c;
+  --color-fd-card: #ffffff;
+  --color-fd-card-foreground: #16181c;
+  --color-fd-border: #e3e3dd;
+  --color-fd-primary: #128a4f;
+  --color-fd-primary-foreground: #ffffff;
+  --color-fd-secondary: #eef0ea;
+  --color-fd-secondary-foreground: #16181c;
+  --color-fd-accent: #eaf4ee;
+  --color-fd-accent-foreground: #128a4f;
+  --color-fd-ring: #128a4f;
+  /* "info" callouts (Note) use the brand green, matching the mockup. */
+  --color-fd-info: #128a4f;
+}
+
+/* Dark mode keeps Fumadocs' neutral grays but adopts the AgentBox green accent. */
+.dark {
+  --color-fd-primary: #4ec98a;
+  --color-fd-primary-foreground: #0a1a12;
+  --color-fd-accent: rgba(78, 201, 138, 0.14);
+  --color-fd-accent-foreground: #7fe0a8;
+  --color-fd-ring: #4ec98a;
+  --color-fd-info: #4ec98a;
+}
+
+body {
+  font-family: var(--font-agb-sans), 'IBM Plex Sans', system-ui, -apple-system,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+code,
+pre,
+kbd {
+  font-family: var(--font-agb-mono), 'IBM Plex Mono', ui-monospace, 'SF Mono',
+    Menlo, monospace;
+}
+
+/* Brand lockup + version pill in the docs top bar (mirrors the mockup). */
+.agb-logo {
+  width: 20px;
+  height: 20px;
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 4px;
+}
+
+.agb-brand {
+  font-family: var(--font-agb-mono), 'IBM Plex Mono', monospace;
+  font-weight: 600;
+}
+
+.agb-tag {
+  color: var(--agb-faint);
+  font-weight: 400;
+  margin-left: 4px;
+}
+
+.agb-ver {
+  color: var(--agb-accent);
+  border: 1px solid var(--color-fd-border);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 11.5px;
+  font-family: var(--font-agb-mono), 'IBM Plex Mono', monospace;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.agb-ver:hover {
+  background: var(--agb-accent-soft);
+}
+
+.dark .agb-ver {
+  color: var(--color-fd-primary);
+}
+
+/* ---------------------------------------------------------------------------
+ * Chrome surfaces — match the mockup: blurred sticky top bar, paper sidebar.
+ * ------------------------------------------------------------------------- */
+
+/* Sticky top navbar (notebook layout uses #nd-subnav): translucent paper + blur. */
+#nd-subnav {
+  background: rgba(246, 246, 243, 0.86);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--agb-line);
+}
+
+.dark #nd-subnav {
+  background: rgba(20, 22, 26, 0.8);
+  border-bottom-color: var(--color-fd-border);
+}
+
+/* Sidebar shares the body background (paper), not white. */
+#nd-sidebar {
+  background: var(--color-fd-background);
+  border-right: 1px solid var(--agb-line);
+}
+
+.dark #nd-sidebar {
+  border-right-color: var(--color-fd-border);
+}
+
+/* "On this page" stays sans; sidebar group labels go mono (below). */
+#nd-toc {
+  font-family: var(--font-agb-sans), 'IBM Plex Sans', system-ui, sans-serif;
+  border-left: 1px solid var(--agb-line);
+  padding-left: 22px;
+}
+
+.dark #nd-toc {
+  border-left-color: var(--color-fd-border);
+}
+
+/* Sidebar group separators (e.g. "Getting started") — uppercase mono, like the mockup. */
+#nd-sidebar p {
+  font-family: var(--font-agb-mono), 'IBM Plex Mono', monospace !important;
+  font-size: 11px !important;
+  letter-spacing: 0.1em;
+  text-transform: uppercase !important;
+  color: var(--agb-faint);
+}
+
+/* Breadcrumb above the page title (mono, faint), like the mockup. */
+#nd-page .agb-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 22px;
+  font-family: var(--font-agb-mono), 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  color: var(--agb-faint);
+}
+
+#nd-page .agb-crumbs a:hover {
+  color: var(--agb-accent);
+}
+
+#nd-page .agb-crumbs .sep {
+  color: var(--agb-line);
+}
+
+#nd-page .agb-crumbs .cur {
+  color: var(--agb-ink-2);
+  font-weight: 500;
+}
+
+/* Search box at the top of the sidebar — white field, like the mockup. */
+.agb-search {
+  background: var(--agb-panel);
+  border: 1px solid var(--agb-line);
+  margin-bottom: 18px;
+}
+
+.dark .agb-search {
+  background: var(--color-fd-card);
+  border-color: var(--color-fd-border);
+}
+
+/* Callout: outline icon (not filled) + rounded accent bar, like the mockup. */
+#nd-page .prose div.rounded-xl:has(> svg.lucide) > svg.lucide {
+  fill: none;
+  color: var(--callout-color);
+}
+
+#nd-page .prose div.rounded-xl:has(> svg.lucide) > div:first-child {
+  width: 3px;
+  background: var(--callout-color);
+  border-radius: 999px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Content typography — aligned to AgentBox Docs.html.
+ * Scoped to #nd-page so chrome (nav/sidebar/toc) is untouched.
+ * ------------------------------------------------------------------------- */
+
+#nd-page {
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+#nd-page h1 {
+  font-size: clamp(30px, 4vw, 38px);
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  font-weight: 600;
+}
+
+/* Lede / page description. */
+#nd-page h1 + p {
+  font-size: 16.5px;
+  line-height: 1.62;
+  color: var(--agb-ink-2);
+}
+
+#nd-page .prose {
+  counter-reset: agb-sec;
+}
+
+/* Doc meta row under the lede (read time · provider · updated) + divider. */
+#nd-page .agb-doc-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 0;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--agb-line);
+  font-family: var(--font-agb-mono), 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  color: var(--agb-muted);
+}
+
+#nd-page .agb-doc-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+#nd-page .agb-doc-meta span::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--agb-accent);
+  flex: none;
+}
+
+/* Callout title (NOTE / HEADS UP) — small, spaced, accent, like the mockup. */
+#nd-page .prose [class*='callout'] > p:first-of-type,
+#nd-page .prose div:has(> svg) > p.font-medium:first-child {
+  font-family: var(--font-agb-mono), 'IBM Plex Mono', monospace;
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+}
+
+#nd-page .prose h2 {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 46px 0 16px;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+/* Accent leading-zero section numbers (01, 02, …), like the mockup. */
+#nd-page .prose h2::before {
+  counter-increment: agb-sec;
+  content: counter(agb-sec, decimal-leading-zero);
+  font-family: var(--font-agb-mono), 'IBM Plex Mono', monospace;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--agb-accent);
+  flex: none;
+}
+
+#nd-page .prose h3 {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 30px 0 10px;
+}
+
+#nd-page .prose p,
+#nd-page .prose li {
+  color: var(--agb-ink-2);
+}
+
+#nd-page .prose p {
+  max-width: 64ch;
+}
+
+#nd-page .prose strong {
+  font-weight: 500;
+  color: var(--agb-ink);
+}
+
+/* Body links accent green — but not heading anchor links (keep headings dark). */
+#nd-page .prose :is(p, li, td) a {
+  color: var(--agb-accent);
+  text-decoration-color: var(--agb-accent-soft);
+}
+
+#nd-page .prose :is(p, li, td) a:hover {
+  text-decoration-color: var(--agb-accent);
+}
+
+/* Inline code (not code blocks): subtle chip, mono. */
+#nd-page .prose :not(pre) > code {
+  font-family: var(--font-agb-mono), 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.88em;
+  background: var(--agb-line-2);
+  border: 1px solid var(--agb-line);
+  border-radius: 5px;
+  padding: 1px 6px;
+  color: var(--agb-ink);
+}
+
+.dark #nd-page .prose p,
+.dark #nd-page .prose li {
+  color: var(--color-fd-muted-foreground);
+}
+
+.dark #nd-page .prose strong {
+  color: var(--color-fd-foreground);
+}
+
+.dark #nd-page .prose :not(pre) > code {
+  background: var(--color-fd-muted);
+  border-color: var(--color-fd-border);
+  color: var(--color-fd-foreground);
+}
+
+/* Command reference table: green mono commands, no chip — like the mockup. */
+#nd-page .prose td:first-child code {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--agb-accent);
+  white-space: nowrap;
+}
+
+.dark #nd-page .prose td:first-child code {
+  background: transparent;
+  border: none;
+  color: var(--color-fd-primary);
+}
+
+/* ---------------------------------------------------------------------------
+ * Terminal blocks — shell snippets render as the black card from the mockup.
+ * `data-terminal` is stamped on the <pre> by the Shiki transformer in
+ * source.config.ts. Always dark, regardless of the page theme.
+ * ------------------------------------------------------------------------- */
+
+figure.shiki[data-terminal] {
+  position: relative;
+  background: var(--agb-term);
+  border-color: #262a31;
+  box-shadow:
+    0 20px 44px -28px rgba(20, 24, 30, 0.5),
+    0 2px 8px -3px rgba(20, 24, 30, 0.22);
+}
+
+/* Force the dark Shiki tokens so text stays light on black even in light mode. */
+figure.shiki[data-terminal] code span {
+  color: var(--shiki-dark) !important;
+}
+
+/* Traffic-light title bar. */
+figure.shiki[data-terminal]::before {
+  content: '';
+  display: block;
+  height: 36px;
+  background: #1b1e24;
+  border-bottom: 1px solid #262a31;
+  background-image:
+    radial-gradient(circle 4.5px at 16px 18px, #ec6a5e 99%, transparent 100%),
+    radial-gradient(circle 4.5px at 34px 18px, #f4bf4f 99%, transparent 100%),
+    radial-gradient(circle 4.5px at 52px 18px, #61c554 99%, transparent 100%);
+}
+
+/* The copy button sits in the bar; nudge it up to align. */
+figure.shiki[data-terminal] > div:first-child {
+  top: 6px;
+}

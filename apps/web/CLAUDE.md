@@ -1,41 +1,73 @@
-# apps/web — marketing site
+# apps/web — marketing site + docs
 
-The public marketing/landing site for AgentBox. Deployed on Vercel.
+The public site for AgentBox: the marketing landing page **and** the Fumadocs
+documentation. Deployed on Vercel as a single Next.js app.
 
 ## What it is
 
-- A **hand-written static site**, NOT a framework (no Astro/Vite/Next/React).
-- The whole site is a single file: **`index.html`** — markup plus one big inline `<style>` block (no external CSS, no build step for the page itself).
-- `public/` is a **literal subfolder**, not a framework-managed asset root.
+- A **Next.js 16 App Router** app (`@agentbox/web`), pnpm workspace member.
+- **Docs** are authored as `.md` files under `content/docs/` and rendered by
+  **Fumadocs** (`fumadocs-ui` / `fumadocs-core` / `fumadocs-mdx`) at `/docs`.
+- The **marketing home** is the original hand-written static page, preserved
+  verbatim at `public/home.html` and served at `/` (see rewrites below). It
+  keeps its inline `<style>` and inline `<script>` (animated terminal, rotating
+  agent name, interactive diagram) — that's why it stays a static document
+  instead of being ported to React.
+- Theme matches the AgentBox Docs design mockup (`AgentBox Docs.html`, kept in
+  this folder as a non-served reference): light, green accent `#128a4f`, IBM
+  Plex Sans/Mono.
 
 ## Layout
 
-- `index.html` — the entire page (head + inline CSS + body). Edit this directly.
-- `public/` — static assets:
-  - `logo.svg`, `logo.png`
-  - `favicon-16x16.png`, `favicon-32x32.png`, `favicon-256x256.png`
-  - `site.webmanifest` — PWA manifest (icons + theme colors)
-- `vercel.json` — deploy config.
+- `app/` — root layout (`RootProvider` + IBM Plex fonts), `app/docs/**` (docs
+  shell + `[[...slug]]` renderer), `app/api/version` (version JSON endpoint).
+- `app/global.css` — imports the Fumadocs preset, then maps the Fumadocs
+  `--color-fd-*` variables onto the AgentBox design tokens. Edit theme here.
+- `content/docs/` — the `.md` docs sources + `meta.json` (sidebar order).
+- `lib/` — `source.ts` (Fumadocs loader), `layout.shared.tsx` (nav/brand/badge),
+  `version.ts` (npm-registry fetch + fallback), generated `version-fallback.json`.
+- `components/version-badge.tsx` — the version pill (docs nav).
+- `public/` — Next public root: `home.html` (the marketing page) + assets
+  (`logo.svg`, favicons, `cover.jpg`, …) + generated `schema/`.
+- `scripts/copy-schema.mjs` — prebuild step (see Build).
+- `next.config.mjs` — `createMDX()` + rewrites.
 
-## Asset URLs — important
+## Rewrites — important
 
-`vercel.json` sets `"outputDirectory": "."`, so Vercel serves **this folder (`apps/web/`) as the site root**. There is no step that hoists `public/` to `/`. Therefore:
+`next.config.mjs` adds two `beforeFiles` rewrites:
 
-- Reference assets with the **`/public/` prefix**, e.g. `href="/public/favicon-32x32.png"`, `src="/public/logo.svg"`.
-- Do NOT use `/favicon-32x32.png` (that 404s in production).
+- `/` → `/home.html` — serves the static marketing page at the site root.
+- `/public/:path*` → `/:path*` — the marketing markup references assets with a
+  legacy `/public/` prefix; this maps them to Next's public root, so the HTML
+  needs no asset-path edits.
 
-`vercel.json` also sets `"cleanUrls": true` (strips `.html` from page URLs; does not affect asset paths).
+## Version badge
+
+Latest AgentBox version, shown on both home and docs. Source of truth is
+`apps/cli/package.json`.
+
+- `lib/version.ts` fetches `registry.npmjs.org/@madarco/agentbox/latest` with
+  hourly ISR (`revalidate: 3600`); on failure falls back to
+  `lib/version-fallback.json`, snapshotted from `apps/cli/package.json` at build.
+- Docs: `<VersionBadge/>` (Server Component) in the nav.
+- Home: the static page fetches `/api/version` client-side and fills the pill.
 
 ## Build
 
-The page needs no build. `buildCommand` only copies JSON schemas into `schema/` for the docs:
+- `pnpm dev` / `pnpm build` run `scripts/copy-schema.mjs` first (`predev` /
+  `prebuild`): copies `agentbox.schema.json` + `user-config.schema.json` into
+  `public/schema/`, and writes `lib/version-fallback.json` from the CLI version.
+- `postinstall` runs `fumadocs-mdx` to generate the `.source` types.
 
-```
-mkdir -p schema && cp ../../packages/ctl/schema/agentbox.schema.json ../../packages/config/schema/user-config.schema.json schema/
-```
+## Deploy (Vercel)
+
+- Next.js is auto-detected; **set the Vercel project Root Directory to
+  `apps/web`**. No `vercel.json` needed (the old static one was removed; its
+  schema copy now lives in `prebuild`).
 
 ## Conventions
 
-- Keep styling in the single inline `<style>` block in `index.html`; match the existing CSS-variable design tokens (`:root { --paper, --ink, --accent: #128a4f, ... }`).
+- Theme via the `--color-fd-*` overrides + `--agb-*` tokens in `app/global.css`;
+  reuse the existing tokens, don't invent new colors.
+- New docs pages: add a `.md` under `content/docs/` and list it in `meta.json`.
 - No emojis in output unless asked.
-- When adding assets, drop the file in `public/` and reference it as `/public/<name>`.

@@ -1,0 +1,78 @@
+---
+title: Quickstart
+description: Spin up your first isolated agent box and launch Claude Code inside it — from a single terminal command. This guide takes about three minutes end to end.
+---
+
+<div className="agb-doc-meta">
+  <span>Updated 2026</span>
+</div>
+
+## Before you begin
+
+AgentBox runs your agents inside dedicated, isolated VMs — local or in the cloud.
+Before the quickstart, make sure you have the runtime in place. Everything here uses
+the **local Docker** provider, which needs no account.
+
+- **Docker** — Desktop or OrbStack, running.
+- **Node** `>=20.10` on your `PATH`.
+- An agent CLI logged in once on the host — e.g. `claude`.
+
+<Callout title="NOTE">
+The first run builds the `agentbox/box:dev` image (~1&nbsp;GB). It's a one-time
+download — later boxes start from a warm checkpoint in under a second.
+</Callout>
+
+## Install the CLI
+
+Install AgentBox globally and run the one-time setup. The setup step wires up
+`portless` so box web apps share the same URL inside the box and on your host.
+
+```bash
+# install globally, then run one-time setup
+npm -g i @madarco/agentbox && agentbox install
+```
+
+## Launch your first box
+
+One command teleports your current project into a fresh box and attaches an agent
+session. Run it from inside your project directory:
+
+```console
+$ agentbox claude
+⬡ building agentbox/box:dev … cached
+↳ teleporting ./my-app → /workspace
+↳ injecting ~/.claude credentials & sessions
+✓ box 1 ready in 0.8s · claude code attached
+claude@box-1:~/workspace$
+```
+
+That's it — you're now inside an isolated box with your files mounted two-way at
+`/workspace` and Claude Code running in a detachable tmux session. Detach any time
+with `Ctrl-b d`; the agent keeps working.
+
+### Watch it work
+
+Open the box's live screen to follow the agent's browser and IDE in real time. The
+viewer streams the box's full desktop over noVNC.
+
+## Useful commands
+
+A handful of commands cover most day-to-day work. Run `agentbox --help` for the full
+list.
+
+| Command | What it does |
+| --- | --- |
+| `agentbox claude attach 1` | Reattach to the running Claude session on box 1. |
+| `agentbox shell 1` | Open an interactive bash shell inside the box. |
+| `agentbox url` | Open the box's web app URL in your browser. |
+| `agentbox pause 1` | Freeze the box to save resources — resumes sub-second. |
+| `agentbox destroy 1` | Tear down the box and discard its upper volume. |
+
+Want to run the same agent on a cloud provider instead? Prefix the command with the
+provider name — for example `agentbox hetzner claude`. See [Installation](/docs/installation)
+to get set up.
+
+<Callout type="warn" title="HEADS UP">
+Git credentials never leave the host. When the agent pushes to a remote, AgentBox
+forwards an explicit **permission request** back to your machine before anything goes out.
+</Callout>
