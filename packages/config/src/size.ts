@@ -32,23 +32,3 @@ export function resolveBoxSize(cfg: EffectiveConfig, provider: ProviderKind | st
   if (perProvider && perProvider.length > 0) return perProvider;
   return cfg.box.size;
 }
-
-/**
- * Flat KEY_REGISTRY key for a future `agentbox box size set-default
- * [--provider X]`-style writer; mirrors `defaultCheckpointConfigKey`. Unknown
- * provider → generic `box.size` (legacy callers).
- */
-export function boxSizeConfigKey(
-  provider: ProviderKind | string | undefined,
-):
-  | 'box.size'
-  | 'box.sizeDocker'
-  | 'box.sizeDaytona'
-  | 'box.sizeHetzner'
-  | 'box.sizeVercel' {
-  if (provider === 'docker') return 'box.sizeDocker';
-  if (provider === 'daytona') return 'box.sizeDaytona';
-  if (provider === 'hetzner') return 'box.sizeHetzner';
-  if (provider === 'vercel') return 'box.sizeVercel';
-  return 'box.size';
-}

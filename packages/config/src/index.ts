@@ -52,10 +52,7 @@ export {
   resolveDefaultCheckpoint,
 } from './checkpoint.js';
 
-export {
-  boxSizeConfigKey,
-  resolveBoxSize,
-} from './size.js';
+export { resolveBoxSize } from './size.js';
 
 export {
   boxImageConfigKey,

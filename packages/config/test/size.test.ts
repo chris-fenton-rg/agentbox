@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { boxSizeConfigKey, resolveBoxSize } from '../src/size.js';
+import { resolveBoxSize } from '../src/size.js';
 import { BUILT_IN_DEFAULTS, type EffectiveConfig } from '../src/types.js';
 
 function cfg(overrides: Partial<EffectiveConfig['box']> = {}): EffectiveConfig {
@@ -54,16 +54,3 @@ describe('resolveBoxSize', () => {
   });
 });
 
-describe('boxSizeConfigKey', () => {
-  it('maps each provider to its flat key', () => {
-    expect(boxSizeConfigKey('docker')).toBe('box.sizeDocker');
-    expect(boxSizeConfigKey('daytona')).toBe('box.sizeDaytona');
-    expect(boxSizeConfigKey('hetzner')).toBe('box.sizeHetzner');
-    expect(boxSizeConfigKey('vercel')).toBe('box.sizeVercel');
-  });
-
-  it('returns the generic key for undefined / unknown provider', () => {
-    expect(boxSizeConfigKey(undefined)).toBe('box.size');
-    expect(boxSizeConfigKey('mystery')).toBe('box.size');
-  });
-});
