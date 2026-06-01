@@ -1,48 +1,49 @@
 ---
 title: Core concepts
-description: A disposable, sandboxed computer for every agent run — run them in parallel, switch in a second, and keep your credentials on your machine
+description: How AgentBox works. An isolated machine per agent run, parallel runs and fast switching, with credentials kept on your machine
 ---
 
-Every time you launch an agent, AgentBox teleports your project into its own
-isolated Linux computer — a **box**. Inside, the agent has root: it installs
-packages, runs servers, runs Docker, and commits freely — and it still can't
-touch your laptop. Run several boxes in parallel, switch between them in under a
-second, and nothing reaches a remote until you approve it.
+When you launch an agent, AgentBox copies your project into an isolated Linux
+machine called a **box**. The agent runs as root inside the box, so it can
+install packages, run servers, run Docker, and commit. It has no access to your
+laptop's files, keys, or network. You can run several boxes at once, switch
+between them in under a second, and the agent can't push to a remote without
+your approval.
 
-Six ideas carry the whole tool, and they're easier to feel than to read. Start
-here, then follow the links into each one.
+Six ideas cover how it works. Each section below explains one, with links to the
+details.
 
 <Figure caption="One isolated box per agent run. Your credentials and git stay on the host; boxes call back through the relay." />
 
 ## A full computer per agent — and it can't break your machine
 
-A box is a real, disposable Linux machine, one per agent run. The agent gets
-root and a full toolchain — `apt install`, run a database, even run Docker inside
-the box — so it's never boxed in by a thin container. When you're done, throw it
-away; your laptop never saw any of it.
+A box is a Linux machine, one per agent run. The agent runs as root with a full
+toolchain, so it can `apt install` packages, run a database, or run Docker inside
+the box. When you're done, run `destroy` and the box is gone. None of it touched
+your host.
 
 ```bash
 agentbox create -n alpha     # spin up a fresh box
 agentbox destroy alpha       # throw it away
 ```
 
-Because the box is sealed off from your host, you don't have to babysit the
-agent. Let it run full-tilt — the blast radius is the box, and the box is
-disposable.
+Because the box has no access to your host, you don't need to approve each
+command the agent runs. The worst an agent can do is break its own box, which
+you delete and recreate.
 
 <Callout title="WHY">
-Auto-approve is safe here. The agent can't reach your files, your keys, or your
-network — so it runs without stopping to ask, and you keep a clean machine.
+Auto-approve is safe here. The agent can't reach your files, keys, or network,
+so it runs without stopping to ask for permission.
 </Callout>
 
-The box keeps everything it built until you `destroy` it — `stop` and `pause`
-preserve it. Lifecycle and resource detail: [Local Docker](/docs/local-docker).
-Running Docker inside: [Docker-in-Docker](/docs/docker-in-docker).
+The box keeps everything it built until you `destroy` it; `stop` and `pause`
+preserve it. See [Local Docker](/docs/local-docker) for the lifecycle and
+[Docker-in-Docker](/docs/docker-in-docker) for running Docker inside a box.
 
 ## Run agents in parallel, switch in under a second
 
-One command creates a box, starts the agent, and attaches you. Run Claude Code,
-Codex, and OpenCode — each in its own box — and let them work at the same time.
+One command creates a box, starts the agent, and attaches you to it. You can run
+Claude Code, Codex, and OpenCode at the same time, each in its own box.
 
 ```bash
 agentbox claude -n feature        # Claude Code on one box
@@ -50,15 +51,14 @@ agentbox codex -n refactor        # Codex on another, in parallel
 agentbox claude attach feature    # jump back to the first
 ```
 
-Each agent runs in a detachable tmux session — press `Ctrl+a d` to detach and it
-keeps working. Switching is instant: idle boxes are **paused**, not stopped, so
-they sit at zero CPU with memory still mapped. `unpause` resumes in well under a
-second and language servers pick up mid-thought.
+Each agent runs in a detachable tmux session. Press `Ctrl+a d` to detach and the
+agent keeps running. Idle boxes are paused rather than stopped, so they use no
+CPU while their memory stays in place. `unpause` resumes in under a second, and
+editors and language servers continue where they left off.
 
 <Callout title="TIP">
-Detach with `Ctrl+a d`, fire up a few more boxes, and let them run. Reattach to
-whichever one you want — switching pauses the one you leave and resumes the one
-you open.
+Detach with `Ctrl+a d` and start more boxes. Reattach to any of them; switching
+pauses the box you leave and resumes the one you open.
 </Callout>
 
 Per-agent detail and auth: [Run an agent](/docs/run-an-agent). Many boxes and
@@ -66,34 +66,34 @@ queued background runs: [Background &amp; parallel](/docs/background-and-paralle
 
 ## Start warm with checkpoints
 
-The first box in a project installs dependencies and warms its caches. Capture
-that with a **checkpoint** — a snapshot of `/workspace` with its `node_modules`,
-build caches, and in-box `.env` files — and every new box boots from it in about
-a second instead of starting from bare code.
+The first box in a project installs dependencies and builds its caches. A
+**checkpoint** saves that state: a snapshot of `/workspace` including
+`node_modules`, build caches, and in-box `.env` files. New boxes boot from the
+checkpoint in about a second instead of installing from scratch.
 
 ```bash
 agentbox checkpoint create alpha --set-default   # save the warm state as the project default
 agentbox create -n warm                          # new box, already warmed up
 ```
 
-The usual move: checkpoint right after the setup wizard finishes or a PR merges,
-so the whole team's boxes start ready. Full mechanics:
+A common pattern is to checkpoint after the setup wizard finishes or a PR merges,
+so later boxes start ready. Full mechanics:
 [Checkpoints &amp; pausing](/docs/checkpoints-and-pausing).
 
 ## Local or in the cloud — same command
 
-The default box is a local Docker container: fast, free, on your own machine.
-When a run outgrows the laptop — heavier builds, a teammate who needs to attach,
-or a public URL to share — point the same commands at a cloud with one flag. The
-clouds hand back **public HTTPS preview URLs**, so the agent's dev server is one
-click away.
+The default box is a local Docker container, which runs on your machine at no
+cost. To run elsewhere, add one flag and the same commands target a cloud
+provider. This helps when a build is too heavy for your laptop, a teammate needs
+to attach, or you want a URL you can share. The cloud providers give each box a
+public HTTPS URL for its dev server.
 
 | Provider | Where the box lives | Reach for it when |
 | --- | --- | --- |
-| `docker` (default) | Local Docker container | Fast, free, fully local — the right default. |
-| `hetzner` | A Hetzner VPS, one per box | You want a real VM you control — root, full kernel, your region. |
+| `docker` (default) | Local Docker container | Fast, free, and fully local. The best default. |
+| `hetzner` | A Hetzner VPS, one per box | You want a real VM you control: root, full kernel, your region. |
 | `daytona` | A managed Daytona sandbox | The work outgrows the laptop or a teammate needs to attach. |
-| `vercel` | A Firecracker microVM | Fast snapshots, public URLs, free pause/resume (no in-box Docker). |
+| `vercel` | A Firecracker microVM | Fast snapshots, public URLs, free pause/resume. No in-box Docker. |
 
 ```bash
 agentbox claude --provider hetzner     # run this agent on a Hetzner VPS
@@ -109,16 +109,16 @@ Each cloud needs a one-time `agentbox prepare --provider <name>` and a login
 
 ## Your real project, isolated git
 
-A box doesn't start from `HEAD` — it starts from what you actually have.
-AgentBox replays your uncommitted work (stash plus untracked files) into the
-box, so the agent picks up exactly where you left off.
+A box doesn't start from `HEAD`. It starts from your current working state:
+AgentBox copies your uncommitted work (a git stash plus untracked files) into the
+box, so the agent picks up where you left off.
 
-Inside, `/workspace` is a git worktree on a fresh per-box branch
-`agentbox/<box-name>`, created against your **real** `.git`. The agent's commits
-land in your repo immediately — but on that isolated branch, never on your
-checked-out branch or working tree. Build artifacts (`node_modules`, `.next`,
-`target`) live in the box and are rebuilt inside Linux, so host binaries never
-leak in.
+Inside the box, `/workspace` is a git worktree on a per-box branch
+`agentbox/<box-name>`, created against your real `.git`. The agent's commits land
+in your repository right away, but only on that branch. Your checked-out branch
+and working tree are never touched. Build artifacts like `node_modules`, `.next`,
+and `target` stay in the box and are rebuilt inside Linux, so host binaries don't
+mix in.
 
 ```bash
 agentbox open mybox     # pull /workspace to a host folder and open it
@@ -129,29 +129,29 @@ back and pushing: [Sync &amp; git](/docs/sync-and-git).
 
 ## Credentials never leave your machine
 
-Boxes carry no SSH keys and no git credentials by design. So how does `git push`
-work? Through the **host relay** — a small host process, started on your first
-run and reused by every box. The agent asks the host to push, open a PR, or open
-a URL; the host does it with **your** identity (SSH agent, `~/.gitconfig`, `gh`
-auth) and streams the result back.
+Boxes hold no SSH keys and no git credentials. `git push` works through the
+**host relay**, a small process that starts on your first run and is shared by
+every box. The agent asks the host to push, open a pull request, or open a URL,
+and the host runs it with your identity (SSH agent, `~/.gitconfig`, `gh` auth)
+and returns the output.
 
 ```console
 $ agentbox-ctl git push
-# the host relay runs `git push` as you — no credentials ever enter the box
+# the host relay runs `git push` as you; no credentials enter the box
 ```
 
 <Callout title="WHY">
-This is the safety model in one line: the agent runs unsupervised inside a sealed
-box, and every push to a remote happens on your machine, as you, only when you
-allow it. Nothing secret crosses into the box.
+The safety model: the agent runs unsupervised inside an isolated box, and every
+push to a remote runs on your machine, as you, only when you allow it. No secrets
+enter the box.
 </Callout>
 
 Push, pull, PRs, and approvals: [Sync &amp; git](/docs/sync-and-git).
 
 ## Next
 
-- Get a project into a box → [Teleport a project](/docs/teleport-a-project)
-- Run an agent → [Run an agent](/docs/run-an-agent)
-- Get inside a box → [Access your box](/docs/access-your-box)
-- Reach its web app or screen → [Web apps &amp; tunnels](/docs/web-apps-and-tunnels), [Browser &amp; screen](/docs/browser-and-screen)
-- Full command list → [the CLI reference](/docs/cli)
+- Get a project into a box: [Teleport a project](/docs/teleport-a-project)
+- Run an agent: [Run an agent](/docs/run-an-agent)
+- Get inside a box: [Access your box](/docs/access-your-box)
+- Reach its web app or screen: [Web apps &amp; tunnels](/docs/web-apps-and-tunnels), [Browser &amp; screen](/docs/browser-and-screen)
+- Full command list: [the CLI reference](/docs/cli)
