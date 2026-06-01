@@ -148,11 +148,24 @@ describe('refuseGhApiWrite', () => {
     expect(refuseGhApiWrite(['--method=DELETE'])?.exitCode).toBe(65);
   });
 
+  it('refuses combined/glued short-flag method forms (pflag accepts them)', () => {
+    expect(refuseGhApiWrite(['-XPOST'])?.exitCode).toBe(65);
+    expect(refuseGhApiWrite(['-X=POST'])?.exitCode).toBe(65);
+    // -XGET glued is still a read — must pass.
+    expect(refuseGhApiWrite(['-XGET'])).toBeNull();
+    expect(refuseGhApiWrite(['-X=get'])).toBeNull();
+  });
+
   it('refuses field flags that auto-switch gh api to POST', () => {
     expect(refuseGhApiWrite(['-f', 'body=hi'])?.exitCode).toBe(65);
     expect(refuseGhApiWrite(['-F', 'in_reply_to=1'])?.exitCode).toBe(65);
     expect(refuseGhApiWrite(['--field', 'body=hi'])?.exitCode).toBe(65);
     expect(refuseGhApiWrite(['--raw-field=body=hi'])?.exitCode).toBe(65);
     expect(refuseGhApiWrite(['--input', '-'])?.exitCode).toBe(65);
+  });
+
+  it('refuses glued short-flag field forms (-fkey=val / -Fkey=val)', () => {
+    expect(refuseGhApiWrite(['-fbody=hi'])?.exitCode).toBe(65);
+    expect(refuseGhApiWrite(['-Fin_reply_to=1'])?.exitCode).toBe(65);
   });
 });

@@ -102,23 +102,38 @@ export function refuseGhApiWrite(args: string[]): GitRpcResult | null {
     stdout: '',
     stderr: `gh api: ${reason} — only read-only (GET) calls are proxied\n`,
   });
+  // `gh` uses Go's pflag, which accepts a short flag's value glued on
+  // (`-XPOST`, `-fbody=hi`) and the `=` form (`-X=POST`, `--method=POST`) in
+  // addition to the space-separated form. The box-side shim's positive flag
+  // allowlist rejects all of these, but this relay-side guard is the last
+  // line of defense for a direct `agentbox-ctl` call — so it must recognize
+  // every spelling, not just the exact-match one.
   for (let i = 0; i < args.length; i++) {
     const arg = args[i] ?? '';
+    // --method / -X with a separately-tokenized value.
     if (arg === '-X' || arg === '--method') {
       const value = (args[i + 1] ?? '').toLowerCase();
       if (value !== 'get') return refuse(`non-GET method '${args[i + 1] ?? ''}'`);
       i++; // consumed the value
       continue;
     }
-    if (arg.startsWith('--method=')) {
-      if (arg.slice('--method='.length).toLowerCase() !== 'get') {
-        return refuse(`non-GET method '${arg.slice('--method='.length)}'`);
-      }
+    // --method=VALUE / -X=VALUE / -XVALUE (glued short form).
+    const methodGlued =
+      arg.startsWith('--method=')
+        ? arg.slice('--method='.length)
+        : arg.startsWith('-X') && arg.length > 2
+          ? arg.slice(2).replace(/^=/, '')
+          : null;
+    if (methodGlued !== null) {
+      if (methodGlued.toLowerCase() !== 'get') return refuse(`non-GET method '${methodGlued}'`);
       continue;
     }
+    // Field flags in any spelling — these auto-switch gh api to POST. No
+    // read-only flag starts with -f / -F, so a prefix match is safe and
+    // catches the glued short forms (`-fbody=hi`, `-Fkey=val`).
     if (
-      arg === '-f' ||
-      arg === '-F' ||
+      arg.startsWith('-f') ||
+      arg.startsWith('-F') ||
       arg === '--field' ||
       arg === '--raw-field' ||
       arg === '--input' ||
