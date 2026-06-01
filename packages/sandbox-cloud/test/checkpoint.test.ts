@@ -72,14 +72,19 @@ describe('manifest lifecycle', () => {
       snapshotName: cloudSnapshotName(projectRoot, 'setup'),
       sourceBoxId: 'abc123',
       sourceBoxName: 'test-cloud-ckpt-abc123',
+      baseProvider: backend,
+      baseFingerprint: 'deadbeefcafef00d',
+      cliVersion: '9.9.9',
     });
-    expect(info.manifest.schema).toBe(1);
+    // Schema 2 carries the base fingerprint so staleness is verifiable.
+    expect(info.manifest.schema).toBe(2);
     expect(info.manifest.name).toBe('setup');
     expect(info.manifest.backend).toBe(backend);
+    expect(info.manifest.baseFingerprint).toBe('deadbeefcafef00d');
     expect(info.manifest.snapshotName).toContain('test_cloud_ckpt');
     // Manifest file lives on disk and is valid JSON.
     const raw = await readFile(join(info.dir, 'manifest.json'), 'utf8');
-    expect(JSON.parse(raw)).toMatchObject({ schema: 1, name: 'setup', backend });
+    expect(JSON.parse(raw)).toMatchObject({ schema: 2, name: 'setup', backend });
 
     // resolve after write → populated
     const resolved = await resolveCloudCheckpoint(projectRoot, backend, 'setup');
