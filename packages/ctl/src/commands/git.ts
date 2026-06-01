@@ -65,6 +65,25 @@ function runLocalGit(args: string[], cwd: string): Promise<number> {
   });
 }
 
+/**
+ * True when the box has a git committer identity configured (`user.email`).
+ * Docker boxes bind-mount the host `~/.gitconfig`, so they do; cloud boxes
+ * (e.g. Vercel's `vscode` user on fresh AL2023) often don't, which makes a
+ * non-fast-forward `git pull` merge fail with "Committer identity unknown".
+ */
+function hasGitIdentity(cwd: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const child = spawn('git', ['config', 'user.email'], {
+      cwd,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    let out = '';
+    child.stdout.on('data', (c: Buffer) => (out += c.toString('utf8')));
+    child.on('close', (code) => resolve(code === 0 && out.trim().length > 0));
+    child.on('error', () => resolve(false));
+  });
+}
+
 export const gitCommand = new Command('git')
   .description('Git operations that need host credentials (routed through the agentbox relay)')
   .addCommand(
@@ -135,7 +154,21 @@ export const gitCommand = new Command('git')
           // Resolve branch via the current HEAD's upstream, falling back to
           // `<remote>/HEAD` so a freshly cloned worktree still pulls.
           const cwd = opts.cwd ?? process.cwd();
-          const mergeArgs = ['merge'];
+          // A non-fast-forward merge writes a merge commit, which needs a
+          // committer identity. Fall back to a generic agentbox identity only
+          // when the box has none of its own — docker boxes inherit the user's
+          // bind-mounted ~/.gitconfig and should keep authoring as the user.
+          // Mirrors the resync merge in sandbox-docker/src/in-box-git.ts.
+          const mergeArgs: string[] = [];
+          if (!(await hasGitIdentity(cwd))) {
+            mergeArgs.push(
+              '-c',
+              'user.name=agentbox',
+              '-c',
+              'user.email=agentbox@users.noreply.github.com',
+            );
+          }
+          mergeArgs.push('merge');
           if (opts.ffOnly) mergeArgs.push('--ff-only');
           mergeArgs.push(`${remote}/HEAD`);
           const mergeCode = await runLocalGit(mergeArgs, cwd);

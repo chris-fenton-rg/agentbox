@@ -35,6 +35,7 @@ export {
   type UploadEnvFilesResult,
 } from './env-files.js';
 export { seedDynamicConfig, type SeedDynamicConfigOptions } from './dynamic-sync.js';
+export { seedGitIdentity, type SeedGitIdentityOptions } from './git-identity.js';
 export { bashScript, quoteShellArg, quoteShellArgv } from './shell.js';
 export {
   makeMockCloudBackend,

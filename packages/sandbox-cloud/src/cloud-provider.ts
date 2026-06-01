@@ -49,6 +49,7 @@ import {
   seedOpencodeModelState,
 } from './agent-credentials.js';
 import { seedDynamicConfig } from './dynamic-sync.js';
+import { seedGitIdentity } from './git-identity.js';
 import {
   cloudSnapshotName,
   listCloudCheckpoints,
@@ -653,6 +654,15 @@ export function createCloudProvider(
         // Static config (plugins/skills/settings) is baked into the snapshot;
         // these two trees change between runs and ship per-box, like credentials.
         await seedDynamicConfig(backend, handle, { workspacePath: req.workspacePath, onLog: log });
+
+        // Configure a git committer identity in the box. Docker inherits the
+        // host's via a bind-mounted ~/.gitconfig; cloud boxes have none, so the
+        // agent's `git commit` and `agentbox git pull`'s merge commit would
+        // fail with "Committer identity unknown". Author as the host user when
+        // resolvable, else a generic agentbox identity. Runs on both fresh and
+        // snapshot boots (idempotent `git config --global`) so a snapshot that
+        // didn't capture ~/.gitconfig can't leave the box identity-less.
+        await seedGitIdentity(backend, handle, { hostRepo: req.workspacePath, onLog: log });
 
         // Copy the env/config files the setup wizard collected (`.env`,
         // `secrets.toml`, `agentbox.yaml`, …) into `/workspace`. The Docker
