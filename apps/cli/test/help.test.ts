@@ -14,10 +14,13 @@ import { dashboardCommand } from '../src/commands/dashboard.js';
 import { daytonaCommand } from '@agentbox/sandbox-daytona/cli';
 import { dockerCommand } from '../src/commands/docker.js';
 import { hetznerCommand } from '@agentbox/sandbox-hetzner/cli';
+import { vercelCommand } from '@agentbox/sandbox-vercel/cli';
 import { destroyCommand } from '../src/commands/destroy.js';
+import { doctorCommand } from '../src/commands/doctor.js';
 import { downloadCommand } from '../src/commands/download.js';
 import { driveCommand } from '../src/commands/drive.js';
 import { forkCommand } from '../src/commands/fork.js';
+import { gitCommand } from '../src/commands/git.js';
 import { installCommand } from '../src/commands/install.js';
 import { listCommand } from '../src/commands/list.js';
 import { logsCommand } from '../src/commands/logs.js';
@@ -79,6 +82,9 @@ function buildProgram(): Command {
     daytonaCommand,
     hetznerCommand,
     dockerCommand,
+    vercelCommand,
+    gitCommand,
+    doctorCommand,
     updateCommand,
     installCommand,
   ]) {
