@@ -485,6 +485,13 @@ export function createCloudProvider(
         typeof networkPolicyOpt === 'string' && networkPolicyOpt.trim() !== ''
           ? networkPolicyOpt.trim()
           : undefined;
+      // Generic VM-size string, resolved per-provider by the call site
+      // (`resolveBoxSize` + `--size` flag). Each backend interprets it natively
+      // (hetzner: server type; daytona: cpu-mem-disk GB); empty/undefined ⇒
+      // backend uses its built-in default.
+      const sizeOpt = req.providerOptions?.['size'];
+      const size =
+        typeof sizeOpt === 'string' && sizeOpt.trim() !== '' ? sizeOpt.trim() : undefined;
 
       // Per-box tokens: `relayToken` authenticates the in-box agent to its
       // in-sandbox relay (`/events`, `/rpc` bearer); `bridgeToken` separately
@@ -560,6 +567,7 @@ export function createCloudProvider(
           image,
           snapshot,
           resources,
+          size,
           timeoutMs,
           exposePorts: exposeServicePorts,
           networkPolicy,
