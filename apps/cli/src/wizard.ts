@@ -162,7 +162,7 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
   let recreateChosen = false;
   if (status.state === 'stale' && fromDefault) {
     const recreate = await confirm({
-      message: `Snapshot "${args.checkpointRef}" is stale (${status.reason}). Recreate it now? (No = use it anyway)`,
+      message: `Snapshot "${args.checkpointRef}" is stale (${status.reason}). Start from base and run Setup Wizard? (No = use it anyway)`,
       initialValue: true,
     });
     if (isCancel(recreate) || !recreate) {
