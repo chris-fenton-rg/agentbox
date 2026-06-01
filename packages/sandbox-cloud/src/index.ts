@@ -43,6 +43,7 @@ export {
   CLOUD_SNAPSHOT_NAME_PREFIX,
   cloudSnapshotName,
   currentCloudBaseFingerprint,
+  listAllCloudCheckpoints,
   listCloudCheckpoints,
   probeCloudCheckpoint,
   removeCloudCheckpointDir,
@@ -50,6 +51,7 @@ export {
   writeCloudCheckpointManifest,
   type CloudCheckpointInfo,
   type CloudCheckpointManifest,
+  type CloudCheckpointProjectGroup,
   type WriteCloudManifestFields,
 } from './checkpoint.js';
 // Re-export host-side agent-config staging from sandbox-docker so cloud

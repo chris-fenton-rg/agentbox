@@ -105,11 +105,12 @@ async function readManifest(dir: string): Promise<CloudCheckpointManifest | null
   }
 }
 
-export async function listCloudCheckpoints(
-  projectRoot: string,
-  backend: string,
-): Promise<CloudCheckpointInfo[]> {
-  const root = backendDir(backend, projectRoot);
+/**
+ * Read every valid cloud checkpoint manifest directly under `root` (a backend's
+ * `<hash>-<mnemonic>` project dir), sorted by `createdAt`. Shared by the scoped
+ * and global listers. Missing root / unreadable manifests are skipped.
+ */
+async function listCloudCheckpointsInDir(root: string): Promise<CloudCheckpointInfo[]> {
   let entries: string[];
   try {
     entries = (await readdir(root, { withFileTypes: true }))
@@ -125,6 +126,44 @@ export async function listCloudCheckpoints(
     if (manifest) out.push({ name, dir, manifest });
   }
   out.sort((a, b) => a.manifest.createdAt.localeCompare(b.manifest.createdAt));
+  return out;
+}
+
+export async function listCloudCheckpoints(
+  projectRoot: string,
+  backend: string,
+): Promise<CloudCheckpointInfo[]> {
+  return listCloudCheckpointsInDir(backendDir(backend, projectRoot));
+}
+
+export interface CloudCheckpointProjectGroup {
+  /** `<hash>-<mnemonic>` dir name under CLOUD_CHECKPOINTS_ROOT/<backend>/. */
+  segment: string;
+  items: CloudCheckpointInfo[];
+}
+
+/**
+ * Every project's cloud checkpoints for `backend`, one group per project dir.
+ * Best-effort: a missing backend root returns `[]`, and segments with zero
+ * valid manifests are dropped. Used by `checkpoints -g`.
+ */
+export async function listAllCloudCheckpoints(
+  backend: string,
+): Promise<CloudCheckpointProjectGroup[]> {
+  const backendRoot = join(CLOUD_CHECKPOINTS_ROOT, backend);
+  let segments: string[];
+  try {
+    segments = (await readdir(backendRoot, { withFileTypes: true }))
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name);
+  } catch {
+    return [];
+  }
+  const out: CloudCheckpointProjectGroup[] = [];
+  for (const segment of segments) {
+    const items = await listCloudCheckpointsInDir(join(backendRoot, segment));
+    if (items.length > 0) out.push({ segment, items });
+  }
   return out;
 }
 

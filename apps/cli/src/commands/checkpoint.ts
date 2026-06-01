@@ -1,8 +1,10 @@
 import { confirm, isCancel, log } from '@clack/prompts';
 import { Command } from 'commander';
+import { basename } from 'node:path';
 import {
   defaultCheckpointConfigKey,
   findProjectRoot,
+  listProjectsConfigured,
   loadEffectiveConfig,
   resolveDefaultCheckpoint,
   setConfigValue,
@@ -14,13 +16,20 @@ import {
   clearRelayNotice,
   createCheckpoint,
   inspectBox,
+  listAllCheckpoints,
   listCheckpoints,
   removeCheckpoint,
   setRelayNotice,
   startBox,
   unpauseBox,
 } from '@agentbox/sandbox-docker';
-import { listCloudCheckpoints, resolveCloudCheckpoint } from '@agentbox/sandbox-cloud';
+import type { CheckpointInfo } from '@agentbox/sandbox-docker';
+import {
+  listAllCloudCheckpoints,
+  listCloudCheckpoints,
+  resolveCloudCheckpoint,
+} from '@agentbox/sandbox-cloud';
+import type { CloudCheckpointInfo } from '@agentbox/sandbox-cloud';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
@@ -156,10 +165,106 @@ const createSub = new Command('create')
     }
   });
 
+/** One docker checkpoint row, marked ` *default` when it matches `def`. */
+function dockerRow(c: CheckpointInfo, def: string): string {
+  const flag = c.name === def ? ' *default' : '';
+  return `${c.name}  docker (${c.manifest.type})  from ${c.manifest.sourceBoxName}  ${c.manifest.createdAt}${flag}\n`;
+}
+
+/** One cloud checkpoint row, marked ` *default` when it matches `def`. */
+function cloudRow(c: CloudCheckpointInfo, backend: string, def: string): string {
+  const flag = c.name === def ? ' *default' : '';
+  return `${c.name}  ${backend} (snapshot)  from ${c.manifest.sourceBoxName}  ${c.manifest.createdAt}${flag}\n`;
+}
+
+/**
+ * Print every project's checkpoints (docker + cloud), grouped by project. The
+ * checkpoint dirs are the source of truth (a checkpoint can outlive its
+ * project's config dir); `listProjectsConfigured` only supplies the
+ * human-readable root for labeling and per-project default resolution.
+ */
+async function listAllProjects(): Promise<void> {
+  // hash (leading 16 hex of the dir segment) -> project root path.
+  const projects = await listProjectsConfigured();
+  const rootByHash = new Map(projects.map((p) => [p.hash, p.originalPath]));
+
+  const dockerGroups = await listAllCheckpoints();
+  const cloudGroups = await Promise.all(
+    CLOUD_BACKENDS.map(async (backend) => ({
+      backend,
+      groups: await listAllCloudCheckpoints(backend),
+    })),
+  );
+
+  // Merge docker + every cloud backend into one entry per project segment.
+  interface Merged {
+    projectRoot?: string;
+    docker: CheckpointInfo[];
+    cloud: { backend: CloudBackend; items: CloudCheckpointInfo[] }[];
+  }
+  const bySegment = new Map<string, Merged>();
+  const ensure = (segment: string): Merged => {
+    let m = bySegment.get(segment);
+    if (!m) {
+      m = { projectRoot: rootByHash.get(segment.slice(0, 16)), docker: [], cloud: [] };
+      bySegment.set(segment, m);
+    }
+    return m;
+  };
+  for (const g of dockerGroups) ensure(g.segment).docker = g.items;
+  for (const { backend, groups } of cloudGroups) {
+    for (const g of groups) ensure(g.segment).cloud.push({ backend, items: g.items });
+  }
+
+  if (bySegment.size === 0) {
+    process.stdout.write('no checkpoints found\n');
+    return;
+  }
+
+  // Sort by label (basename) then segment so output is stable and readable.
+  const entries = [...bySegment.entries()].sort(([sa, a], [sb, b]) => {
+    const la = a.projectRoot ? basename(a.projectRoot) : sa;
+    const lb = b.projectRoot ? basename(b.projectRoot) : sb;
+    return la.localeCompare(lb) || sa.localeCompare(sb);
+  });
+
+  let first = true;
+  for (const [segment, m] of entries) {
+    // Resolve per-provider defaults only when the project root is known; an
+    // orphan segment (config GC'd) has no config to resolve against. The
+    // `*default` marker is cosmetic, so a single corrupt config falls back to
+    // empty defaults rather than aborting the whole global listing.
+    let defDocker = '';
+    const defCloud = new Map<CloudBackend, string>();
+    if (m.projectRoot) {
+      const cfg = await loadEffectiveConfig(m.projectRoot).catch(() => null);
+      if (cfg) {
+        defDocker = resolveDefaultCheckpoint(cfg.effective, 'docker');
+        for (const { backend } of m.cloud) {
+          defCloud.set(backend, resolveDefaultCheckpoint(cfg.effective, backend));
+        }
+      }
+    }
+    const label = m.projectRoot ? basename(m.projectRoot) : segment;
+    const loc = m.projectRoot ?? '(project config not found)';
+    process.stdout.write(`${first ? '' : '\n'}${label}  (${loc})\n`);
+    first = false;
+    for (const c of m.docker) process.stdout.write(`  ${dockerRow(c, defDocker)}`);
+    for (const { backend, items } of m.cloud) {
+      for (const c of items) process.stdout.write(`  ${cloudRow(c, backend, defCloud.get(backend) ?? '')}`);
+    }
+  }
+}
+
 const lsSub = new Command('ls')
-  .description("List this project's checkpoints (both docker and cloud)")
-  .action(async () => {
+  .description("List this project's checkpoints (both docker and cloud); -g for all projects")
+  .option('-g, --global', 'include checkpoints from all projects')
+  .action(async (opts: { global?: boolean }) => {
     try {
+      if (opts.global) {
+        await listAllProjects();
+        return;
+      }
       const projectRoot = (await findProjectRoot(process.cwd())).root;
       const cfg = await loadEffectiveConfig(projectRoot);
       // Resolve per-provider so the `*default` marker tracks which one the
@@ -182,17 +287,11 @@ const lsSub = new Command('ls')
         return;
       }
       for (const c of dockerList) {
-        const flag = c.name === defDocker ? ' *default' : '';
-        process.stdout.write(
-          `${c.name}  docker (${c.manifest.type})  from ${c.manifest.sourceBoxName}  ${c.manifest.createdAt}${flag}\n`,
-        );
+        process.stdout.write(dockerRow(c, defDocker));
       }
       for (const { backend, def, items } of cloudLists) {
         for (const c of items) {
-          const flag = c.name === def ? ' *default' : '';
-          process.stdout.write(
-            `${c.name}  ${backend} (snapshot)  from ${c.manifest.sourceBoxName}  ${c.manifest.createdAt}${flag}\n`,
-          );
+          process.stdout.write(cloudRow(c, backend, def));
         }
       }
     } catch (err) {

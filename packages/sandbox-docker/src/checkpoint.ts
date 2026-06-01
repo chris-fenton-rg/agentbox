@@ -126,8 +126,12 @@ async function readManifest(dir: string): Promise<CheckpointManifest | null> {
   }
 }
 
-export async function listCheckpoints(projectRoot: string): Promise<CheckpointInfo[]> {
-  const root = projectCheckpointsDir(projectRoot);
+/**
+ * Read every valid checkpoint manifest directly under `root` (a project's
+ * `<hash>-<mnemonic>` dir), sorted by `createdAt`. Shared by the scoped and
+ * global listers. Missing root / unreadable manifests are skipped.
+ */
+async function listCheckpointsInDir(root: string): Promise<CheckpointInfo[]> {
   let entries: string[];
   try {
     entries = (await readdir(root, { withFileTypes: true }))
@@ -143,6 +147,39 @@ export async function listCheckpoints(projectRoot: string): Promise<CheckpointIn
     if (manifest) out.push({ name, dir, manifest });
   }
   out.sort((a, b) => a.manifest.createdAt.localeCompare(b.manifest.createdAt));
+  return out;
+}
+
+export async function listCheckpoints(projectRoot: string): Promise<CheckpointInfo[]> {
+  return listCheckpointsInDir(projectCheckpointsDir(projectRoot));
+}
+
+export interface CheckpointProjectGroup {
+  /** `<hash>-<mnemonic>` dir name under CHECKPOINTS_ROOT. */
+  segment: string;
+  items: CheckpointInfo[];
+}
+
+/**
+ * Every project's docker checkpoints, one group per project dir. Mirrors
+ * `listAllCheckpointImages`' two-level scan but returns the full manifests so
+ * `checkpoints -g` can render them. Best-effort: missing root / unreadable
+ * project dirs are skipped, and segments with zero valid manifests are dropped.
+ */
+export async function listAllCheckpoints(): Promise<CheckpointProjectGroup[]> {
+  let segments: string[];
+  try {
+    segments = (await readdir(CHECKPOINTS_ROOT, { withFileTypes: true }))
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name);
+  } catch {
+    return [];
+  }
+  const out: CheckpointProjectGroup[] = [];
+  for (const segment of segments) {
+    const items = await listCheckpointsInDir(join(CHECKPOINTS_ROOT, segment));
+    if (items.length > 0) out.push({ segment, items });
+  }
   return out;
 }
 
