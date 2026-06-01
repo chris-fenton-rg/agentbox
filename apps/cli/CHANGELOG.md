@@ -9,6 +9,65 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.12.0] - 2026-06-01
+
+### Breaking
+
+- `agentbox fork` replaced the opt-in `--carry-yes` flag with an opt-out
+  `--carry <mode>`. Fork now copies the declared `carry:` files into the box
+  by default; pass `--carry skip` to opt out. Scripts passing `--carry-yes`
+  to `fork` must drop it.
+
+### Added
+
+- On agent-session start (`claude` / `codex` / `opencode`, including `-i`) and
+  on create-from-checkpoint, the box now resyncs with the host workspace:
+  it merges the host's current branch and overlays uncommitted + untracked
+  changes (box wins conflicts, skipped paths surfaced to the agent). Gated by
+  `box.resyncOnStart` (default on) / `--no-resync`. Docker only for now.
+- `agentbox checkpoints -g` / `--global` lists checkpoints across every
+  project, grouped and labeled by project root (mirrors `agentbox list -g`).
+- Expanded the relay `gh` proxy: `gh pr diff` / `gh pr checks`,
+  `gh run list` / `view` / `rerun`, allowlisted read-only `gh api` (GET), and
+  posting PR review comments via `gh api` POST without a prompt.
+- `agentbox fork --plan <path>` carries a Claude Code plan into the box and
+  launches `claude` in plan mode, resuming from the plan.
+- `agentbox create --size` plus `box.size` config with per-provider overrides
+  (`box.sizeDaytona` / `box.sizeHetzner`, etc.). Hetzner reads it as a
+  `server_type`; Daytona parses `cpu-memory-disk` GB.
+- Per-provider `box.image` keys (`box.imageDocker` / `box.imageDaytona` /
+  `box.imageHetzner` / `box.imageVercel`) so a `prepare` on one provider no
+  longer overwrites another's base image.
+- Boxes are now seeded with your `~/.claude/workflows/` and the project's
+  `memory/` at create, refreshed incrementally per-box rather than baked into
+  the snapshot. Works on docker, daytona, hetzner, and vercel.
+- `-i` queued background runs now honor the `carry:` block (previously dropped).
+
+### Changed
+
+- `agentbox install` (and `pnpm register`) now symlink the host skills when run
+  from a source checkout, so edits to the bundled skills are picked up live; an
+  installed package still copies.
+- Folded the orphan `git`, `vercel`, and `doctor` commands into the Advanced
+  group in `agentbox --help`.
+
+### Fixed
+
+- The setup wizard no longer silently boots from a stale default checkpoint. A
+  default snapshot captured against a since-rebuilt base (or a dead
+  image/snapshot) is now detected: interactive runs re-prompt (recreate vs use
+  anyway), and `-y`/non-interactive runs discard it and provision from the
+  current base. Explicit `--snapshot` is still honored as-is.
+- Cloud boxes (vercel / hetzner / daytona) now get a git committer identity at
+  create, mirroring the host repo's, so the agent's commits and
+  `agentbox git pull` merge commits no longer fail with "Committer identity
+  unknown".
+- `agentbox prepare` now always migrates a stale generic `box.image` left by an
+  older version, not just when it writes a new snapshot.
+- A host skill symlinked outside the box-mounted trees (common in dev checkouts)
+  no longer aborts the whole `~/.claude` sync.
+- A single corrupt project config no longer aborts `agentbox checkpoints -g`.
+
 ## [0.11.3] - 2026-05-31
 
 ### Changed
