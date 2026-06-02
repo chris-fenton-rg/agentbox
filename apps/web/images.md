@@ -57,24 +57,29 @@ osascript \
   -e "tell application \"iTerm\" to tell current session of b to write text \"cd $PWD && agentbox claude --provider docker -n web\""
 ```
 
-Give the hero box a task so the agent is visibly working **and opens its browser**
-(that gives noVNC real content). Send it into the box's `claude` tmux session
-(same trick used to `/clear`):
+Give the hero box a real task (`express-ready` is a tiny Express HTTP server, so
+"improve the home page" produces a visible result for the web-app and noVNC shots).
+Send the prompt into the box's `claude` tmux session (same trick used to `/clear`):
 
 ```bash
 SESS=$(docker exec agentbox-web bash -lc "tmux ls 2>/dev/null | grep -i '^claude:' | head -1 | cut -d: -f1")
-docker exec agentbox-web bash -lc "tmux send-keys -t '${SESS:-claude}' 'Open http://localhost:3000 in your browser, confirm it returns the greeting, then add a /health route to server.js' Enter"
+docker exec agentbox-web bash -lc "tmux send-keys -t '${SESS:-claude}' 'Improve the home page of this Express app — turn it into a clean landing page, then restart the web service so the change is live.' Enter"
 ```
 
 **Two more boxes across providers**, with background tasks (they show
-`claude:working` in `ls`/dashboard; provider variety for the `ls` shot):
+`claude:working` in `ls`/dashboard; provider variety for the `ls` shot). One is a
+**plan** so the dashboard/ls can show an agent in plan mode:
 
 ```bash
-agentbox claude --provider hetzner -n api   -i "Add request logging to server.js and summarise the service"
-agentbox claude --provider vercel  -n cloud -i "Write a short README section describing the endpoints"
+agentbox claude --provider hetzner -n api   -i "Plan a todo app: write a detailed implementation plan. Don't write any code yet."
+agentbox claude --provider vercel  -n cloud -i "Add a /health endpoint to server.js that returns 200 OK."
 
-agentbox ls                  # web (docker) + api (hetzner) + cloud (vercel)
+agentbox ls                  # web (docker, improving the home page) + api (hetzner, planning) + cloud (vercel)
 ```
+
+> Let the **`web`** agent finish "improve the home page" (and the service restart)
+> before the Phase A captures below — the web-app and noVNC shots should show the
+> *new* home.
 
 **Cleanup (after all captures):**
 
@@ -179,7 +184,8 @@ above, or type it.
 
 ### Phase A — Headless browser (boxes running)
 
-**`web-app.png`** → web-apps-and-tunnels. The express app at `<box>.localhost`.
+**`web-app.png`** → web-apps-and-tunnels. The improved Express home page at
+`<box>.localhost` (capture after the `web` agent finishes).
 
 ```bash
 agentbox url web --print          # -> https://web.localhost
@@ -189,12 +195,17 @@ playwright-cli --session=b screenshot
 ```
 
 **`novnc-desktop.png`** → access-your-box, browser-and-screen. The box desktop with
-the in-box Chromium (showing the app the agent opened).
+the in-box Chromium showing the box's web app.
+
+**Capture this LAST**, on the **`web`** box, once "improve the home page" has
+finished — so the desktop shows the new landing page. `agentbox screen` both prints
+the noVNC URL **and** launches an in-box Chromium pointed at the box's web app
+(`localhost:3000`), so the desktop already has the app on screen.
 
 ```bash
-agentbox screen web --print       # -> https://web.localhost/vnc.html?autoconnect=1&password=...
+agentbox screen web --print       # starts the in-box Chromium on the app; prints https://web.localhost/vnc.html?autoconnect=1&password=...
 playwright-cli --session=v open "<that URL>"
-# wait ~5s for the canvas to connect and Chromium to paint, then:
+# wait ~5s for the noVNC canvas to connect and Chromium to paint the home page, then:
 playwright-cli --session=v resize 1044 800
 playwright-cli --session=v screenshot
 ```
