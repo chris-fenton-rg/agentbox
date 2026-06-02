@@ -143,7 +143,7 @@ in your attached session; it defaults to *no*, so nothing reaches your remotes
 unless you say yes.
 
 ```console
-$ agentbox-ctl git push
+$ git push   # the box's git shim routes this through the relay (or: agentbox-ctl git push)
 # pauses for your approval on the host, then runs `git push` as you;
 # no credentials ever enter the box
 ```
