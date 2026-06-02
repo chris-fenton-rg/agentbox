@@ -15,7 +15,7 @@ Use the /screenshot skill to capture screenshots of terminal windows and GUI win
 
 | Image | Used by (doc figures) | Status | Phase |
 |-------|------------------------|--------|-------|
-| `web-app.png` | web-apps-and-tunnels | done (2026-06-02) | A |
+| `web-app.png` | web-apps-and-tunnels | done (2026-06-02, wrapped in a browser chrome showing the web.localhost address bar) | A |
 | `novnc-desktop.png` | access-your-box, browser-and-screen | done (2026-06-02, in-box browser shows the app; wrapped in a fake browser chrome → browser-in-browser) | A |
 | `agentbox-ls.png` | background-and-parallel | done (2026-06-02, recaptured) | B |
 | `dashboard.png` | access-your-box, background-and-parallel, cli | done (2026-06-02, recaptured) | C |
@@ -217,14 +217,24 @@ above, or type it.
 ### Phase A — Headless browser (boxes running)
 
 **`web-app.png`** → web-apps-and-tunnels. The improved Express home page at
-`<box>.localhost` (capture after the `web` agent finishes).
+`<box>.localhost` (capture after the `web` agent finishes), then wrapped in a
+fake browser chrome so the `https://web.localhost` address bar is visible (the
+figure is about the URL story).
 
 ```bash
 agentbox url web --print          # -> https://web.localhost
 playwright-cli --session=b open "https://web.localhost"
 playwright-cli --session=b resize 1100 720
-playwright-cli --session=b screenshot
+playwright-cli --session=b screenshot   # raw page -> /tmp/webapp-inner.png
 ```
+
+> **Then wrap it in a browser frame** (same on-brand chrome as `novnc-desktop`,
+> minus the browser-in-browser nesting): one tab (`hello from agentbox`, green
+> favicon), an address bar showing `🔒 https://web.localhost`, a star. Build the
+> HTML wrapper (`/tmp/webapp-frame.html`, `<img src="webapp-inner.png">`), serve
+> over http, `playwright-cli resize 1196 920 && screenshot`, crop to `1196x898`
+> (even 44px paper margin). Reuse the `novnc-frame.html` markup — only the tab
+> label, the address `host`, and the inner image change.
 
 **`novnc-desktop.png`** → access-your-box, browser-and-screen. The box desktop with
 the in-box Chromium showing the box's web app.
