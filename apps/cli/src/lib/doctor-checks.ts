@@ -21,14 +21,14 @@ export interface CheckResult {
 }
 
 export interface CheckGroup {
-  /** Group title: 'system' | 'docker' | 'daytona' | 'hetzner' | 'vercel'. */
+  /** Group title: 'system' | 'docker' | 'daytona' | 'hetzner' | 'vercel' | 'e2b'. */
   title: string;
   results: CheckResult[];
 }
 
-export type ProviderName = 'docker' | 'daytona' | 'hetzner' | 'vercel';
+export type ProviderName = 'docker' | 'daytona' | 'hetzner' | 'vercel' | 'e2b';
 
-const ALL_PROVIDERS: ProviderName[] = ['docker', 'daytona', 'hetzner', 'vercel'];
+const ALL_PROVIDERS: ProviderName[] = ['docker', 'daytona', 'hetzner', 'vercel', 'e2b'];
 const NODE_MIN_MAJOR = 20;
 const NODE_MIN_MINOR = 10;
 
@@ -330,6 +330,37 @@ async function vercelChecks(): Promise<CheckResult[]> {
   }
 }
 
+async function e2bChecks(): Promise<CheckResult[]> {
+  try {
+    const mod = await import('@agentbox/sandbox-e2b');
+    const cred = mod.readE2bCredStatus();
+    const credRes: CheckResult =
+      cred.auth === 'none'
+        ? {
+            label: 'credentials',
+            status: 'warn',
+            detail: 'not configured',
+            hint: '`agentbox e2b login`',
+          }
+        : {
+            label: 'credentials',
+            status: 'ok',
+            detail: `${cred.auth} (${cred.source})`,
+          };
+    // Task 1 boots from the default `base` template at create-time; no prepared
+    // snapshot to probe yet. Task 2 adds `agentbox prepare --provider e2b`.
+    return [credRes];
+  } catch (err) {
+    return [
+      {
+        label: 'credentials',
+        status: 'warn',
+        detail: errSummary(err),
+      },
+    ];
+  }
+}
+
 export async function runProviderChecks(name: ProviderName): Promise<CheckGroup> {
   let results: CheckResult[];
   switch (name) {
@@ -344,6 +375,9 @@ export async function runProviderChecks(name: ProviderName): Promise<CheckGroup>
       break;
     case 'vercel':
       results = await vercelChecks();
+      break;
+    case 'e2b':
+      results = await e2bChecks();
       break;
   }
   return { title: name, results };

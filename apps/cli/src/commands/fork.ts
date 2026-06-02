@@ -122,7 +122,7 @@ export const forkCommand = new Command('fork')
   )
   .option(
     '--provider <name>',
-    "sandbox backend: 'docker' (default), 'daytona', or 'hetzner', or 'vercel'",
+    "sandbox backend: 'docker' (default), 'daytona', 'hetzner', 'vercel', or 'e2b'",
   )
   .option('-n, --name <name>', 'box name (default: fork-<HHMMSS>)')
   .option(

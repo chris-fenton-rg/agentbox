@@ -336,6 +336,7 @@ const PROVIDER_HINTS: Record<ProviderName, string> = {
   hetzner: 'paste an API token from the Hetzner Console',
   daytona: 'approve a browser sign-in link',
   vercel: 'installs the Vercel sandbox CLI, then a browser sign-in',
+  e2b: 'paste an API key from the E2B dashboard',
 };
 
 const PROVIDER_LABEL: Record<ProviderName, string> = {
@@ -343,6 +344,7 @@ const PROVIDER_LABEL: Record<ProviderName, string> = {
   hetzner: 'Hetzner (cloud VPS)',
   daytona: 'Daytona (cloud sandbox)',
   vercel: 'Vercel (cloud microVM)',
+  e2b: 'E2B (cloud microVM)',
 };
 
 function ensureTty(): boolean {
@@ -394,17 +396,30 @@ async function runProviderLogin(name: ProviderName): Promise<boolean> {
     await mod.ensureHetznerCredentials();
     return true;
   }
-  // vercel
-  const mod = await import('@agentbox/sandbox-vercel');
-  const status = mod.readVercelCredStatus();
-  if (status.auth !== 'none') {
-    log.info(`vercel: already configured (${status.auth})`);
-    const rotate = await confirm({ message: 'Re-authenticate Vercel?', initialValue: false });
-    if (isCancel(rotate)) return false;
-    if (rotate) await mod.ensureVercelCredentials({ force: true });
+  if (name === 'vercel') {
+    const mod = await import('@agentbox/sandbox-vercel');
+    const status = mod.readVercelCredStatus();
+    if (status.auth !== 'none') {
+      log.info(`vercel: already configured (${status.auth})`);
+      const rotate = await confirm({ message: 'Re-authenticate Vercel?', initialValue: false });
+      if (isCancel(rotate)) return false;
+      if (rotate) await mod.ensureVercelCredentials({ force: true });
+      return true;
+    }
+    await mod.ensureVercelCredentials();
     return true;
   }
-  await mod.ensureVercelCredentials();
+  // e2b
+  const mod = await import('@agentbox/sandbox-e2b');
+  const status = mod.readE2bCredStatus();
+  if (status.auth !== 'none') {
+    log.info(`e2b: already configured (${status.auth})`);
+    const rotate = await confirm({ message: 'Re-authenticate E2B?', initialValue: false });
+    if (isCancel(rotate)) return false;
+    if (rotate) await mod.ensureE2bCredentials({ force: true });
+    return true;
+  }
+  await mod.ensureE2bCredentials();
   return true;
 }
 
@@ -422,7 +437,7 @@ function tutorialBody(provider: ProviderName): string {
   );
 }
 
-const KNOWN_PROVIDERS: ProviderName[] = ['docker', 'hetzner', 'daytona', 'vercel'];
+const KNOWN_PROVIDERS: ProviderName[] = ['docker', 'hetzner', 'daytona', 'vercel', 'e2b'];
 
 function isProviderName(s: string): s is ProviderName {
   return (KNOWN_PROVIDERS as readonly string[]).includes(s);

@@ -116,6 +116,10 @@ export async function resolveCloudBackend(name: string): Promise<CloudBackend> {
     const pkg = '@agentbox/sandbox-' + 'vercel';
     return loadCloudBackend(pkg, async () => ((await import(pkg)) as { vercelBackend: CloudBackend }).vercelBackend);
   }
+  if (name === 'e2b') {
+    const pkg = '@agentbox/sandbox-' + 'e2b';
+    return loadCloudBackend(pkg, async () => ((await import(pkg)) as { e2bBackend: CloudBackend }).e2bBackend);
+  }
   throw new Error(`no host executor for cloud backend '${name}'`);
 }
 

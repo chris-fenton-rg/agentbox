@@ -8,9 +8,9 @@
 import type { EffectiveConfig } from '@agentbox/config';
 import type { BoxRecord, Provider, ProviderName } from '@agentbox/core';
 
-export type KnownProviderName = 'docker' | 'daytona' | 'hetzner' | 'vercel';
+export type KnownProviderName = 'docker' | 'daytona' | 'hetzner' | 'vercel' | 'e2b';
 
-const KNOWN: readonly KnownProviderName[] = ['docker', 'daytona', 'hetzner', 'vercel'];
+const KNOWN: readonly KnownProviderName[] = ['docker', 'daytona', 'hetzner', 'vercel', 'e2b'];
 
 export function isKnownProvider(name: string): name is KnownProviderName {
   return (KNOWN as readonly string[]).includes(name);
@@ -53,6 +53,15 @@ export async function getProvider(name: ProviderName): Promise<Provider> {
       const mod = await import('@agentbox/sandbox-vercel');
       await mod.ensureVercelCredentials();
       return mod.vercelProvider;
+    }
+    case 'e2b': {
+      // Same lazy-import pattern. `ensureE2bCredentials` walks the user
+      // through `agentbox e2b login` (single API key) on first use. Task 1
+      // boots from E2B's default `base` template at create-time — no
+      // base-snapshot gate yet; Task 2 will add `prepare` + the gate.
+      const mod = await import('@agentbox/sandbox-e2b');
+      await mod.ensureE2bCredentials();
+      return mod.e2bProvider;
     }
     default:
       throw new Error(`unknown sandbox provider: ${String(name)}`);

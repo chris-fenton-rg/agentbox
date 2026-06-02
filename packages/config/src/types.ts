@@ -12,7 +12,7 @@ export type IdeFlavor = 'vscode' | 'cursor' | 'auto';
 export type EngineKind = 'orbstack' | 'docker-desktop' | 'other' | 'auto';
 export type BrowserKind = 'agent-browser' | 'playwright' | 'both';
 /** Sandbox backend new boxes are created on. */
-export type ProviderKind = 'docker' | 'daytona' | 'hetzner' | 'vercel';
+export type ProviderKind = 'docker' | 'daytona' | 'hetzner' | 'vercel' | 'e2b';
 /** Where `agentbox claude|codex|opencode` opens the attached session when the host
  *  shell is running inside tmux, cmux, or iTerm2. `same` keeps today's inline behavior. */
 export type AttachOpenIn = 'split' | 'window' | 'tab' | 'same';
@@ -403,9 +403,9 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
   {
     key: 'box.provider',
     type: 'enum',
-    enumValues: ['docker', 'daytona', 'hetzner', 'vercel'] as const,
+    enumValues: ['docker', 'daytona', 'hetzner', 'vercel', 'e2b'] as const,
     description:
-      'Sandbox backend new boxes are created on: local Docker containers, Daytona Cloud sandboxes, Hetzner Cloud VPSes, or Vercel Sandboxes.',
+      'Sandbox backend new boxes are created on: local Docker containers, Daytona Cloud sandboxes, Hetzner Cloud VPSes, Vercel Sandboxes, or E2B microVMs.',
   },
   {
     key: 'box.hostSnapshot',

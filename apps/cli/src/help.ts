@@ -36,6 +36,7 @@ export const HELP_GROUPS: HelpGroup[] = [
       'daytona',
       'hetzner',
       'vercel',
+      'e2b',
     ],
   },
 ];

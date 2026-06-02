@@ -15,6 +15,8 @@ export async function cloudBackendForProvider(
       return (await import('@agentbox/sandbox-hetzner')).hetznerBackend;
     case 'vercel':
       return (await import('@agentbox/sandbox-vercel')).vercelBackend;
+    case 'e2b':
+      return (await import('@agentbox/sandbox-e2b')).e2bBackend;
     default:
       return null;
   }

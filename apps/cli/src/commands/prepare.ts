@@ -242,7 +242,7 @@ export async function runPrepare(
   opts: RunPrepareOptions = {},
 ): Promise<void> {
   if (!isKnownProvider(providerName)) {
-    process.stderr.write('error: --provider must be one of: docker, daytona, hetzner, vercel\n');
+    process.stderr.write('error: --provider must be one of: docker, daytona, hetzner, vercel, e2b\n');
     process.exit(1);
   }
 
@@ -346,7 +346,7 @@ export const prepareCommand = new Command('prepare')
   )
   .option(
     '-p, --provider <name>',
-    'provider to prepare (docker | daytona | hetzner | vercel). Omit for status-only.',
+    'provider to prepare (docker | daytona | hetzner | vercel | e2b). Omit for status-only.',
   )
   .option('-n, --name <name>', 'snapshot name (Daytona only; default: agentbox-base-<timestamp>)')
   .option('-f, --force', 'rebuild even if the image / snapshot already exists')

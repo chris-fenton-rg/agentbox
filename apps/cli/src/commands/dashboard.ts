@@ -59,7 +59,7 @@ interface DashboardOptions {
  * lifetime semantics. Add future no-SSH providers here.
  */
 function providerSupportsKeepAlive(provider: BoxRecord['provider']): boolean {
-  return provider === 'vercel';
+  return provider === 'vercel' || provider === 'e2b';
 }
 
 /**

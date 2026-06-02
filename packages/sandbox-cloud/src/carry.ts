@@ -168,7 +168,14 @@ async function uploadOneEntry(args: UploadOneArgs): Promise<void> {
   // Scoped explicitly to Vercel rather than relying on other backends ignoring
   // `user:` — Hetzner/Daytona keep their existing (working) carry path
   // unchanged even if they start honoring `user` later.
-  const execOpts = args.backend.name === 'vercel' ? { user: 'root' as const } : undefined;
+  // E2B joins the vercel carve-out: its default exec runs as `vscode` (uid
+  // 1000), which cannot `chown` files to other uids. The carry chain ends with
+  // a `chown -R 1000:1000`, so as vscode it errors with "Operation not
+  // permitted" and the parent-chain loop never reaches its terminator. Forcing
+  // root makes the chown a no-op (target uid matches existing owner) and lets
+  // the parent-chain walk complete.
+  const wantsRoot = args.backend.name === 'vercel' || args.backend.name === 'e2b';
+  const execOpts = wantsRoot ? { user: 'root' as const } : undefined;
   const res = await args.backend.exec(args.handle, cmd, execOpts);
   if (res.exitCode !== 0) {
     throw new Error(
