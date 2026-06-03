@@ -55,6 +55,7 @@ import {
   seedOpencodeModelState,
 } from './agent-credentials.js';
 import { seedDynamicConfig } from './dynamic-sync.js';
+import { seedClaudeJsonAtCreate } from './claude-json-overlay.js';
 import { seedGitIdentity } from './git-identity.js';
 import {
   cloudSnapshotName,
@@ -653,6 +654,17 @@ export function createCloudProvider(
         // credentials volume, so it is absent from `agentVolumes.agents` above
         // yet still needs the model seeded.
         await seedOpencodeModelState(backend, handle, { onLog: log });
+
+        // Overlay the in-box ~/.claude/_claude.json from the host's current
+        // ~/.claude.json on every create. Without this, E2B (which doesn't
+        // bake _claude.json at prepare-time) shows the first-run theme picker,
+        // and vercel/hetzner/daytona inherit whatever onboarding state the
+        // host had at prepare-time (stale if the user completed onboarding
+        // after `agentbox prepare`). The payload is one tiny JSON file.
+        await seedClaudeJsonAtCreate(backend, handle, {
+          hostWorkspace: req.workspacePath,
+          onLog: log,
+        });
 
         // Seed the host's dynamic Claude config — global ~/.claude/workflows/
         // and this project's memory/ — incrementally on every create. Runs on

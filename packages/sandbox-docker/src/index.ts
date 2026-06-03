@@ -185,6 +185,7 @@ export {
 } from './relay.js';
 export {
   stageClaudeStaticForUpload,
+  stageClaudeJsonOnlyForUpload,
   stageClaudeCredentialsForUpload,
   stageCodexStaticForUpload,
   stageCodexCredentialsForUpload,

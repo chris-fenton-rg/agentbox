@@ -29,11 +29,6 @@ import { requireDockerProvider } from './_provider-guard.js';
 
 const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
 
-/** Wrap a string in single quotes for safe embedding in a shell command. */
-function shellSingle(s: string): string {
-  return "'" + s.replace(/'/g, "'\\''") + "'";
-}
-
 interface ShellOptions {
   user?: string;
   login?: boolean;
@@ -224,14 +219,26 @@ export const shellCommand = new Command('shell')
       // but goes over the SSH token Daytona mints per attach.
       if ((box.provider ?? 'docker') !== 'docker') {
         const provider = await providerForBox(box);
+        const oneShot = effectiveCmd.length > 0;
+
+        // One-shot (`agentbox shell <box> -- cmd`) goes through the backend
+        // `exec` primitive, not the interactive PTY attach. The PTY path
+        // (buildAttach) always allocates a TTY and the wrapper waits for it
+        // to close — fine for `tmux attach`, but hangs forever on a plain
+        // `whoami`. exec is the same primitive used at create-time and for
+        // file ops; it returns when the command exits.
+        if (oneShot) {
+          const argv = ['bash', login ? '-lc' : '-c', effectiveCmd.join(' ')];
+          const r = await provider.exec(box, argv, { user });
+          if (r.stdout) process.stdout.write(r.stdout);
+          if (r.stderr) process.stderr.write(r.stderr);
+          process.exit(r.exitCode);
+        }
+
         if (!provider.buildAttach) {
           throw new Error(`provider '${provider.name}' does not support interactive attach`);
         }
-        const innerCmd =
-          effectiveCmd.length > 0
-            ? (login ? `bash -l -c ${shellSingle(effectiveCmd.join(' '))}` : `bash -c ${shellSingle(effectiveCmd.join(' '))}`)
-            : (login ? 'bash -l' : 'bash');
-        const oneShot = effectiveCmd.length > 0;
+        const innerCmd = login ? 'bash -l' : 'bash';
         // Resolve `--name` / `--new` like the docker branch: list existing
         // tmux shell sessions over SSH (`tmux list-sessions -F ...`) and
         // pick the next free `shell-N`. The session naming helpers in
@@ -241,8 +248,8 @@ export const shellCommand = new Command('shell')
           sessionName,
           user,
           command: innerCmd,
-          // One-shot exec or `--no-tmux` skips the tmux wrap.
-          noTmux: oneShot || !tmux,
+          // `--no-tmux` skips the tmux wrap. (One-shot exited above.)
+          noTmux: !tmux,
         });
         try {
           const code = await runWrappedAttach({
@@ -255,7 +262,7 @@ export const shellCommand = new Command('shell')
             boxName: box.name,
             projectIndex: box.projectIndex,
             mode: 'shell',
-            detachable: !oneShot && tmux,
+            detachable: tmux,
           });
           process.exit(code);
         } finally {

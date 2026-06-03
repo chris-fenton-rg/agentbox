@@ -172,7 +172,10 @@ export async function prepareE2b(
       schema: 1,
       base: {
         templateId: taggedId,
-        templateName: `${info.name}:${tag}`,
+        // info.name is the full `name:tag` pair Template.build() was called
+        // with (e.g. `agentbox-base:latest`). Earlier code re-appended `:${tag}`
+        // and produced `agentbox-base:latest:latest` in the status display.
+        templateName: info.name,
         contextSha256: contextSha,
         cliVersion: cliStamp.cliVersion,
         cliCommit: cliStamp.cliCommit,

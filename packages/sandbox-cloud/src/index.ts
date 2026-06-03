@@ -25,6 +25,10 @@ export {
 } from './agent-credentials.js';
 export { uploadEnvFiles, type UploadEnvFilesArgs, type UploadEnvFilesResult } from './env-files.js';
 export { seedDynamicConfig, type SeedDynamicConfigOptions } from './dynamic-sync.js';
+export {
+  seedClaudeJsonAtCreate,
+  type SeedClaudeJsonOptions,
+} from './claude-json-overlay.js';
 export { seedGitIdentity, type SeedGitIdentityOptions } from './git-identity.js';
 export { bashScript, quoteShellArg, quoteShellArgv } from './shell.js';
 export {
@@ -62,6 +66,7 @@ export {
 // there when the cloud path adopted them.
 export {
   stageClaudeStaticForUpload,
+  stageClaudeJsonOnlyForUpload,
   stageClaudeCredentialsForUpload,
   stageCodexStaticForUpload,
   stageCodexCredentialsForUpload,

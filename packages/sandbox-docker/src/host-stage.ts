@@ -222,6 +222,98 @@ export async function resolveClaudeMemoryDir(
 }
 
 /**
+ * Build the in-box `_claude.json` from the host's `~/.claude.json` (or a
+ * sensible default when the host has no Claude config). Shared between the
+ * full static tarball (prepare-time bake) and the json-only overlay
+ * (create-time refresh).
+ *
+ * The defaults set `hasCompletedOnboarding: true` — a user who has installed
+ * AgentBox has accepted Claude Code's onboarding implicitly, and the box's
+ * Claude must not block on the theme picker. When the host *does* have a
+ * `~/.claude.json`, the existing `hasCompletedOnboarding` / `theme` pass
+ * through unchanged (the filter chain only touches hooks/install/projects/
+ * trust).
+ */
+async function buildBoxClaudeJsonFromHost(opts: {
+  hostHome: string;
+  hostWorkspace?: string;
+}): Promise<unknown> {
+  const { hostHome, hostWorkspace } = opts;
+  const hostClaudeJson = join(hostHome, '.claude.json');
+  let working: unknown;
+  if (await pathExists(hostClaudeJson)) {
+    try {
+      working = JSON.parse(await readFile(hostClaudeJson, 'utf8'));
+    } catch {
+      working = null;
+    }
+  }
+  if (working === undefined || working === null) {
+    working = {
+      installMethod: 'native',
+      autoUpdates: false,
+      autoUpdatesProtectedForNative: true,
+      // Pre-accept onboarding so the in-box Claude doesn't show the theme
+      // picker on first run. AgentBox installing implies the user has
+      // already used Claude Code on the host.
+      hasCompletedOnboarding: true,
+      projects: { [CLOUD_WORKSPACE]: { hasTrustDialogAccepted: true } },
+    };
+  } else {
+    working = filterHostHooks(working, hostHome).data;
+    working = setInstallMethodNative(working).data;
+    if (hostWorkspace) {
+      working = addProjectAlias(working, hostWorkspace, CLOUD_WORKSPACE).data;
+    }
+    working = trustWorkspace(working, CLOUD_WORKSPACE).data;
+    // Belt-and-suspenders for hosts that have ~/.claude.json but haven't
+    // completed onboarding (e.g. a CI runner or a fresh dev machine that's
+    // never opened Claude interactively).
+    if (typeof working === 'object' && working !== null) {
+      const w = working as Record<string, unknown>;
+      if (w['hasCompletedOnboarding'] !== true) w['hasCompletedOnboarding'] = true;
+    }
+  }
+  return working;
+}
+
+/**
+ * Tarball with **only** `_claude.json` at the root, built from the host's
+ * current `~/.claude.json` state. Used at cloud create-time to overlay the
+ * box's onboarding state, so a stale prepare-time snapshot doesn't trap the
+ * in-box Claude at the theme picker. E2B (which doesn't bake `_claude.json`
+ * at prepare-time at all) relies on this overlay for any onboarding state.
+ *
+ * Returns a real tarball even when the host has no `~/.claude.json` — the
+ * default falls back to a minimal pre-onboarded shape (see
+ * {@link buildBoxClaudeJsonFromHost}).
+ */
+export async function stageClaudeJsonOnlyForUpload(
+  opts: StageClaudeOptions = {},
+): Promise<StageResult> {
+  const hostHome = opts.hostHome ?? homedir();
+  const stageDir = await mkStageDir('claude-json-only');
+  let tarballPath: string | null = null;
+  try {
+    const claudeJson = await buildBoxClaudeJsonFromHost({
+      hostHome,
+      hostWorkspace: opts.hostWorkspace,
+    });
+    await writeFile(join(stageDir, '_claude.json'), JSON.stringify(claudeJson, null, 2));
+    tarballPath = await tarballFromDir(stageDir, 'claude-json-only');
+    return {
+      tarballPath,
+      cleanup: makeCleanup([stageDir, tarballPath]),
+      warnings: [],
+    };
+  } catch (err) {
+    await rm(stageDir, { recursive: true, force: true });
+    if (tarballPath) await rm(tarballPath, { force: true });
+    throw err;
+  }
+}
+
+/**
  * Filtered tarball of `~/.claude/` (+ `~/.claude.json` as `_claude.json` at
  * tarball root) **excluding** `.credentials.json`. Extracts into
  * `/home/vscode/.claude/` on the sandbox FS at snapshot-bake time.
@@ -285,31 +377,11 @@ export async function stageClaudeStaticForUpload(
     // and /workspace trust pre-accept. The Dockerfile.box bakes a symlink
     // `~/.claude.json -> ~/.claude/_claude.json` so the in-box claude reads
     // through to this file at runtime.
-    const hostClaudeJson = join(hostHome, '.claude.json');
-    let working: unknown;
-    if (await pathExists(hostClaudeJson)) {
-      try {
-        working = JSON.parse(await readFile(hostClaudeJson, 'utf8'));
-      } catch {
-        working = null;
-      }
-    }
-    if (working === undefined || working === null) {
-      working = {
-        installMethod: 'native',
-        autoUpdates: false,
-        autoUpdatesProtectedForNative: true,
-        projects: { [CLOUD_WORKSPACE]: { hasTrustDialogAccepted: true } },
-      };
-    } else {
-      working = filterHostHooks(working, hostHome).data;
-      working = setInstallMethodNative(working).data;
-      if (opts.hostWorkspace) {
-        working = addProjectAlias(working, opts.hostWorkspace, CLOUD_WORKSPACE).data;
-      }
-      working = trustWorkspace(working, CLOUD_WORKSPACE).data;
-    }
-    await writeFile(join(stageDir, '_claude.json'), JSON.stringify(working, null, 2));
+    const claudeJson = await buildBoxClaudeJsonFromHost({
+      hostHome,
+      hostWorkspace: opts.hostWorkspace,
+    });
+    await writeFile(join(stageDir, '_claude.json'), JSON.stringify(claudeJson, null, 2));
 
     // plugins/*.json: rewrite host-home installPath/installLocation values to
     // the box's /home/vscode/.claude/plugins/ tree. Without this, claude
