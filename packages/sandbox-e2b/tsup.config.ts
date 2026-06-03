@@ -16,8 +16,11 @@ export default defineConfig([
     dts: true,
     sourcemap: true,
     // commander + @clack/prompts are external (apps/cli bundles them at the root).
-    // The `e2b` SDK is bundled by tsup like the other provider deps.
-    external: ['commander', '@clack/prompts'],
+    // The `e2b` SDK is external too: its TemplateBuilder calls
+    // `dynamicRequire('node:url')` in its constructor, which esbuild's ESM
+    // `__require` shim throws on if bundled. Keep it external + a real dep so
+    // the SDK loads via the host's normal CJS require.
+    external: ['commander', '@clack/prompts', 'e2b'],
   },
   {
     entry: { 'attach-helper': 'src/attach-helper.ts' },
@@ -28,7 +31,8 @@ export default defineConfig([
     // No d.ts for the standalone helper.
     dts: false,
     sourcemap: true,
-    // Same externals.
-    external: ['commander', '@clack/prompts'],
+    // Same externals. The attach helper is CJS, so the require path is
+    // already native — but pinning `e2b` external keeps the bundle small.
+    external: ['commander', '@clack/prompts', 'e2b'],
   },
 ]);

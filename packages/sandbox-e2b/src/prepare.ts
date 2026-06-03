@@ -8,14 +8,17 @@
  *
  *   1. Resolve runtime assets + fingerprint the build context. Skip-fast when
  *      an up-to-date template id is already recorded.
- *   2. `Template().fromBaseImage()` (E2B's default — Debian 12 + node 20).
- *      `.copy(localPath, remotePath)` for each runtime asset.
- *      `.runCmd('bash /tmp/agentbox-build-template.sh 2>&1', { user: 'root' })`.
+ *   2. Stage every resolved asset under a temp `fileContextPath` directory
+ *      with predictable relative names (E2B's `template.copy(src, dest)`
+ *      requires sources to be RELATIVE paths inside the context dir).
+ *   3. `Template({ fileContextPath })` → `.fromBaseImage()` (E2B's default
+ *      Debian 12 + node 20 + git + sudo). `.copy(rel, dest)` for each asset,
+ *      `.runCmd('bash /tmp/agentbox-build-template.sh', { user: 'root' })`,
  *      `.setReadyCmd('test -x /usr/local/bin/agentbox-ctl')`.
- *   3. `Template.build(t, 'agentbox-base:<tag>', { cpuCount, memoryMB,
+ *   4. `Template.build(t, 'agentbox-base:<tag>', { cpuCount, memoryMB,
  *      onBuildLogs })` streams logs into the spinner; returns the BuildInfo
  *      with the template id.
- *   4. Persist `{ schema:1, base: { templateId, contextSha256, cliVersion,
+ *   5. Persist `{ schema:1, base: { templateId, contextSha256, cliVersion,
  *      cliCommit, createdAt } }` to ~/.agentbox/e2b-prepared.json.
  *
  * Templates on E2B are reusable named resources addressed by id+tag. Re-running
@@ -27,6 +30,9 @@
  * doesn't try to override them (which E2B rejects).
  */
 
+import { copyFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import type { Provider } from '@agentbox/core';
 import { computeContextSha256, readCliStamp } from '@agentbox/sandbox-core';
 import { ensureE2bCredentials } from './credentials.js';
@@ -39,6 +45,7 @@ import {
 import {
   findStagedCliRuntimeRoot,
   resolveRuntimeAssets,
+  type ResolvedAsset,
 } from './runtime-assets.js';
 
 export interface PrepareE2bOptions {
@@ -63,6 +70,7 @@ export interface PrepareE2bResult {
 
 /** Template name agentbox bakes under. E2B treats `name:tag` as a single addressable build. */
 const TEMPLATE_NAME = 'agentbox-base:latest';
+const DEFAULT_TAG = 'latest';
 
 const DEFAULT_CPU = 2;
 const DEFAULT_MEMORY_MB = 4096;
@@ -102,61 +110,94 @@ export async function prepareE2b(
     }
   }
 
-  // Build the Template via the SDK builder. fromBaseImage() starts from E2B's
-  // own `e2bdev/base` (Debian 12 + node 20 + git + sudo), which halves the
-  // install time vs starting from a vanilla Debian image.
-  progress('assembling template build (fromBaseImage + asset copy + runCmd)');
-  const template = Template().fromBaseImage();
-  for (const a of assets) {
-    progress(`  copy ${a.name} -> ${a.remotePath}`);
-    template.copy(a.localPath, a.remotePath, {
-      forceUpload: true,
-      mode: a.remoteMode,
-      user: 'root',
+  // E2B's `template.copy(src, dest)` requires `src` to be a RELATIVE path
+  // inside the Template's `fileContextPath`. Stage every resolved asset into
+  // a temp dir under its logical name (asset.name) so the copy chain reads
+  // from a single context root.
+  const contextDir = await mkdtemp(join(tmpdir(), 'agentbox-e2b-build-'));
+  try {
+    progress(`staging build context at ${contextDir}`);
+    await stageAssetsInto(contextDir, assets);
+
+    // Build the Template via the SDK builder. fromBaseImage() starts from E2B's
+    // own `e2bdev/base` (Debian 12 + node 20 + git + sudo), which halves the
+    // install time vs starting from a vanilla Debian image.
+    progress('assembling template build (fromBaseImage + asset copy + runCmd)');
+    const template = Template({ fileContextPath: contextDir }).fromBaseImage();
+    for (const a of assets) {
+      progress(`  copy ${a.name} -> ${a.remotePath}`);
+      template.copy(a.name, a.remotePath, {
+        forceUpload: true,
+        mode: a.remoteMode,
+        user: 'root',
+      });
+    }
+    template.runCmd('bash /tmp/agentbox-build-template.sh 2>&1', { user: 'root' });
+    // setReadyCmd flips the builder into TemplateFinal — required for build().
+    // The check passes once the script's last `install` step lands the ctl bundle.
+    const finalTemplate = template.setReadyCmd(
+      'test -x /usr/local/bin/agentbox-ctl',
+    );
+
+    const cpuCount = opts.cpuCount ?? DEFAULT_CPU;
+    const memoryMB = opts.memoryMB ?? DEFAULT_MEMORY_MB;
+    progress(
+      `running Template.build('${TEMPLATE_NAME}', { cpuCount: ${String(cpuCount)}, memoryMB: ${String(memoryMB)} })`,
+    );
+    const info = await Template.build(finalTemplate, TEMPLATE_NAME, {
+      apiKey,
+      cpuCount,
+      memoryMB,
+      onBuildLogs: (entry: LogEntryLike) => {
+        // LogEntry exposes timestamp / level / message; stream the human form.
+        log(`[build] ${formatBuildLog(entry)}`);
+      },
+    });
+    progress(`template built: id=${info.templateId} build=${info.buildId} name=${info.name}`);
+
+    // Persist. `Sandbox.create({ template })` auto-appends `:default` when no
+    // tag is given (and 404s if that tag wasn't built), so we MUST store the
+    // tagged form. `info.templateId` is just the raw id with no tag; use the
+    // first tag we built with (`latest`) or fall back to `info.tags[0]`.
+    const tag = info.tags?.[0] ?? DEFAULT_TAG;
+    const cliStamp = readCliStamp();
+    const taggedId = `${info.templateId}:${tag}`;
+    writePreparedState({
+      schema: 1,
+      base: {
+        templateId: taggedId,
+        templateName: `${info.name}:${tag}`,
+        contextSha256: contextSha,
+        cliVersion: cliStamp.cliVersion,
+        cliCommit: cliStamp.cliCommit,
+        createdAt: new Date().toISOString(),
+      },
+    });
+    progress(`wrote ${preparedStatePath()}`);
+
+    progress(`prepare complete — base template ${taggedId}`);
+    return { snapshotName: taggedId };
+  } finally {
+    await rm(contextDir, { recursive: true, force: true }).catch(() => {
+      // best-effort: temp dir cleanup failures are noise, not errors.
     });
   }
-  template.runCmd('bash /tmp/agentbox-build-template.sh 2>&1', { user: 'root' });
-  // setReadyCmd flips the builder into TemplateFinal — required for build().
-  // The check passes once the script's last `install` step lands the ctl bundle.
-  const finalTemplate = template.setReadyCmd(
-    'test -x /usr/local/bin/agentbox-ctl',
-  );
+}
 
-  const cpuCount = opts.cpuCount ?? DEFAULT_CPU;
-  const memoryMB = opts.memoryMB ?? DEFAULT_MEMORY_MB;
-  progress(
-    `running Template.build('${TEMPLATE_NAME}', { cpuCount: ${String(cpuCount)}, memoryMB: ${String(memoryMB)} })`,
-  );
-  const info = await Template.build(finalTemplate, TEMPLATE_NAME, {
-    apiKey,
-    cpuCount,
-    memoryMB,
-    onBuildLogs: (entry: LogEntryLike) => {
-      // LogEntry exposes timestamp / level / message; we just stream the
-      // human-readable line.
-      log(`[build] ${formatBuildLog(entry)}`);
-    },
-  });
-  progress(`template built: id=${info.templateId} build=${info.buildId} name=${info.name}`);
-
-  // Persist. `templateId` is what `Sandbox.create({ template })` accepts; we
-  // also keep `templateName` for debug/inspect.
-  const cliStamp = readCliStamp();
-  writePreparedState({
-    schema: 1,
-    base: {
-      templateId: info.templateId,
-      templateName: info.name,
-      contextSha256: contextSha,
-      cliVersion: cliStamp.cliVersion,
-      cliCommit: cliStamp.cliCommit,
-      createdAt: new Date().toISOString(),
-    },
-  });
-  progress(`wrote ${preparedStatePath()}`);
-
-  progress(`prepare complete — base template ${info.templateId}`);
-  return { snapshotName: info.templateId };
+/**
+ * Copy every asset into `contextDir` under its logical `name`. Preserves the
+ * source mode on the copy (E2B's `template.copy` also accepts a `mode`
+ * override, but the on-disk mode keeps the local stage representative).
+ */
+async function stageAssetsInto(
+  contextDir: string,
+  assets: ResolvedAsset[],
+): Promise<void> {
+  for (const a of assets) {
+    const dest = resolve(contextDir, a.name);
+    await mkdir(dirname(dest), { recursive: true });
+    await copyFile(a.localPath, dest);
+  }
 }
 
 /**
@@ -200,4 +241,3 @@ export const prepareE2bProvider: NonNullable<Provider['prepare']> = (req) =>
     force: req.force,
     onLog: req.onLog,
   });
-

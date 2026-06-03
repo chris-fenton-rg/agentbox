@@ -76,7 +76,7 @@ async function main(): Promise<void> {
   // long shell session doesn't get reaped after 5 minutes.
   let sb;
   try {
-    sb = await Sandbox.connect(sandboxId, { apiKey, timeoutMs: 12 * 60 * 60_000 });
+    sb = await Sandbox.connect(sandboxId, { apiKey, timeoutMs: 55 * 60_000 });
   } catch (err) {
     process.stderr.write(
       `attach-helper: could not connect to sandbox ${sandboxId}: ${err instanceof Error ? err.message : String(err)}\n`,
@@ -107,7 +107,7 @@ async function main(): Promise<void> {
       TERM: 'xterm-256color',
     },
     // Long-lived. We don't want the SDK reaping the PTY mid-session.
-    timeoutMs: 12 * 60 * 60_000,
+    timeoutMs: 55 * 60_000,
     onData: (data: Uint8Array) => {
       process.stdout.write(data);
     },
