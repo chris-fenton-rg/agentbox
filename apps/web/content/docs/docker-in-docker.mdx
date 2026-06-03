@@ -43,7 +43,7 @@ By default the data root `/var/lib/docker` is a per-box named volume, `agentbox-
 To make pulled image layers and build cache persist across boxes, opt into the shared cache. This swaps to the shared `agentbox-docker-cache` volume, which is preserved on `destroy` and allowlisted in `prune --all`.
 
 ```bash
-agentbox create --shared-docker-cache -n cached-box   # uses agentbox-docker-cache volume
+agentbox create --shared-docker-cache   # uses agentbox-docker-cache volume
 # or set it as the default for every box
 agentbox config set box.dockerCacheShared true --global
 ```

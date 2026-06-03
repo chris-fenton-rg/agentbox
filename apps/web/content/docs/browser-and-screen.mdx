@@ -31,7 +31,7 @@ The agent calls `agent-browser` itself — you don't have to. Sessions, auth, an
 The Playwright runtime ships in the image (it provides the Chromium that `agent-browser` drives). Add `--with-playwright` to also install the standalone Playwright CLI in the box:
 
 ```bash
-agentbox claude -n web-test --with-playwright
+agentbox claude --with-playwright
 ```
 
 To make it the default, set the `browser.default` config key. See [configuration](/docs/configuration) for the browser-stack keys and precedence, and [CLI commands](/docs/cli) for all flags.
@@ -49,7 +49,7 @@ agentbox screen mybox
 Opt out at create time with `--no-vnc`:
 
 ```bash
-agentbox create -n headless --no-vnc
+agentbox create --no-vnc
 ```
 
 <Callout type="warn" title="HEADS UP">

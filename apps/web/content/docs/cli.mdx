@@ -30,8 +30,8 @@ agentbox opencode
 Each agent command has three subcommands: `attach` reattaches to a running session (never re-syncs config), `start` (re)starts a session in an existing box (rsyncs host config unless `--no-sync-config`), and `login` runs that agent's auth flow.
 
 ```bash
-# Name the box and drop into a shell once it's ready
-agentbox create -n smoke --attach
+# Create a box and drop into a shell once it's ready
+agentbox create --attach
 
 # Reattach to / restart a session in box 1
 agentbox claude attach 1

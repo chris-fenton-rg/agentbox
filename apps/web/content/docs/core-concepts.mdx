@@ -25,8 +25,8 @@ run a database, or run Docker inside the box. When you're done, run `destroy` an
 your host.
 
 ```bash
-agentbox create -n alpha     # spin up a fresh box
-agentbox destroy alpha       # throw it away
+agentbox create     # spin up a fresh box
+agentbox destroy 1  # throw it away
 ```
 
 Because the box has no access to your host, you don't need to approve each
@@ -48,9 +48,9 @@ One command creates a box, starts the agent, and attaches you to it. You can run
 Claude Code, Codex, and OpenCode at the same time, each in its own box.
 
 ```bash
-agentbox claude -n feature        # Claude Code on one box
-agentbox codex -n refactor        # Codex on another, in parallel
-agentbox claude attach feature    # jump back to the first
+agentbox claude              # Claude Code on one box
+agentbox codex               # Codex on another, in parallel
+agentbox claude attach 1     # jump back to the first
 ```
 
 Each agent runs in a detachable tmux session. Press `Ctrl+a d` to detach and the
@@ -74,8 +74,8 @@ The first box in a project installs dependencies and builds its caches. A
 checkpoint in about a second instead of installing from scratch.
 
 ```bash
-agentbox checkpoint create alpha --set-default   # save the warm state as the project default
-agentbox create -n warm                          # new box, already warmed up
+agentbox checkpoint create 1 --set-default   # save the warm state as the project default
+agentbox create                              # new box, already warmed up
 ```
 
 A common pattern is to checkpoint after the setup wizard finishes or a PR merges,

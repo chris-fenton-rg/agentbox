@@ -17,11 +17,10 @@ The three agent verbs (`claude`, `codex`, `opencode`) each create the box if it 
 
 ```bash
 agentbox claude                       # create a box + start Claude Code, then attach
-agentbox claude -n alpha              # name the box
 agentbox claude -- --model sonnet     # pass extra args through to claude
 ```
 
-Name a box with `-n`, target another directory with `-w`, and put pass-through args after `--`. The first run pulls or builds the `agentbox/box:dev` image (~1 GB, one-time) and offers a setup wizard that installs project deps and your dev server. See [local Docker](/docs/local-docker) for the image and [services and tasks](/docs/services-and-tasks) for the wizard.
+Target another directory with `-w`, and put pass-through args after `--`. Boxes get an auto-numbered name by default; pass `-n <name>` to label one. The first run pulls or builds the `agentbox/box:dev` image (~1 GB, one-time) and offers a setup wizard that installs project deps and your dev server. See [local Docker](/docs/local-docker) for the image and [services and tasks](/docs/services-and-tasks) for the wizard.
 
 ```console
 $ agentbox claude

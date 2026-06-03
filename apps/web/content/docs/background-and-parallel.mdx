@@ -9,13 +9,13 @@ There are three capabilities here. **Running boxes in parallel** means you launc
 
 ## Run boxes in parallel
 
-Each `agentbox claude` / `codex` / `opencode` call spins up a separate box — separate container, branch, and `/workspace` worktree. They never share state. Give boxes explicit names with `-n <name>` so the set stays legible in `ls` and `top`.
+Each `agentbox claude` / `codex` / `opencode` call spins up a separate box — separate container, branch, and `/workspace` worktree. They never share state. Each gets an auto-numbered name; pass `-n <name>` if you want to label them in `ls` and `top`.
 
 ```bash
 # Three independent boxes on the same repo, each on its own branch
-agentbox claude -n auth-refactor
-agentbox claude -n flaky-test-fix
-agentbox codex  -n perf-pass
+agentbox claude
+agentbox claude
+agentbox codex
 ```
 
 It's one agent per box, but a box can hold multiple shell sessions — see [access your box](/docs/access-your-box). To launch many without the queue, detach each as you go: `Ctrl+a d` leaves the agent running, and `agentbox claude attach <box>` reattaches later.
@@ -32,13 +32,13 @@ These run with **no concurrency cap** — they all start immediately and each co
 `-i, --initial-prompt <text>` (on `agentbox claude`, `codex`, and `opencode`) seeds the agent session with a first user turn and runs the box in the background — no attach. The call writes a queue manifest and returns immediately.
 
 ```bash
-agentbox claude -n nightly-deps -i "Upgrade all dependencies and fix the build"
+agentbox claude -i "Upgrade all dependencies and fix the build"
 ```
 
 Jobs go through a host-wide FIFO queue, capped by `queue.maxConcurrent`. The relay's scheduler starts each job as a slot frees, starting the relay automatically if needed. On submit you get the job id (the handle for `queue show` / `queue cancel`) and a path to its log:
 
 ```console
-$ agentbox codex -n changelog -i "Draft the v0.13 changelog from git log"
+$ agentbox codex -i "Draft the v0.13 changelog from git log"
 job a1b2c3d4e5f6a1b2c3 queued (2/5 running); log: ~/.agentbox/queue/a1b2c3d4e5f6a1b2c3.log
 ```
 
@@ -108,8 +108,8 @@ queue.maxConcurrent = 5 (queue.enabled=true)
 | `job-done` | the job reaches a terminal status (done/failed/cancelled) | `--job <id>` |
 
 ```bash
-agentbox claude -n a -i "task one"
-agentbox claude -n b -i "task two"
+agentbox claude -i "task one"
+agentbox claude -i "task two"
 agentbox queue wait-for empty-queue --timeout 1800000
 ```
 

@@ -60,11 +60,11 @@ The bake costs a few minutes and a couple euro-cents, but you only do it once pe
 Once login and prepare are done, `create`/`claude`/`codex`/`opencode`/`shell` behave exactly like local Docker — only `--provider hetzner` (or the pinned config) differs. The workspace is seeded from a host git bundle plus your uncommitted and untracked changes, the same as the other clouds (see [teleport a project](/docs/teleport-a-project) and [sync & git](/docs/sync-and-git)).
 
 ```console
-$ agentbox create -y -n smoke --provider hetzner
+$ agentbox create -y --provider hetzner
 # VPS provisioned + firewall locked + SSH up (~90s cold, ~15-20s from snapshot)
 
-$ agentbox shell smoke --no-tmux -- uname -a
-Linux smoke ... x86_64 GNU/Linux
+$ agentbox shell 1 --no-tmux -- uname -a
+Linux agentbox-7f3a ... x86_64 GNU/Linux
 ```
 
 Or jump straight into an agent, which auto-creates the box:
@@ -80,7 +80,7 @@ See [run an agent](/docs/run-an-agent), [access your box](/docs/access-your-box)
 The default VM is `cx23` (2 vCPU / 4 GB / 40 GB, ~€4/mo while running) in location `nbg1` (Nuremberg). Change the size per box with `--size`, or pin it with `box.sizeHetzner` — see [configuration](/docs/configuration).
 
 ```bash
-agentbox create -y -n big --provider hetzner --size cx33
+agentbox create -y --provider hetzner --size cx33
 ```
 
 ## Firewall
