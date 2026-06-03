@@ -51,6 +51,7 @@ import {
 import {
   ensureAgentVolumesForCloud,
   extractCloudAgentCredentials,
+  refreshAgentCredentialsBackup,
   seedAgentVolumesIfFresh,
   seedOpencodeModelState,
 } from './agent-credentials.js';
@@ -636,11 +637,24 @@ export function createCloudProvider(
           });
         }
 
-        // After the sandbox is up with the credential volumes mounted, seed
-        // any volume that doesn't already carry a `.agentbox-seeded-at`
-        // marker from the host's filtered ~/.claude / ~/.codex /
-        // opencode tree. Idempotent per agent — subsequent boxes find the
-        // marker and skip the upload entirely.
+        // Refresh the host-side credential backups from the docker shared
+        // volumes BEFORE seeding — only the docker create path keeps them
+        // current, so cloud creates would otherwise push whatever access
+        // token the docker volume last extracted (often expired by the time
+        // the user attaches). Best-effort: when there's no docker on the host
+        // or no shared volume, the helper is a noop and the seed proceeds
+        // with whatever backup exists.
+        await refreshAgentCredentialsBackup({ onLog: log });
+
+        // Seed agent credentials into the box. Volume backends (daytona)
+        // mount a per-org volume at `~/.agentbox-creds/<agent>/` and the seed
+        // is idempotent via a `.agentbox-seeded-at` marker. Non-volume
+        // backends (e2b, vercel, hetzner) push fresh into the box-baked
+        // `~/.agentbox-creds/<agent>/` dirs every create — tokens are
+        // renewable and the box FS is ephemeral. Either way the symlinks
+        // baked into the snapshot (`~/.claude/.credentials.json` ->
+        // `~/.agentbox-creds/claude/.credentials.json` etc.) route the
+        // agent-expected paths through to the seeded files.
         if (agentVolumes.agents.length > 0) {
           await seedAgentVolumesIfFresh(backend, handle, {
             agents: agentVolumes.agents,
