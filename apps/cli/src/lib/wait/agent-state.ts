@@ -45,6 +45,10 @@ export function isPromptReady(claude: BoxStatusClaude): boolean {
  * of chaining `wait-for end-plan` / `wait-for question` / `wait-for prompt`.
  */
 export function isInputNeeded(claude: BoxStatusClaude): boolean {
+  // While the agent is busy it never "needs input" — even if a stale plan /
+  // question payload is still attached (the payload guards below would
+  // otherwise match through a `working` / `compacting` state).
+  if (claude.state === 'working' || claude.state === 'compacting') return false;
   return (
     claude.state === 'waiting' ||
     claude.state === 'end-plan' ||

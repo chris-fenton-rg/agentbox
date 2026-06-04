@@ -129,6 +129,12 @@ describe('isInputNeeded / wait-for input-needed', () => {
     expect(isInputNeeded(claude({ state: 'compacting' }))).toBe(false);
   });
 
+  it('does NOT match a busy state even when a stale plan/question payload lingers', () => {
+    expect(isInputNeeded(claude({ state: 'working', plan: PLAN }))).toBe(false);
+    expect(isInputNeeded(claude({ state: 'working', question: QUESTION }))).toBe(false);
+    expect(isInputNeeded(claude({ state: 'compacting', plan: PLAN }))).toBe(false);
+  });
+
   it('does NOT match idle when the session is down (nothing to give input to)', () => {
     expect(isInputNeeded(claude({ state: 'idle', sessionRunning: false }))).toBe(false);
   });
