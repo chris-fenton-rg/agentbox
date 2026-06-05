@@ -32,6 +32,7 @@ box:
   withPlaywright: true
   withEnv: true
   vnc: true
+  autoApproveHostActions: true
   isolateClaudeConfig: false
   image: agentbox/box:dev
   memory: 2048

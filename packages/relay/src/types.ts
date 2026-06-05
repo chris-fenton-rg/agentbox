@@ -67,6 +67,14 @@ export interface BoxRegistration {
    * so a compromised agent can't impersonate the host.
    */
   bridgeToken?: string;
+  /**
+   * When true, host-action confirm prompts for this box (git push, cp,
+   * gh writes, checkpoint, browser.open) resolve to `y` without a human/orchestrator
+   * answering. Set at registration from `box.autoApproveHostActions`. Off by
+   * default; every auto-approval still emits a `host-action-auto-approved`
+   * relay event so the bypass is auditable.
+   */
+  autoApproveHostActions?: boolean;
 }
 
 export interface BoxWorktree {
@@ -133,6 +141,11 @@ export interface RegisterBoxBody {
   previewToken?: string;
   /** Required when `kind === 'cloud'`: bearer for /bridge/* auth. */
   bridgeToken?: string;
+  /**
+   * Mirrors `box.autoApproveHostActions`: when true, host-action confirm
+   * prompts auto-resolve to `y` (audited via a relay event).
+   */
+  autoApproveHostActions?: boolean;
 }
 
 /**

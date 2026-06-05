@@ -177,6 +177,32 @@ agentbox queue wait-for empty-queue --timeout 3600000
 
 The mental model: **`agent wait-for`** is the primary gate — it blocks until the agent's turn reaches a state you care about (`input-needed` wakes on any), **`drive`** sends keystrokes and reads the screen, **`agent state`** tells you what the agent's TUI is doing, and **`queue wait-for`** settles the whole batch on queue and box lifecycle transitions. For the full flag tables, see [CLI commands](/docs/cli).
 
+### Approve host actions on a box's behalf
+
+When a box wants to do something it has no credentials for — `git push`, copy a file to/from the host, open a PR, capture a checkpoint — the [host relay](/docs/sync-and-git) raises a **confirmation** and blocks the box until someone answers it. Normally that's the human in the attached `agentbox claude` footer. An **unattended orchestrator** answers it instead, deliberately:
+
+```bash
+# List what a box is waiting on — with the exact command + argv it wants to run.
+agentbox agent approvals design --json
+# [{ "id": "…", "command": "git push", "argv": ["origin","HEAD"], "message": "Allow git push from box design?" }]
+
+# Approve one by id (or --deny / --cancel to reject).
+agentbox agent approve <id>
+
+# Block until an approval appears, then act on it.
+agentbox agent approvals design --wait 600000
+```
+
+Only a host process can answer (the relay's approval endpoint is loopback-only — a box can't reach it), so the orchestrator answering grants nothing it doesn't already have: it already holds your git and file credentials. The value of `approvals` is that the orchestrator **sees the exact action** before approving it, rather than rubber-stamping whatever the box asks — which is what keeps a prompt-injected box from laundering a malicious push through your credentials.
+
+For a fully-unattended run over **trusted** boxes, opt into blanket auto-approval per box:
+
+```bash
+agentbox config set box.autoApproveHostActions true --project
+```
+
+With it on, those confirmations resolve to yes without surfacing — but **every** auto-approval is recorded as a `host-action-auto-approved` relay event (visible in `agentbox agent` and the dashboard), so the bypass is auditable, never silent. It applies to boxes created after you set it; leave it off (the default) to keep the inspect-then-approve loop above.
+
 ## Monitor everything at once
 
 Three complementary views for a parallel fleet:

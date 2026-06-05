@@ -152,6 +152,7 @@ See [checkpoints and pausing](/docs/checkpoints-and-pausing).
 | `box.withEnv` | bool | `false` | copy host env/config files (`.env*`, `secrets.toml`, `agentbox.yaml`, …) into `/workspace`, bypassing gitignore |
 | `box.withPlaywright` | bool | `false` | install `@playwright/cli@latest` in the box at create |
 | `box.vnc` | bool | `true` | run the per-box Xvnc + noVNC stack |
+| `box.autoApproveHostActions` | bool | `false` | auto-approve host-action confirms (git push, cp, gh PR writes, checkpoint) for this box without a prompt; for unattended orchestration of trusted boxes. Each bypass is logged as a relay event. See [orchestration](/docs/background-and-parallel) |
 | `box.resyncOnStart` | bool | `true` | on starting a session, merge the host's current branch + overlay changes (box wins on conflict, warns the agent) |
 | `box.bundleDepth` | int | adaptive | cap git-bundle history shipped to cloud sandboxes; `0` = full history; ignored for docker |
 | `box.dockerCacheShared` | bool | `false` | share the in-box docker image cache across boxes; only one box can run at a time when set |

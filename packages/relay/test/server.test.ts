@@ -339,6 +339,42 @@ describe('relay prompt flow', () => {
     expect(body.stderr).toMatch(/denied by user/);
   });
 
+  it('GET /admin/prompts lists pending host-action approvals with their context', async () => {
+    await register(handle, 'b1', 't1', 'box-one');
+
+    const rpcPromise = fetchJson(handle, 'POST', '/rpc', {
+      token: 't1',
+      body: { method: 'git.push', params: { path: '/workspace' } },
+    });
+
+    // Wait for the pending prompt to register.
+    let pendingId: string | null = null;
+    for (let i = 0; i < 50 && pendingId === null; i++) {
+      const list = handle.prompts.forBox('b1');
+      if (list.length > 0) pendingId = list[0]!.id;
+      else await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(pendingId).not.toBeNull();
+
+    const listed = await fetchJson(handle, 'GET', '/admin/prompts?boxId=b1');
+    expect(listed.status).toBe(200);
+    const body = listed.body as { prompts: Array<{ id: string; context?: { command?: string } }> };
+    expect(body.prompts).toHaveLength(1);
+    expect(body.prompts[0]!.id).toBe(pendingId);
+    expect(body.prompts[0]!.context?.command).toBe('git push');
+
+    // Clean up the parked RPC.
+    await fetchJson(handle, 'POST', '/admin/prompts/answer', {
+      body: { id: pendingId, answer: 'n' },
+    });
+    await rpcPromise;
+  });
+
+  it('GET /admin/prompts requires a boxId query', async () => {
+    const r = await fetchJson(handle, 'GET', '/admin/prompts');
+    expect(r.status).toBe(400);
+  });
+
   it('answer with unknown id returns 404', async () => {
     const r = await fetchJson(handle, 'POST', '/admin/prompts/answer', {
       body: { id: 'no-such-id', answer: 'y' },

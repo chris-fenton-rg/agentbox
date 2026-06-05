@@ -66,6 +66,7 @@ import {
   resolveCloudCheckpoint,
   writeCloudCheckpointManifest,
 } from './checkpoint.js';
+import { loadEffectiveConfig } from '@agentbox/config';
 import { isSnapshotGoneError } from './snapshot-error.js';
 import { uploadEnvFiles } from './env-files.js';
 import { uploadCarryPaths } from './carry.js';
@@ -457,6 +458,7 @@ export function createCloudProvider(
           bridgeToken: box.cloud.bridgeToken,
           createdAt: box.createdAt,
           projectIndex: box.projectIndex,
+          autoApproveHostActions: box.autoApproveHostActions,
         });
       } catch {
         // best-effort
@@ -891,6 +893,11 @@ export function createCloudProvider(
           ? allocateProjectIndex(state, req.projectRoot)
           : undefined;
 
+        // Per-box host-action auto-approve policy (workspace > project > global).
+        const autoApproveHostActions = (
+          await loadEffectiveConfig(req.projectRoot ?? req.workspacePath)
+        ).effective.box.autoApproveHostActions;
+
         // Tell the host relay about this cloud box so it spawns a poller.
         // Best-effort: a failed register doesn't break create (status / git
         // push just won't reach the host until a later register).
@@ -907,6 +914,7 @@ export function createCloudProvider(
               previewToken: relayPreview.token,
               bridgeToken,
               createdAt: new Date().toISOString(),
+              autoApproveHostActions,
             });
           } catch (err) {
             log(
@@ -933,6 +941,7 @@ export function createCloudProvider(
           relayToken,
           withPlaywright: req.withPlaywright,
           withEnv: req.withEnv,
+          autoApproveHostActions: autoApproveHostActions ? true : undefined,
           carry: carrySummary,
           portlessAlias: portlessAliasName,
           portlessUrl: portlessUrlResolved,

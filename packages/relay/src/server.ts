@@ -179,6 +179,7 @@ function isLoopbackAddress(addr: string | undefined): boolean {
  *   GET  /admin/box-status      — loopback only; query `box`; latest snapshot.
  *   GET  /admin/events          — loopback only; query `box`, `since`.
  *   GET  /admin/registry        — loopback only; list registered boxes (token redacted).
+ *   GET  /admin/prompts         — loopback only; query `boxId`; one-shot list of pending host-action approvals.
  *   GET  /admin/prompts/stream  — loopback only; SSE; pushes prompt-ask/prompt-resolved/notice-set/notice-clear/ping events.
  *   POST /admin/prompts/answer  — loopback only; resolves a pending prompt by id.
  *   POST /admin/host-initiated/mint — loopback only; mints a one-time token scoped to (boxId, method).
@@ -194,6 +195,25 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   const prompts = new PendingPrompts();
   const subscribers = new PromptSubscribers();
   const notices = new BoxNotices(subscribers);
+  // Per-box `box.autoApproveHostActions`: when a box registered with the flag,
+  // host-action confirms resolve to 'y' without a prompt, but every bypass
+  // lands in the event ring buffer (visible via `/admin/events`) so it's
+  // auditable. Wired here because registry + events are now in scope.
+  prompts.setAutoApprovePolicy({
+    shouldAutoApprove: (boxId) => registry.get(boxId)?.autoApproveHostActions === true,
+    audit: (boxId, params) => {
+      events.append({
+        boxId,
+        type: 'host-action-auto-approved',
+        payload: {
+          command: params.context?.command,
+          argv: params.context?.argv,
+          message: params.message,
+        },
+      });
+      log(`auto-approved host action for ${boxId}: ${params.context?.command ?? params.message}`);
+    },
+  });
   const hostInitiatedTokens = new HostInitiatedTokens();
   let queuePoke: (() => void) | null = null;
   const host = opts.host ?? '0.0.0.0';
@@ -676,6 +696,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           typeof body.bridgeToken === 'string' && body.bridgeToken.length > 0
             ? body.bridgeToken
             : undefined,
+        autoApproveHostActions: body.autoApproveHostActions === true,
       };
       registry.register(reg);
       log(
@@ -794,6 +815,21 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         worktrees: r.worktrees ?? [],
       }));
       send(res, 200, { boxes: redacted });
+      return;
+    }
+
+    if (route === 'GET /admin/prompts') {
+      // One-shot snapshot of pending host-action approvals for a box. The SSE
+      // `/stream` variant is for long-lived wrappers; this is for an
+      // orchestrator (or `agentbox agent approvals`) that wants to inspect the
+      // backlog, answer via /admin/prompts/answer, and move on without holding
+      // a stream open. `boxId=` required, same as /stream.
+      const boxId = url.searchParams.get('boxId') ?? '';
+      if (boxId.length === 0) {
+        send(res, 400, { error: 'missing boxId query param' });
+        return;
+      }
+      send(res, 200, { prompts: prompts.forBox(boxId) });
       return;
     }
 

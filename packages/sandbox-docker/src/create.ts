@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { execa } from 'execa';
 import { ConfigError, loadConfig } from '@agentbox/ctl';
+import { loadEffectiveConfig } from '@agentbox/config';
 import {
   buildClaudeMounts,
   ensureClaudeVolume,
@@ -756,6 +757,14 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
 
   for (const v of extraVolumes) log(`mounting agent dir: ${v}`);
 
+  // Resolve the per-box host-action auto-approve policy from config (workspace
+  // > project > global). Read here, in the construction layer, so every
+  // entrypoint (create/claude/codex/opencode/wizard/queued worker) gets the
+  // same behavior without each caller threading the flag.
+  const autoApproveHostActions = (
+    await loadEffectiveConfig(opts.projectRoot ?? workspace)
+  ).effective.box.autoApproveHostActions;
+
   // Per-box bearer token for the host relay. Register *before* runBox so the
   // box's supervisor can post on boot. Skip if the relay isn't reachable —
   // the box still works, it just won't deliver events to the host.
@@ -770,6 +779,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
         createdAt,
         projectIndex,
         worktrees: gitWorktreeRecords,
+        autoApproveHostActions,
       });
       log(`registered box token with relay`);
     } catch (err) {
@@ -867,6 +877,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     gitWorktrees: gitWorktreeRecords.length > 0 ? gitWorktreeRecords : undefined,
     withPlaywright: opts.withPlaywright ? true : undefined,
     withEnv: opts.withEnv ? true : undefined,
+    autoApproveHostActions: autoApproveHostActions ? true : undefined,
     vncEnabled: vncEnabled ? true : undefined,
     vncContainerPort: vncEnabled ? VNC_CONTAINER_PORT : undefined,
     vncPassword: vncPassword,

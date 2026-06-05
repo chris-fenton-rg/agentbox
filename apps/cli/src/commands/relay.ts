@@ -33,6 +33,7 @@ async function rehydrateFromState(): Promise<void> {
       relayPreviewUrl: b.cloud?.relayPreviewUrl,
       relayPreviewToken: b.cloud?.relayPreviewToken,
       bridgeToken: b.cloud?.bridgeToken,
+      autoApproveHostActions: b.autoApproveHostActions,
     })),
   );
 }

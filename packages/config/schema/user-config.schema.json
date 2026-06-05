@@ -27,6 +27,7 @@
         "withEnv": { "type": "boolean" },
         "resyncOnStart": { "type": "boolean" },
         "vnc": { "type": "boolean" },
+        "autoApproveHostActions": { "type": "boolean" },
         "isolateClaudeConfig": { "type": "boolean" },
         "isolateCodexConfig": { "type": "boolean" },
         "isolateOpencodeConfig": { "type": "boolean" },

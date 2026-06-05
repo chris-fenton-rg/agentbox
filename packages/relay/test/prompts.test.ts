@@ -161,6 +161,41 @@ describe('askPrompt', () => {
     }
   });
 
+  it('auto-approves (with audit) when the box opted into autoApproveHostActions', async () => {
+    const prompts = new PendingPrompts();
+    const subs = new PromptSubscribers();
+    const sink = makeSink();
+    subs.add('box-on', sink.res as never);
+
+    const audited: Array<{ boxId: string; command?: string }> = [];
+    prompts.setAutoApprovePolicy({
+      shouldAutoApprove: (boxId) => boxId === 'box-on',
+      audit: (boxId, params) => audited.push({ boxId, command: params.context?.command }),
+    });
+
+    // Opted-in box: resolves 'y' immediately, no broadcast, audit recorded.
+    const onResult = await askPrompt(prompts, subs, 'box-on', {
+      kind: 'confirm',
+      message: 'go?',
+      context: { command: 'git push' },
+    });
+    expect(onResult).toEqual({ answer: 'y' });
+    expect(sink.writes).toHaveLength(0);
+    expect(prompts.size()).toBe(0);
+    expect(audited).toEqual([{ boxId: 'box-on', command: 'git push' }]);
+
+    // A box without the flag still pends (must be answered explicitly).
+    const offSink = makeSink();
+    subs.add('box-off', offSink.res as never);
+    const pending = askPrompt(prompts, subs, 'box-off', { kind: 'confirm', message: 'go?' });
+    expect(offSink.writes).toHaveLength(1);
+    expect(prompts.size()).toBe(1);
+    expect(audited).toHaveLength(1);
+    const ev = JSON.parse(/data: (\{.*\})/.exec(offSink.writes[0]!)![1]!) as { id: string };
+    prompts.resolve(ev.id, 'n');
+    await expect(pending).resolves.toEqual({ answer: 'n', cancelled: undefined });
+  });
+
   it('auto-expires after ttlMs, resolving to the default answer', async () => {
     const prompts = new PendingPrompts();
     const subs = new PromptSubscribers();

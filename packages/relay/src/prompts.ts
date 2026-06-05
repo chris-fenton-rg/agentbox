@@ -26,8 +26,38 @@ interface PendingPromptEntry {
  * however long the user takes — per the design we block indefinitely until
  * a wrapper attaches and answers.
  */
+/**
+ * Per-box auto-approve policy, wired by the relay server once the registry +
+ * event buffer are available. `shouldAutoApprove` reflects the box's
+ * `autoApproveHostActions` registration flag; `audit` records the bypass to
+ * the relay event ring buffer so it stays observable. Lives on
+ * {@link PendingPrompts} because that instance is already threaded into every
+ * `askPrompt` call site (host + cloud), so no handler signatures change.
+ */
+export interface AutoApprovePolicy {
+  shouldAutoApprove(boxId: string): boolean;
+  audit(boxId: string, params: Omit<PromptAskEvent, 'id'>): void;
+}
+
 export class PendingPrompts {
   private readonly entries = new Map<string, PendingPromptEntry>();
+  private autoApprove: AutoApprovePolicy | null = null;
+
+  /** Install the per-box auto-approve policy (relay server, once at startup). */
+  setAutoApprovePolicy(policy: AutoApprovePolicy): void {
+    this.autoApprove = policy;
+  }
+
+  /**
+   * True when this box opted into `box.autoApproveHostActions`. Records the
+   * bypass to the audit sink as a side effect so the caller short-circuits
+   * with a trail. Returns false when no policy is installed.
+   */
+  consumeAutoApprove(boxId: string, params: Omit<PromptAskEvent, 'id'>): boolean {
+    if (!this.autoApprove || !this.autoApprove.shouldAutoApprove(boxId)) return false;
+    this.autoApprove.audit(boxId, params);
+    return true;
+  }
 
   add(boxId: string, ev: PromptAskEvent): Promise<PromptResolution> {
     return new Promise<PromptResolution>((resolve) => {
@@ -129,7 +159,8 @@ export class PromptSubscribers {
  * `browser.open` host-mirror offer. Generates a UUID, adds a pending entry,
  * broadcasts the SSE event, and awaits the answer. Respects
  * `process.env.AGENTBOX_PROMPT === 'off'` — auto-accepts without broadcasting
- * (useful for headless scripts and tests).
+ * (useful for headless scripts and tests) — and the per-box
+ * `box.autoApproveHostActions` policy (auto-accepts with an audit event).
  *
  * `opts.ttlMs` makes the prompt auto-expire: if no answer arrives in time it
  * resolves to its `defaultAnswer` (cancelled) and a `prompt-resolved` event is
@@ -145,6 +176,12 @@ export async function askPrompt(
   opts?: { ttlMs?: number },
 ): Promise<PromptResolution> {
   if (process.env.AGENTBOX_PROMPT === 'off') {
+    return { answer: 'y' };
+  }
+  // Per-box opt-in: `box.autoApproveHostActions` resolves the confirm to 'y'
+  // without surfacing a prompt, but records an audit event (inside
+  // consumeAutoApprove) so the bypass is never silent.
+  if (prompts.consumeAutoApprove(boxId, params)) {
     return { answer: 'y' };
   }
   const ev: PromptAskEvent = { id: randomUUID(), ...params };

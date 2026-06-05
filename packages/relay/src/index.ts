@@ -39,6 +39,7 @@ export { CloudBoxPoller, CloudBoxPollers, type CloudBoxPollerDeps } from './clou
 export { BoxRegistry, EventBuffer } from './registry.js';
 export {
   askPrompt,
+  type AutoApprovePolicy,
   isPromptAnswerBody,
   PendingPrompts,
   PromptSubscribers,

@@ -192,6 +192,13 @@ export interface BoxRecord {
   /** True when the box was created with --with-env. */
   withEnv?: boolean;
   /**
+   * Resolved `box.autoApproveHostActions` at create time. Forwarded to the
+   * host relay so host-action confirms (git push, cp, gh writes, checkpoint)
+   * auto-resolve to `y` for this box — with an audit event per bypass.
+   * Persisted so a `relay` rehydrate re-registers with the same policy.
+   */
+  autoApproveHostActions?: boolean;
+  /**
    * Carry summary recorded at create time: which host paths were copied into
    * the box from `agentbox.yaml`'s `carry:` block. Audit trail for inspect
    * (the actual file content is not retained — only the src/dest pairs and

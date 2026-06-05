@@ -4,7 +4,8 @@ import {
   type BoxStatus,
   type BoxStatusClaude,
 } from '@agentbox/ctl';
-import { readBoxStatus } from '@agentbox/sandbox-docker';
+import type { PromptAskEvent } from '@agentbox/relay';
+import { ensureRelay, readBoxStatus } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
 import {
@@ -145,9 +146,132 @@ const agentGetPlanQuestionCommand = new Command('get-plan-question')
     }
   });
 
+interface ApprovalsOpts {
+  json?: boolean;
+  wait?: string;
+}
+
+const agentApprovalsCommand = new Command('approvals')
+  .description(
+    'List pending host-action approvals for a box (git push, cp host<->box, gh PR writes, checkpoint). ' +
+      'These are the relay confirms an unattended orchestrator answers with `agent approve`.',
+  )
+  .argument('[box]', 'box ref (default: only box in this project)')
+  .option('--json', 'emit the pending approvals as a JSON array')
+  .option(
+    '--wait <ms>',
+    'block until at least one approval is pending (or this wall-clock cap elapses), then print',
+  )
+  .action(async (boxRef: string | undefined, opts: ApprovalsOpts) => {
+    try {
+      const box = await resolveBoxOrExit(boxRef);
+      const relayUrl = (await ensureRelay()).hostUrl;
+      const waitMs =
+        opts.wait !== undefined ? parsePositiveInt(opts.wait, '--wait') : undefined;
+
+      let pending = await fetchApprovals(relayUrl, box.id);
+      if (waitMs !== undefined && pending.length === 0) {
+        const start = Date.now();
+        while (pending.length === 0 && Date.now() - start < waitMs) {
+          await sleep(Math.min(500, waitMs - (Date.now() - start)));
+          pending = await fetchApprovals(relayUrl, box.id);
+        }
+      }
+
+      if (opts.json === true) {
+        process.stdout.write(JSON.stringify(pending.map(approvalToJson)) + '\n');
+        return;
+      }
+      if (pending.length === 0) {
+        log.info('no pending host-action approvals for this box');
+        return;
+      }
+      for (const ev of pending) {
+        process.stdout.write(approvalDisplay(ev) + '\n');
+      }
+    } catch (err) {
+      handleLifecycleError(err);
+    }
+  });
+
+interface ApproveOpts {
+  deny?: boolean;
+  cancel?: boolean;
+}
+
+const agentApproveCommand = new Command('approve')
+  .description(
+    'Answer a pending host-action approval by id (see `agent approvals`). Approves by default; ' +
+      '--deny rejects, --cancel dismisses (both resolve the box RPC as denied).',
+  )
+  .argument('<id>', 'approval id from `agent approvals`')
+  .option('--deny', 'reject the host action instead of approving it')
+  .option('--cancel', 'dismiss the approval (treated as denied; marks it cancelled)')
+  .action(async (id: string, opts: ApproveOpts) => {
+    try {
+      const relayUrl = (await ensureRelay()).hostUrl;
+      const cancelled = opts.cancel === true;
+      const answer: 'y' | 'n' = opts.deny === true || cancelled ? 'n' : 'y';
+      const url = new URL('/admin/prompts/answer', relayUrl);
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, answer, cancelled: cancelled || undefined }),
+      });
+      // 204 = resolved; 404 = already answered/expired (idempotent — the
+      // orchestrator treats both as "done").
+      if (res.status === 204) {
+        log.success(`approval ${id}: ${answer === 'y' ? 'approved' : 'denied'}`);
+        return;
+      }
+      if (res.status === 404) {
+        log.info(`approval ${id} already resolved (or expired)`);
+        return;
+      }
+      log.error(`relay /admin/prompts/answer: HTTP ${String(res.status)}`);
+      process.exit(1);
+    } catch (err) {
+      handleLifecycleError(err);
+    }
+  });
+
 agentCommand.addCommand(agentStateCommand);
 agentCommand.addCommand(agentWaitForCommand);
 agentCommand.addCommand(agentGetPlanQuestionCommand);
+agentCommand.addCommand(agentApprovalsCommand);
+agentCommand.addCommand(agentApproveCommand);
+
+async function fetchApprovals(relayUrl: string, boxId: string): Promise<PromptAskEvent[]> {
+  const url = new URL('/admin/prompts', relayUrl);
+  url.searchParams.set('boxId', boxId);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`relay /admin/prompts: HTTP ${String(res.status)}`);
+  const body = (await res.json()) as { prompts?: PromptAskEvent[] };
+  return body.prompts ?? [];
+}
+
+function approvalToJson(ev: PromptAskEvent): Record<string, unknown> {
+  return {
+    id: ev.id,
+    command: ev.context?.command,
+    argv: ev.context?.argv,
+    cwd: ev.context?.cwd,
+    message: ev.message,
+    detail: ev.detail,
+    defaultAnswer: ev.defaultAnswer,
+  };
+}
+
+function approvalDisplay(ev: PromptAskEvent): string {
+  const cmd = ev.context?.command ?? ev.message;
+  const argv = ev.context?.argv?.length ? `  ${ev.context.argv.join(' ')}` : '';
+  const detail = ev.detail ? `  (${ev.detail})` : '';
+  return `${ev.id}  ${cmd}${argv}${detail}`;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
 function emitMatch(claude: BoxStatusClaude, asJson: boolean): void {
   if (asJson) {

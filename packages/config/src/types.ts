@@ -53,6 +53,7 @@ export interface UserConfig {
     withEnv?: boolean;
     resyncOnStart?: boolean;
     vnc?: boolean;
+    autoApproveHostActions?: boolean;
     isolateClaudeConfig?: boolean;
     isolateCodexConfig?: boolean;
     isolateOpencodeConfig?: boolean;
@@ -171,6 +172,7 @@ export interface EffectiveConfig {
     withEnv: boolean;
     resyncOnStart: boolean;
     vnc: boolean;
+    autoApproveHostActions: boolean;
     isolateClaudeConfig: boolean;
     isolateCodexConfig: boolean;
     isolateOpencodeConfig: boolean;
@@ -303,6 +305,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     withEnv: false,
     resyncOnStart: true,
     vnc: true,
+    autoApproveHostActions: false,
     isolateClaudeConfig: false,
     isolateCodexConfig: false,
     isolateOpencodeConfig: false,
@@ -532,6 +535,12 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'box.vnc',
     type: 'bool',
     description: 'Run the per-box Xvnc + noVNC stack.',
+  },
+  {
+    key: 'box.autoApproveHostActions',
+    type: 'bool',
+    description:
+      'Auto-approve host-action confirmations (git push, cp host<->box, gh PR writes, checkpoint) for this box without an interactive prompt. Off by default; intended for unattended orchestration of trusted boxes. Each auto-approval is recorded as a relay event (visible in `agentbox agent` / the dashboard).',
   },
   {
     key: 'box.isolateClaudeConfig',

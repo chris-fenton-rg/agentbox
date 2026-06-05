@@ -174,9 +174,23 @@ Wrap step 2 in a loop to babysit a box across many turns. Use the narrow `wait-f
 Implications for you, the host-side agent:
 
 - Inside the box you can `git commit … && git push` exactly as normal. No setup needed.
-- Pushes are gated host-side: the relay can require a confirm prompt for destructive operations (the user sees it in the dashboard footer, ~25 s TTL). If a push appears to hang, tell the user to check the dashboard.
+- Pushes are gated host-side: the relay can require a confirm prompt for destructive operations (the user sees it in the dashboard footer, ~25 s TTL). If a push appears to hang, it's waiting on this approval — see "Answering host-action approvals" below.
 - The relay process is started lazily by the first `agentbox create` / `agentbox claude` and persists across runs (PID at `~/.agentbox/relay.pid`, log at `~/.agentbox/relay.log`). You normally don't need to manage it.
 - For HTTPS origins (`https://github.com/...`), pushing usually needs a credential — recommend the user run `gh auth login` and `gh auth setup-git` once on the host. After that, host `git push` uses gh's OAuth token automatically. SSH origins (`git@github.com:...`) keep using the host's SSH agent as before.
+
+## Answering host-action approvals (orchestrator path)
+
+When you are **orchestrating boxes unattended** (no human watching the dashboard footer), a box's `git push` / `cp` / `gh pr` write / checkpoint will block on a relay confirm that nobody answers. You answer it yourself — you're a host process and already hold the user's git/file credentials, so approving grants nothing you don't already have. Two commands:
+
+```bash
+agentbox agent approvals 1 --json          # list what box 1 is waiting on (id + exact command + argv)
+agentbox agent approve <id>                # approve one by id  (--deny / --cancel to reject)
+agentbox agent approvals 1 --wait 600000   # block until an approval appears, then act
+```
+
+**Inspect before you approve.** Read the `command` / `argv` in `approvals --json` and only approve actions that match the work you intended — do not blanket-approve whatever a box asks. The gate exists so a prompt-injected box can't launder a malicious push through the user's credentials; rubber-stamping defeats it. Don't hand-`curl` the relay's `/admin/prompts/answer` endpoint — these commands are the supported surface.
+
+For a fully-unattended run over **trusted** boxes, the user can opt into blanket auto-approval per box with `agentbox config set box.autoApproveHostActions true` (off by default). Every auto-approval is still recorded as a `host-action-auto-approved` relay event, so it stays auditable. Suggest it only when the user explicitly wants hands-off operation.
 
 ## PRs through the host relay (`agentbox-ctl git pr …`)
 

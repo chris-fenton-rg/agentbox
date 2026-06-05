@@ -673,6 +673,12 @@ export interface RegisterBoxArgs {
   previewToken?: string;
   /** Required for `kind === 'cloud'`: bearer for the in-sandbox relay's `/bridge/*`. */
   bridgeToken?: string;
+  /**
+   * Mirrors `box.autoApproveHostActions`. When true the relay auto-resolves
+   * this box's host-action confirms (git push, cp, gh writes, …) to `y`
+   * without a prompt, recording each bypass as a relay event.
+   */
+  autoApproveHostActions?: boolean;
 }
 
 export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void> {
@@ -694,6 +700,7 @@ export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void>
     previewUrl: args.previewUrl,
     previewToken: args.previewToken,
     bridgeToken: args.bridgeToken,
+    autoApproveHostActions: args.autoApproveHostActions,
   });
 }
 
@@ -878,6 +885,8 @@ export interface BoxWithToken {
   relayPreviewUrl?: string;
   relayPreviewToken?: string;
   bridgeToken?: string;
+  /** Mirrors `BoxRecord.autoApproveHostActions`; re-registered on rehydrate. */
+  autoApproveHostActions?: boolean;
 }
 
 /**
@@ -904,6 +913,7 @@ export async function rehydrateRelayRegistry(boxes: BoxWithToken[]): Promise<voi
         previewUrl: b.relayPreviewUrl,
         previewToken: b.relayPreviewToken,
         bridgeToken: b.bridgeToken,
+        autoApproveHostActions: b.autoApproveHostActions,
       });
     } catch {
       // best-effort
