@@ -81,6 +81,7 @@ maintenance:
     name: 'queue full',
     yaml: 'queue:\n  enabled: true\n  maxConcurrent: 5\n  maxWorking: 3\n  idleGraceSeconds: 20\n',
   },
+  { name: 'queue openIn', yaml: 'queue:\n  openIn: split\n' },
   { name: 'maintenance only', yaml: 'maintenance:\n  pruneProjectConfigs: true\n' },
   { name: 'portless only', yaml: 'portless:\n  enabled: true\n' },
   { name: 'portless stateDir', yaml: 'portless:\n  enabled: false\n  stateDir: /tmp/portless\n' },
@@ -142,6 +143,10 @@ const INVALID: Fixture[] = [
   {
     name: 'queue unknown leaf',
     yaml: 'queue:\n  maxWorkers: 3\n',
+  },
+  {
+    name: 'queue openIn unknown enum value',
+    yaml: 'queue:\n  openIn: same\n',
   },
   {
     name: 'maintenance wrong type for int',

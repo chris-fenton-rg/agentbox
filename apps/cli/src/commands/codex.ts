@@ -42,6 +42,7 @@ import {
 } from '../lib/queue/assert-creds.js';
 import { parseMaxOption } from '../lib/queue/parse-max-option.js';
 import { submitQueueJob } from '../lib/queue/submit.js';
+import { captureOpenTerminalContext } from '../terminal/queue-open.js';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
 import { maybeResyncWorkspace } from '../lib/resync-start.js';
 import { buildResyncWarning } from '../lib/resync-warning.js';
@@ -494,6 +495,7 @@ export const codexCommand = new Command('codex')
         createOpts: { ...pickCodexCreateOpts(opts), carry: carryForQueue },
         maxRunningOverride,
         maxWorkingOverride,
+        openTerminal: captureOpenTerminalContext(cfg.effective.queue.openIn),
       });
       outro(
         `job ${result.job.id} queued (${String(result.runningCount)}/${String(result.maxConcurrent)} running); log: ${result.job.logPath}`,

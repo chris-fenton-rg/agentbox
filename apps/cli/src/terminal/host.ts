@@ -67,6 +67,24 @@ export interface SpawnInNewTerminalArgs {
   cwd: string;
   /** Short title for the new tmux window / iTerm2 tab when applicable. */
   title: string;
+  /**
+   * Env for the spawned tmux/cmux helper. Defaults to the current process env.
+   * The queue worker passes a captured env (the submitting shell's `TMUX` /
+   * `CMUX_SOCKET_PATH`) because its own env points at whatever terminal first
+   * started the long-lived relay, not this job's terminal.
+   */
+  env?: NodeJS.ProcessEnv;
+  /**
+   * tmux target pane (`$TMUX_PANE`). When set, tmux verbs get `-t <pane>` so a
+   * detached spawner (the queue worker, which has no "current" pane) splits /
+   * opens from the submitting pane's session.
+   */
+  tmuxTarget?: string;
+  /**
+   * Force cmux to open a new top-level workspace for every mode. Set by the
+   * queue worker, which has no reliable focused surface to split/tab into.
+   */
+  cmuxWorkspaceOnly?: boolean;
 }
 
 export interface SpawnInNewTerminalResult {
@@ -103,17 +121,20 @@ async function spawnInTmux(args: SpawnInNewTerminalArgs): Promise<SpawnInNewTerm
   // tmux hands it to /bin/sh -c, which is why each argv element needs
   // single-quoting.
   const cmdStr = shellJoin(args.argv);
+  // `-t <pane>` is only added when the caller passes an explicit target (the
+  // queue worker); the foreground path omits it and tmux uses the current pane.
+  const target = args.tmuxTarget ? ['-t', args.tmuxTarget] : [];
   let tmuxArgv: string[];
   let noteKind: string;
   if (args.mode === 'split') {
-    tmuxArgv = ['split-window', '-h', '-c', args.cwd, '--', cmdStr];
+    tmuxArgv = ['split-window', '-h', ...target, '-c', args.cwd, '--', cmdStr];
     noteKind = 'tmux split';
   } else {
     // `window` and `tab` both map to tmux's only "another full screen" primitive.
-    tmuxArgv = ['new-window', '-n', args.title, '-c', args.cwd, '--', cmdStr];
+    tmuxArgv = ['new-window', ...target, '-n', args.title, '-c', args.cwd, '--', cmdStr];
     noteKind = 'tmux window';
   }
-  const r = await runQuiet('tmux', tmuxArgv);
+  const r = await runQuiet('tmux', tmuxArgv, args.env);
   if (r.code !== 0) {
     return {
       launched: false,
@@ -138,23 +159,30 @@ async function spawnInTmux(args: SpawnInNewTerminalArgs): Promise<SpawnInNewTerm
  * what you usually want; `window` is the explicit "somewhere separate" choice.
  */
 async function spawnInCmux(args: SpawnInNewTerminalArgs): Promise<SpawnInNewTerminalResult> {
-  const bin = cmuxBinary();
+  const bin = cmuxBinary(args.env);
 
-  if (args.mode === 'window') {
+  // `window` always means a separate workspace; the queue worker forces every
+  // mode here (`cmuxWorkspaceOnly`) because a detached spawner has no focused
+  // surface to split/tab into.
+  if (args.mode === 'window' || args.cmuxWorkspaceOnly) {
     // A separate top-level cmux workspace. `new-workspace` carries cwd + command
     // atomically (it types `--command` + Enter into the new workspace's shell,
     // which parses the shell-quoting we applied in `cmdStr`).
-    const r = await runQuiet(bin, [
-      'new-workspace',
-      '--name',
-      args.title,
-      '--cwd',
-      args.cwd,
-      '--command',
-      shellJoin(args.argv),
-      '--focus',
-      'true',
-    ]);
+    const r = await runQuiet(
+      bin,
+      [
+        'new-workspace',
+        '--name',
+        args.title,
+        '--cwd',
+        args.cwd,
+        '--command',
+        shellJoin(args.argv),
+        '--focus',
+        'true',
+      ],
+      args.env,
+    );
     if (r.code !== 0) {
       return {
         launched: false,
@@ -176,7 +204,7 @@ async function spawnInCmux(args: SpawnInNewTerminalArgs): Promise<SpawnInNewTerm
       : ['new-surface', '--focus', 'true'];
   const noteKind = args.mode === 'split' ? 'cmux split' : 'cmux tab';
 
-  const created = await runQuiet(bin, createArgv);
+  const created = await runQuiet(bin, createArgv, args.env);
   if (created.code !== 0) {
     return {
       launched: false,
@@ -196,7 +224,7 @@ async function spawnInCmux(args: SpawnInNewTerminalArgs): Promise<SpawnInNewTerm
   }
   const cmdLine = `cd ${shellQuote(args.cwd)} && exec ${shellJoin(args.argv)}`;
   // `\n` is interpreted by `cmux send` as Enter, which runs the typed command.
-  const sent = await runQuiet(bin, ['send', '--surface', surfaceRef, `${cmdLine}\n`]);
+  const sent = await runQuiet(bin, ['send', '--surface', surfaceRef, `${cmdLine}\n`], args.env);
   if (sent.code !== 0) {
     return {
       launched: false,
@@ -281,10 +309,12 @@ interface QuietResult {
 }
 
 /** Spawn `cmd argv...`, capture stdout + stderr. Resolves on exit. The tmux /
- *  iTerm2 callers ignore stdout; the cmux caller parses it for the surface ref. */
-function runQuiet(cmd: string, argv: string[]): Promise<QuietResult> {
+ *  iTerm2 callers ignore stdout; the cmux caller parses it for the surface ref.
+ *  `env` defaults to the current process env; the queue worker passes a captured
+ *  env so tmux/cmux talk to the submitting shell's server, not the relay's. */
+function runQuiet(cmd: string, argv: string[], env?: NodeJS.ProcessEnv): Promise<QuietResult> {
   return new Promise((resolve) => {
-    const child = spawn(cmd, argv, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(cmd, argv, { stdio: ['ignore', 'pipe', 'pipe'], env });
     let stdout = '';
     let stderr = '';
     child.stdout?.on('data', (chunk: Buffer) => {

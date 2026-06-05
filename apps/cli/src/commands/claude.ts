@@ -42,6 +42,7 @@ import { buildResyncWarning } from '../lib/resync-warning.js';
 import { applyClaudeSkipPermissions } from '../lib/skip-permissions.js';
 import { parseMaxOption } from '../lib/queue/parse-max-option.js';
 import { submitQueueJob } from '../lib/queue/submit.js';
+import { captureOpenTerminalContext } from '../terminal/queue-open.js';
 import {
   ATTACH_IN_HELP,
   INLINE_HELP,
@@ -587,6 +588,7 @@ export const claudeCommand = new Command('claude')
         createOpts: { ...pickCreateOpts(opts), carry: carryForQueue },
         maxRunningOverride,
         maxWorkingOverride,
+        openTerminal: captureOpenTerminalContext(cfg.effective.queue.openIn),
       });
       outro(
         `job ${result.job.id} queued (${String(result.runningCount)}/${String(result.maxConcurrent)} running); log: ${result.job.logPath}`,

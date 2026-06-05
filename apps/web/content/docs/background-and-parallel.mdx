@@ -44,6 +44,8 @@ job a1b2c3d4e5f6a1b2c3 queued (2/5 running); log: ~/.agentbox/queue/a1b2c3d4e5f6
 
 Credentials for the chosen agent must already be on the host — the background worker can't do an interactive login. If they're missing, submission fails loud. Authenticate first (see [run an agent](/docs/run-an-agent)).
 
+By default a queued run opens nothing — attach later with `agentbox claude attach <box>`. To have the box pop open automatically the moment its worker finishes creating it, set [`queue.openIn`](/docs/configuration#queue--autopause) to `split`, `window`, or `tab` (when you submit from inside tmux, cmux, or iTerm2). The relay opens an attached terminal onto the box for you — no need to watch for it to come up.
+
 <Callout type="warn" title="NOT PRINT MODE">
 `-i` is `--initial-prompt` (the background queue), **not** Claude's own `-p` headless print mode. The difference: `-i` seeds a real, **interactive** agent session you can attach to, drive, and resume — it just starts detached. `-p` is the non-interactive print mode that runs once and exits. To use print mode, pass it through after `--`:
 
@@ -64,6 +66,7 @@ The queue is configured with **global** config keys (the relay is host-wide, so 
 | `queue.maxConcurrent` | `5` | Max simultaneously **running boxes** (all providers) before `-i` jobs queue. |
 | `queue.maxWorking` | `0` (off) | Max agents actively **working** (quota-consuming) at once; `0` falls back to the running-box gate. |
 | `queue.idleGraceSeconds` | `15` | Seconds an agent must stay non-working before it frees its working slot. |
+| `queue.openIn` | `none` | When a queued box becomes ready, open an attached terminal onto it: `split`, `window`, or `tab` (tmux/cmux/iTerm2). `none` opens nothing. |
 
 The default caps **running boxes**. Turn on `queue.maxWorking` for a smarter **working-agent** cap — paused or idle boxes don't count, so you can keep more boxes alive cheaply (see [checkpoints and pausing](/docs/checkpoints-and-pausing)) while still bounding active quota burn. Because `maxConcurrent` counts boxes across all providers, cloud `-i` jobs on [Daytona](/docs/daytona), [Hetzner](/docs/hetzner), or [Vercel](/docs/vercel) share the same gate.
 
