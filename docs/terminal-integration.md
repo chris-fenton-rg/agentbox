@@ -45,6 +45,46 @@ Mechanics:
 - Anything that fails (unknown host, shell mode, spawn non-zero) falls through to
   inline attach.
 
+## `queue.openIn` — open a background `-i` box when it is ready
+
+`QueueOpenIn = 'none' | 'split' | 'window' | 'tab'` (config key `queue.openIn`,
+default `none`; config-only — no CLI flag). The foreground `attach.openIn` above
+runs in the submitting process; the background `-i` path can't, because the box
+doesn't exist yet (it's created later by the relay's queue worker, and its name
+isn't even known until then). So the open happens **from the worker, on the
+host, the moment the box is ready** — not from a waiting pane at submit time.
+
+Flow:
+- At submit (`captureOpenTerminalContext`, `terminal/queue-open.ts`): if
+  `queue.openIn !== 'none'` and the submitting shell is a known host terminal,
+  capture the targeting (`host`, `mode`, `cwd`, tmux `$TMUX`/`$TMUX_PANE`, cmux
+  `$CMUX_SOCKET_PATH`/CLI) onto the queue job (`QueueJob.openTerminal`). The live
+  submit env is the source of truth — the long-lived relay/worker inherit a
+  **stale** terminal env from whenever the relay first started.
+- When the box is ready (`_run-queued-job.ts` → `maybeOpenQueuedTerminal`): the
+  worker calls `spawnQueuedOpenTerminal`, which re-invokes
+  `agentbox <agent> attach <box> --attach-in same` in a fresh terminal via
+  `spawnInNewTerminal`, passing the captured env so tmux/cmux talk to the
+  submitting shell's server. Best-effort: any failure is logged, never fails the
+  job.
+
+Per-host targeting differs from the foreground path because the worker is
+detached (no "current" pane):
+
+| mode     | tmux                          | cmux            | iTerm2            |
+| -------- | ----------------------------- | --------------- | ----------------- |
+| `split`  | `split-window -h -t <pane>`   | `new-workspace` | `split vertically` |
+| `tab`    | `new-window -t <pane>`        | `new-workspace` | `create tab`       |
+| `window` | `new-window -t <pane>`        | `new-workspace` | `create window`    |
+
+- tmux targets the captured `$TMUX_PANE` so the split/window lands in the
+  submitting pane's session and shows up live in the attached client.
+- cmux always opens a **new workspace** (every mode) — a detached worker has no
+  reliable focused surface to split/tab into.
+- iTerm2 opens relative to the **frontmost** window (no stable submit-time handle
+  is captured in v1).
+- Unknown host terminal at submit → nothing is captured and nothing opens.
+
 ## Terminal title
 
 `apps/cli/src/terminal/title.ts`: `setTerminalTitle` emits OSC 0

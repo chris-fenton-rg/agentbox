@@ -38,6 +38,7 @@ import { buildResyncWarning, prependResyncWarning } from '../lib/resync-warning.
 import { applyClaudeSkipPermissions, applyCodexSkipPermissions } from '../lib/skip-permissions.js';
 import { providerForCreate } from '../provider/registry.js';
 import { cloudAgentStartDetached } from './_cloud-attach.js';
+import { spawnQueuedOpenTerminal } from '../terminal/queue-open.js';
 
 export const runQueuedJobCommand = new Command('_run-queued-job')
   .description('internal: run a queued background agent job (do not invoke directly)')
@@ -131,8 +132,7 @@ async function runDockerJob(
 
   // Auth resolution mirrors the foreground claude path; codex/opencode don't
   // need a host-env probe (they ride the in-box volume that login seeded).
-  const resolved =
-    job.agent === 'claude-code' ? await resolveClaudeAuth(process.env) : null;
+  const resolved = job.agent === 'claude-code' ? await resolveClaudeAuth(process.env) : null;
 
   // browser.default = 'playwright' | 'both' implies installing playwright
   // even if box.withPlaywright wasn't explicitly set.
@@ -147,17 +147,11 @@ async function runDockerJob(
     checkpointRef,
     image: cfg.effective.box.image,
     claudeConfig:
-      job.agent === 'claude-code'
-        ? { isolate: cfg.effective.box.isolateClaudeConfig }
-        : undefined,
+      job.agent === 'claude-code' ? { isolate: cfg.effective.box.isolateClaudeConfig } : undefined,
     codexConfig:
-      job.agent === 'codex'
-        ? { isolate: cfg.effective.box.isolateCodexConfig }
-        : undefined,
+      job.agent === 'codex' ? { isolate: cfg.effective.box.isolateCodexConfig } : undefined,
     opencodeConfig:
-      job.agent === 'opencode'
-        ? { isolate: cfg.effective.box.isolateOpencodeConfig }
-        : undefined,
+      job.agent === 'opencode' ? { isolate: cfg.effective.box.isolateOpencodeConfig } : undefined,
     claudeEnv: resolved?.env,
     withPlaywright,
     withEnv: cfg.effective.box.withEnv,
@@ -230,6 +224,51 @@ async function runDockerJob(
     });
   } else {
     throw new Error(`unknown agent kind: ${String(job.agent satisfies QueueAgentKind)}`);
+  }
+
+  await maybeOpenQueuedTerminal(job, result.record.name, log);
+}
+
+/** The CLI subcommand name for an agent kind (`claude-code` → `claude`). */
+function agentBinaryName(agent: QueueAgentKind): 'claude' | 'codex' | 'opencode' {
+  return agent === 'claude-code' ? 'claude' : agent;
+}
+
+/**
+ * `queue.openIn`: open a fresh host terminal attached to the just-ready box.
+ * Best-effort — a failure here never fails the job (the box is up and the user
+ * can still attach manually). The targeting context was captured on the
+ * submitting host at submit time; we re-invoke the CLI's own `attach` inline in
+ * the new pane.
+ */
+async function maybeOpenQueuedTerminal(
+  job: QueueJob,
+  boxName: string,
+  log: ReturnType<typeof openCommandLog>,
+): Promise<void> {
+  const ctx = job.openTerminal;
+  if (!ctx) return;
+  const cliEntry = process.env['AGENTBOX_CLI_ENTRY'];
+  if (!cliEntry) {
+    log.write('queue.openIn: AGENTBOX_CLI_ENTRY unset; cannot open terminal');
+    return;
+  }
+  const argv = [
+    process.execPath,
+    cliEntry,
+    agentBinaryName(job.agent),
+    'attach',
+    boxName,
+    '--attach-in',
+    'same',
+  ];
+  try {
+    const r = await spawnQueuedOpenTerminal(ctx, argv, boxName);
+    log.write(
+      r.launched ? `queue.openIn: ${r.note}` : `queue.openIn: open failed: ${r.error ?? ''}`,
+    );
+  } catch (err) {
+    log.write(`queue.openIn: open threw: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -319,6 +358,8 @@ async function runCloudJob(
     sessionName,
     extraArgs,
   });
+
+  await maybeOpenQueuedTerminal(job, result.record.name, log);
 }
 
 function buildOverridesFromJob(job: QueueJob): Partial<UserConfig> {

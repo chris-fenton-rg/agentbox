@@ -155,7 +155,8 @@
         "enabled": { "type": "boolean" },
         "maxConcurrent": { "type": "integer" },
         "maxWorking": { "type": "integer" },
-        "idleGraceSeconds": { "type": "integer" }
+        "idleGraceSeconds": { "type": "integer" },
+        "openIn": { "enum": ["none", "split", "window", "tab"] }
       }
     },
     "maintenance": {
