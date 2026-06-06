@@ -193,8 +193,10 @@ shim + tests."
 7. Tests + docs (see below).
 
 ### Session 2 — Linear (`schpet/linear-cli`)
-- `connectors/linear.ts`: hostBin `linear`. Reads (`issue list/view`, `team list`);
-  writes (`issue create`, `issue update`/status, `comment create`) — gated.
+- `connectors/linear.ts`: hostBin `linear`. Reads (`issue list/mine/view/query`,
+  `team list`, `auth whoami` via the `whoami` op, query-only `api` GraphQL
+  passthrough); writes (`issue create`, `issue update`/status, `issue comment add`
+  — `@schpet/linear-cli` v2 uses `add`, not `create`) — gated.
 - `linear-shim`; config flag; doctor entry. No relay/ctl core changes (descriptor
   only) — this validates the abstraction.
 

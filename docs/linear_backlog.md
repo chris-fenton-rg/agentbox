@@ -36,18 +36,19 @@ e2e. v2.0.0 surface (richer than the plan assumed):
 | op | read/write | host argv | notes |
 |---|---|---|---|
 | `whoami` | read | `auth whoami` | identity only — **never** `auth token` |
-| `issue.list` | read | `issue list` | a.k.a. `mine` |
+| `issue.list` | read | `issue list` | |
+| `issue.mine` | read | `issue mine` | v2-native "issues assigned to me" |
 | `issue.view` | read | `issue view` | |
 | `issue.query` | read | `issue query` | structured filters |
 | `team.list` | read | `team list` | |
-| `api` | read | `api` | `refuseCall` rejects GraphQL mutation/subscription |
+| `api` | read | `api` | `refuseCall` rejects GraphQL mutation/subscription + `--variable key=@<path>` |
 | `issue.create` | write (gated) | `issue create` | |
 | `issue.update` | write (gated) | `issue update` | status/title/etc. |
-| `issue.comment` | write (gated) | `issue comment create` | |
+| `issue.comment` | write (gated) | `issue comment add` | `@schpet/linear-cli` v2 uses `add`, not `create` |
 
 ## Tasks
 
-### LT1 — Connector + shim + config + doctor + unit tests + docs  — **status: not started**
+### LT1 — Connector + shim + config + doctor + unit tests + docs  — **status: done (2026-06-06)**
 - `packages/integrations/src/connectors/linear.ts` (+ register in `registry.ts`;
   widen the `IntegrationService` union in `types.ts` to include `'linear'`).
 - `refuseGraphqlNonQuery` (or similar) for the `api` op — refuse mutation/subscription.
@@ -92,5 +93,46 @@ e2e. v2.0.0 surface (richer than the plan assumed):
   authed against `waldosai` (admin, accounts@waldos.ai). Connector surface
   scouted; security notes captured (auth-token leak, destructive deletes,
   GraphQL mutation gate). Linear carry entries added to `agentbox.yaml`.
-</content>
-</invoke>
+- 2026-06-06: **LT1 shipped.** Descriptor-only, no relay/ctl core changes.
+  - Connector at `packages/integrations/src/connectors/linear.ts` with ops
+    `whoami` (`auth whoami`), `issue.list`/`issue.mine`/`issue.view`/`issue.query`,
+    `team.list`, `api` (+ `refuseGraphqlNonQuery` GraphQL mutation/subscription
+    gate, value-consuming flag walker, `--variable key=@<path>` host-file-load
+    refusal, Unicode-whitespace + BOM-prefix bypass guard),
+    `issue.create`/`issue.update`/`issue.comment` (gated writes; `issue.comment`
+    maps to `linear issue comment add` — `@schpet/linear-cli` v2 uses `add`,
+    not `create`). `IntegrationService` union widened to include `'linear'`.
+  - Shim at `packages/sandbox-docker/scripts/linear-shim` (installed at
+    `/usr/local/bin/linear`, no symlink alias). Strict allowlist; hard-
+    rejects `auth token` (raw-API-key leak), `auth login/logout/migrate/
+    default`, `issue/team delete`, `team create`. Staged across all five
+    providers (docker COPY, hetzner install-box.sh, vercel provision.sh,
+    e2b build-template.sh, daytona is shim-less by design) via
+    `stage-runtime.mjs` + each provider's `runtime-assets.ts`.
+  - Typed config flag `integrations.linear.enabled` (default `false`) added
+    to `UserConfig` / `EffectiveConfig` / `BUILT_IN_DEFAULTS` /
+    `KEY_REGISTRY` in `packages/config/src/types.ts`.
+  - Doctor: zero-line change — `ALL_CONNECTORS` drives `integrationsChecks`,
+    so the Linear row appears automatically with the right install/login
+    hints from the connector descriptor.
+  - Unit tests (pure, no docker/network):
+    - `packages/integrations/test/registry.test.ts` — registry resolves
+      `linear`, op classification, argv shapes, `refuseGraphqlNonQuery`
+      cases (mutation refused, query allowed, anonymous `{…}` allowed,
+      leading whitespace + `# comment` tolerated, `--input` refused,
+      case-insensitive keyword match).
+    - `packages/ctl/test/gh-and-shims.test.ts` — `linear-shim` allowlist
+      tests including the explicit `auth token` rejection and the
+      destructive-op refusals.
+    - `apps/cli/test/doctor-integrations.test.ts` — updated for
+      multi-connector iteration.
+    - `packages/relay/test/*` — updated the two existing tests that used
+      `linear` as the "unknown service" example (now `trello`).
+  - `pnpm typecheck && pnpm test && pnpm build && pnpm lint` all green.
+  - Docs updated in the same change: `docs/integrations.md` (design + the
+    GraphQL gate + auth-token exclusion notes), new public page at
+    `apps/web/content/docs/integrations-linear.mdx` + meta.json entry,
+    `apps/web/content/docs/configuration.mdx` row, `cli.mdx` doctor
+    pointer, `docs/host-relay.md` bullet extension, `docs/features.md`
+    "what works today" bullet. Live e2e against the Waldosai workspace
+    is LT2 — deliberately not run in LT1.
