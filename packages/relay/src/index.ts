@@ -52,6 +52,7 @@ export {
   assertIntegrationReady,
   makeIntegrationOpRefusal,
   parseIntegrationMethod,
+  refuseIfIntegrationDisabled,
   refuseIntegrationCall,
   runHostIntegration,
   type IntegrationRpcParams,
