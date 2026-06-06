@@ -281,6 +281,16 @@ describe('linear api refuseCall — keeps write:false honest (GraphQL gate)', ()
     expect(refuse(['--variable', 'key=@/etc/passwd'])?.stderr).toMatch(/host-file load/);
   });
 
+  it('refuses --variable values with `=@` anywhere (last-vs-first-`=` split safety)', () => {
+    // Whether linear-cli splits the value on the FIRST `=` (giving
+    // `name=@/etc/passwd` as the value) or the LAST `=` (giving
+    // `@/etc/passwd` as the value), both interpretations point at a host
+    // file. The guard refuses on the `=@` substring directly so neither
+    // split orientation matters.
+    expect(refuse(['--variable', 'foo=name=@/etc/passwd', '{ x }'])?.exitCode).toBe(65);
+    expect(refuse(['--variable=foo=name=@/etc/passwd', '{ x }'])?.exitCode).toBe(65);
+  });
+
   it('allows plain --variable key=value (non-@ values pass)', () => {
     expect(refuse(['--variable', 'key=value', '{ x }'])).toBeNull();
     expect(refuse(['--variable=key=value', '{ x }'])).toBeNull();
@@ -294,10 +304,59 @@ describe('linear api refuseCall — keeps write:false honest (GraphQL gate)', ()
     expect(refuse(['--variables-json=mutation literal', '{ teams { id } }'])).toBeNull();
     // The --variable VALUE comes as the next token — if we didn't consume
     // it, a value of "mutation" would refuse.
-    expect(refuse(['--variable', 'mutation', '{ teams { id } }'])).toBeNull();
+    expect(refuse(['--variable', 'foo=value-mutation', '{ teams { id } }'])).toBeNull();
     // Order doesn't matter: flag-first still picks up the positional after
     // the consumed value.
     expect(refuse(['--paginate', '--variables-json', '{}', '{ teams { id } }'])).toBeNull();
+  });
+
+  it("doesn't let --variable swallow a following flag (so --input defense survives)", () => {
+    // Argv `['--variable', '--input', …]` — if --variable greedily consumed
+    // the next token regardless of shape, the --input refusal one
+    // iteration later would never fire. The guard skips the consume when
+    // the next token starts with `--`, so --input is still inspected and
+    // refused.
+    expect(refuse(['--variable', '--input', '/etc/passwd'])?.stderr).toMatch(/--input/);
+    expect(refuse(['--variable', '--input=/etc/passwd'])?.stderr).toMatch(/--input/);
+  });
+
+  it('refuses a mutation prefixed by Unicode whitespace / BOM (gate must not fall open)', () => {
+    // The pre-fix parser used an ASCII-only whitespace set, so a source
+    // with a leading BOM (U+FEFF), NBSP (U+00A0), or LSEP (U+2028)
+    // returned null from firstGraphqlOperationKeyword and silently
+    // passed. linear-cli's GraphQL parser strips BOM and executes the
+    // mutation. The widened whitespace check (\s + BOM) closes that.
+    const bom = '﻿';
+    const nbsp = ' ';
+    const lsep = ' ';
+    expect(refuse([`${bom}mutation IssueCreate { x }`])?.exitCode).toBe(65);
+    expect(refuse([`${nbsp}mutation IssueCreate { x }`])?.exitCode).toBe(65);
+    expect(refuse([`${lsep}mutation IssueCreate { x }`])?.exitCode).toBe(65);
+    // Same Unicode-whitespace prefixes on a legitimate query/anonymous
+    // shape still pass.
+    expect(refuse([`${bom}{ teams { id } }`])).toBeNull();
+    expect(refuse([`${nbsp}query Teams { teams { id } }`])).toBeNull();
+  });
+
+  it("treats a single-dash positional like '-mutation' as a positional (not a flag)", () => {
+    // Pre-fix the parser skipped any arg starting with `-`, so a positional
+    // `'-mutation { x }'` slipped past unclassified. Narrowing the skip to
+    // long flags (`--`) makes the gate inspect single-dash tokens and
+    // refuse them as 'unparseable' shapes (their first significant char
+    // isn't `{` or an ASCII letter).
+    const r = refuse(['-mutation { x }']);
+    expect(r).not.toBeNull();
+    expect(r!.exitCode).toBe(65);
+  });
+
+  it("refuses 'unparseable' positionals (first significant char isn't `{` or an ASCII letter)", () => {
+    // Defense-in-depth: an argv positional that we can't classify as a
+    // known GraphQL shape is refused with a clear message. Real queries
+    // always start with `query`/`mutation`/`subscription`/`{` after
+    // whitespace + line comments are stripped.
+    expect(refuse([':invalid'])?.exitCode).toBe(65);
+    expect(refuse(['"hello"'])?.exitCode).toBe(65);
+    expect(refuse(['/* C-style */ { x }'])?.exitCode).toBe(65);
   });
 
   it('is case-insensitive on the operation keyword', () => {

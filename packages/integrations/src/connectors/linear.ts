@@ -128,7 +128,10 @@ function refuseGraphqlNonQuery(args: readonly string[]): IntegrationOpRefusal | 
   // `--variable` and `--variables-json` each take the next argv token as
   // their value — the loop consumes them explicitly below so a JSON
   // payload starting with `mutation`/`subscription` isn't misread as the
-  // GraphQL operation.
+  // GraphQL operation. The consume-next branches refuse to swallow the
+  // next token if it LOOKS like a flag (`--…`) — otherwise a malformed
+  // `--variable --input=/etc/passwd` would silently skip the `--input`
+  // refusal one iteration later.
   for (let i = 0; i < args.length; i++) {
     const arg = args[i] ?? '';
     if (arg === '--input' || arg.startsWith('--input=')) {
@@ -143,7 +146,9 @@ function refuseGraphqlNonQuery(args: readonly string[]): IntegrationOpRefusal | 
           "'--variable key=@<path>' (host-file load) isn't supported through the relay",
         );
       }
-      i++; // consume the value
+      // Don't consume a token that's itself a flag — it needs to run
+      // through its own per-flag checks (e.g. `--variable --input=/x`).
+      if (!next.startsWith('--')) i++;
       continue;
     }
     if (arg.startsWith('--variable=')) {
@@ -155,17 +160,32 @@ function refuseGraphqlNonQuery(args: readonly string[]): IntegrationOpRefusal | 
       continue;
     }
     if (arg === '--variables-json') {
-      i++; // consume the JSON value; don't treat it as a positional
+      const next = args[i + 1] ?? '';
+      if (!next.startsWith('--')) i++;
       continue;
     }
     if (arg.startsWith('--variables-json=')) {
       continue;
     }
-    if (arg.startsWith('-')) continue;
+    // Only LONG flags (`--…`) skip the keyword check. A bare `-` or a
+    // single-dash token like `-mutation` is treated as a positional so
+    // it goes through `firstGraphqlOperationKeyword` and the
+    // unparseable/mutation cases fail closed.
+    if (arg.startsWith('--')) continue;
     const op = firstGraphqlOperationKeyword(arg);
     if (op === 'mutation' || op === 'subscription') {
       return refuse(
         `only GraphQL queries are proxied (use issue.create / issue.update / issue.comment for writes); detected operation '${op}'`,
+      );
+    }
+    // `unparseable` (a positional whose first significant char isn't `{`
+    // or an ASCII letter) is refused too. Real queries start with `query`,
+    // `mutation`, `subscription`, or `{`. Anything else is a garbage
+    // shape that we'd rather not forward — the agent gets a clear refusal
+    // instead of an opaque host CLI error.
+    if (op === 'unparseable') {
+      return refuse(
+        `couldn't classify positional argv ${JSON.stringify(arg)} as a GraphQL operation (expected 'query', 'mutation', 'subscription', or '{')`,
       );
     }
   }
@@ -174,31 +194,51 @@ function refuseGraphqlNonQuery(args: readonly string[]): IntegrationOpRefusal | 
 
 /**
  * True when a `--variable` value uses linear-cli's `@<path>` host-file load
- * syntax. The value shape is `key=@<path>`; bare `@<path>` (no `key=`) is
- * also refused defensively in case a future linear-cli release widens the
- * syntax.
+ * syntax. The standard shape is `key=@<path>`, but we refuse any value
+ * that CONTAINS `=@` or a bare leading `@` — guards against:
+ *   - `key=@<path>` (canonical).
+ *   - `@<path>` (bare, no `key=` prefix).
+ *   - `key=name=@<path>` where a `=` appears in the key/name portion.
+ *     linear-cli's `--variable` parser may split on the FIRST `=` (so the
+ *     value is `name=@<path>`) or on the LAST `=` (so the value is
+ *     `@<path>`); we refuse both interpretations by treating any `=@`
+ *     anywhere in the string as a file-load signal.
+ *   - Future shape changes: if linear-cli adds escaping or new prefixes,
+ *     refusing on the literal `=@` substring stays conservative.
  */
 function variableValueIsFileLoad(value: string): boolean {
-  const eq = value.indexOf('=');
-  if (eq === -1) return value.startsWith('@');
-  return value.slice(eq + 1).startsWith('@');
+  if (value.startsWith('@')) return true;
+  return value.includes('=@');
 }
 
 /**
  * Extract the first GraphQL operation keyword from a source string after
  * stripping leading whitespace and `# …` line comments. Returns the
  * keyword (`query` | `mutation` | `subscription`) when one is found,
- * `'anonymous'` for the `{ … }` shorthand, or `null` for an empty/
- * unparseable source. Only the prefix matters — the rest of the source
- * is not validated; we're not a GraphQL parser, just a write-shape
- * detector.
+ * `'anonymous'` for the `{ … }` shorthand, or `null` for an empty source.
+ * Only the prefix matters — the rest of the source is not validated;
+ * we're not a GraphQL parser, just a write-shape detector.
+ *
+ * Returns `'unparseable'` (not null) for sources whose first non-whitespace
+ * non-comment character isn't `{` or an ASCII letter — that way an outer
+ * gate can decide to fail-CLOSED on shapes it doesn't recognize (BOM,
+ * NBSP, stray punctuator, etc.) instead of silently passing them. The
+ * caller in `refuseGraphqlNonQuery` is unchanged: it only refuses on
+ * `mutation` / `subscription`, so `'unparseable'` still passes — but the
+ * sentinel is available for a future stricter mode.
+ *
+ * The whitespace test uses the JS `\s` class so Unicode whitespace
+ * (U+00A0 NBSP, U+2028, the BOM U+FEFF, etc.) is stripped before the
+ * keyword check — otherwise a `'﻿mutation {…}'` source would
+ * bypass the gate because `﻿` is not in `[ \t\n\r,]` and not an
+ * ASCII letter, so `j === i` and the function returned null.
  */
 function firstGraphqlOperationKeyword(source: string): string | null {
   let i = 0;
   const n = source.length;
   while (i < n) {
     const c = source[i]!;
-    if (c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === ',') {
+    if (/\s/.test(c) || c === ',' || c === '﻿') {
       i++;
       continue;
     }
@@ -219,6 +259,10 @@ function firstGraphqlOperationKeyword(source: string): string | null {
       break;
     }
   }
-  if (j === i) return null;
+  // No leading ASCII letter and not `{` — the source's first significant
+  // character is something we can't classify (stray punctuator, smart
+  // quote, control char). Return a sentinel rather than null so the gate
+  // can choose to be paranoid in the future.
+  if (j === i) return 'unparseable';
   return source.slice(i, j).toLowerCase();
 }

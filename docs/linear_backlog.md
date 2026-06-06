@@ -36,14 +36,15 @@ e2e. v2.0.0 surface (richer than the plan assumed):
 | op | read/write | host argv | notes |
 |---|---|---|---|
 | `whoami` | read | `auth whoami` | identity only — **never** `auth token` |
-| `issue.list` | read | `issue list` | a.k.a. `mine` |
+| `issue.list` | read | `issue list` | |
+| `issue.mine` | read | `issue mine` | v2-native "issues assigned to me" |
 | `issue.view` | read | `issue view` | |
 | `issue.query` | read | `issue query` | structured filters |
 | `team.list` | read | `team list` | |
-| `api` | read | `api` | `refuseCall` rejects GraphQL mutation/subscription |
+| `api` | read | `api` | `refuseCall` rejects GraphQL mutation/subscription + `--variable key=@<path>` |
 | `issue.create` | write (gated) | `issue create` | |
 | `issue.update` | write (gated) | `issue update` | status/title/etc. |
-| `issue.comment` | write (gated) | `issue comment create` | |
+| `issue.comment` | write (gated) | `issue comment add` | `@schpet/linear-cli` v2 uses `add`, not `create` |
 
 ## Tasks
 
@@ -94,10 +95,13 @@ e2e. v2.0.0 surface (richer than the plan assumed):
   GraphQL mutation gate). Linear carry entries added to `agentbox.yaml`.
 - 2026-06-06: **LT1 shipped.** Descriptor-only, no relay/ctl core changes.
   - Connector at `packages/integrations/src/connectors/linear.ts` with ops
-    `whoami` (`auth whoami`), `issue.list`/`issue.view`/`issue.query`,
+    `whoami` (`auth whoami`), `issue.list`/`issue.mine`/`issue.view`/`issue.query`,
     `team.list`, `api` (+ `refuseGraphqlNonQuery` GraphQL mutation/subscription
-    gate), `issue.create`/`issue.update`/`issue.comment` (gated writes).
-    `IntegrationService` union widened to include `'linear'`.
+    gate, value-consuming flag walker, `--variable key=@<path>` host-file-load
+    refusal, Unicode-whitespace + BOM-prefix bypass guard),
+    `issue.create`/`issue.update`/`issue.comment` (gated writes; `issue.comment`
+    maps to `linear issue comment add` — `@schpet/linear-cli` v2 uses `add`,
+    not `create`). `IntegrationService` union widened to include `'linear'`.
   - Shim at `packages/sandbox-docker/scripts/linear-shim` (installed at
     `/usr/local/bin/linear`, no symlink alias). Strict allowlist; hard-
     rejects `auth token` (raw-API-key leak), `auth login/logout/migrate/
