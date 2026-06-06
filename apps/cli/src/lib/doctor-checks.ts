@@ -10,8 +10,16 @@ import { accessSync, constants as fsConstants, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
+import { loadEffectiveConfig } from '@agentbox/config';
+import { ALL_CONNECTORS, type IntegrationConnector } from '@agentbox/integrations';
 
-export type CheckStatus = 'ok' | 'warn' | 'fail';
+/**
+ * `info` is for rows that are intentionally inert (e.g. an integration the
+ * user hasn't enabled). It surfaces as a distinct glyph but rolls up like
+ * `ok` so it never pushes the overall doctor status to "warn" — disabling
+ * Notion is a setting, not a problem.
+ */
+export type CheckStatus = 'ok' | 'info' | 'warn' | 'fail';
 
 export interface CheckResult {
   label: string;
@@ -373,6 +381,134 @@ async function e2bChecks(): Promise<CheckResult[]> {
   }
 }
 
+/**
+ * Probe a binary, treating ENOENT (missing on PATH) as a distinct outcome
+ * from a non-zero exit. `execa({reject:false})` returns a result envelope
+ * even on spawn failure — `{ failed: true, code: 'ENOENT', exitCode: undefined }`
+ * — rather than throwing. We map that to `missing: true` so the integration
+ * check has a single, easy-to-read branch. Wrapped in try/catch in case a
+ * future execa release reverts to throwing on spawn errors.
+ */
+async function probeIntegrationBin(
+  bin: string,
+  args: readonly string[],
+): Promise<{ exitCode: number; stdout: string; stderr: string; missing: boolean }> {
+  try {
+    const r = await execa(bin, [...args], { reject: false });
+    const code = (r as { code?: string }).code;
+    if (code === 'ENOENT') {
+      return { exitCode: 127, stdout: '', stderr: r.stderr ?? '', missing: true };
+    }
+    return {
+      exitCode: r.exitCode ?? 1,
+      stdout: typeof r.stdout === 'string' ? r.stdout : '',
+      stderr: typeof r.stderr === 'string' ? r.stderr : '',
+      missing: false,
+    };
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return {
+      exitCode: code === 'ENOENT' ? 127 : 1,
+      stdout: '',
+      stderr: errSummary(err),
+      missing: code === 'ENOENT',
+    };
+  }
+}
+
+/** Shape `loadEffectiveConfig` returns; only the integrations slice matters here. */
+type IntegrationsConfigSlice = {
+  effective: { integrations?: Record<string, { enabled?: boolean } | undefined> };
+};
+
+export type IntegrationsConfigLoader = (cwd: string) => Promise<IntegrationsConfigSlice>;
+
+/**
+ * Per-connector host-side detection: is each `integrations.<svc>.enabled`
+ * flipped on, is the host CLI installed, and is the user logged in. Driven
+ * off `ALL_CONNECTORS` so Linear/Trello light up here automatically when
+ * they ship — no doctor change needed.
+ *
+ * `loader` is injectable for unit tests (mirrors `refuseIfIntegrationDisabled`'s
+ * approach). The default reads layered config from `cwd`, so toggling the
+ * flag via `agentbox config set` takes effect on the next doctor run with
+ * no caching.
+ *
+ * Auth env handling: we deliberately do NOT force `NOTION_KEYRING=0` on the
+ * host probe. The Notion connector forces it inside the box because the box
+ * has no keychain; on the host the user's authed state IS the keychain
+ * entry, and forcing the file-auth path would make a keychain-authed user
+ * read as "not logged in" against a non-existent `~/.config/notion/auth.json`.
+ */
+export async function integrationsChecks(
+  loader: IntegrationsConfigLoader = loadEffectiveConfig,
+): Promise<CheckResult[]> {
+  let cfg: IntegrationsConfigSlice;
+  try {
+    cfg = await loader(process.cwd());
+  } catch {
+    cfg = { effective: {} };
+  }
+  // Parallel: each connector's two probes (version + auth) are independent
+  // across connectors. With Linear / Trello / ClickUp queued, the serial
+  // walk would scale linearly; Promise.all keeps doctor latency flat.
+  return Promise.all(
+    ALL_CONNECTORS.map((connector) => checkOneIntegration(connector, cfg.effective.integrations)),
+  );
+}
+
+async function checkOneIntegration(
+  connector: IntegrationConnector,
+  integrations: Record<string, { enabled?: boolean } | undefined> | undefined,
+): Promise<CheckResult> {
+  const svc = connector.service;
+  const enabled = integrations?.[svc]?.enabled === true;
+  if (!enabled) {
+    return {
+      label: svc,
+      status: 'info',
+      detail: 'disabled',
+      hint: `enable with \`agentbox config set --project integrations.${svc}.enabled true\``,
+    };
+  }
+
+  const version = await probeIntegrationBin(connector.hostBin, connector.detect.versionArgs);
+  if (version.missing || version.exitCode === 127) {
+    return {
+      label: svc,
+      status: 'warn',
+      detail: `${connector.hostBin} not installed`,
+      hint:
+        connector.detect.installHint ??
+        `install the ${svc} CLI (\`${connector.hostBin}\`) on the host`,
+    };
+  }
+  if (version.exitCode !== 0) {
+    const tail = firstLine((version.stderr || version.stdout).trim());
+    return {
+      label: svc,
+      status: 'warn',
+      detail: `${connector.hostBin} ${connector.detect.versionArgs.join(' ')} failed${tail ? `: ${tail}` : ''}`,
+    };
+  }
+  const versionLine = firstLine((version.stdout || version.stderr).trim()) || connector.hostBin;
+
+  if (!connector.detect.authArgs || connector.detect.authArgs.length === 0) {
+    return { label: svc, status: 'ok', detail: versionLine };
+  }
+
+  const auth = await probeIntegrationBin(connector.hostBin, connector.detect.authArgs);
+  if (auth.exitCode !== 0) {
+    return {
+      label: svc,
+      status: 'warn',
+      detail: 'not logged in',
+      hint: connector.detect.loginHint ?? `run \`${connector.hostBin} login\``,
+    };
+  }
+  return { label: svc, status: 'ok', detail: `${versionLine} · authed` };
+}
+
 export async function runProviderChecks(name: ProviderName): Promise<CheckGroup> {
   let results: CheckResult[];
   switch (name) {
@@ -398,7 +534,8 @@ export async function runProviderChecks(name: ProviderName): Promise<CheckGroup>
 export async function runAllChecks(): Promise<CheckGroup[]> {
   const sys: CheckGroup = { title: 'system', results: await runSystemChecks() };
   const providerGroups = await Promise.all(ALL_PROVIDERS.map((n) => runProviderChecks(n)));
-  return [sys, ...providerGroups];
+  const integrations: CheckGroup = { title: 'integrations', results: await integrationsChecks() };
+  return [sys, ...providerGroups, integrations];
 }
 
 function worstInResults(results: CheckResult[]): CheckStatus {
@@ -406,6 +543,8 @@ function worstInResults(results: CheckResult[]): CheckStatus {
   for (const r of results) {
     if (r.status === 'fail') return 'fail';
     if (r.status === 'warn') worst = 'warn';
+    // `info` rolls up like `ok` — intentionally inert rows shouldn't flip
+    // the overall doctor status.
   }
   return worst;
 }
@@ -427,6 +566,14 @@ function summaryToken(group: CheckGroup): string {
     if (worst === 'warn') return 'system warn';
     return 'system ok';
   }
+  if (group.title === 'integrations') {
+    if (worst === 'fail') return 'integrations FAIL';
+    if (worst === 'warn') return 'integrations check';
+    // All rows ok or info (disabled) — render as "off" when every row is
+    // info, else "ready" when at least one is enabled and green.
+    const anyEnabled = group.results.some((r) => r.status === 'ok');
+    return anyEnabled ? 'integrations ready' : 'integrations off';
+  }
   if (worst === 'fail') return `${group.title} FAIL`;
   if (worst === 'warn') {
     // Distinguish "not configured" (warn on credentials) from other warns.
@@ -441,13 +588,14 @@ function summaryToken(group: CheckGroup): string {
 const C_GREEN = '\x1b[32m';
 const C_YELLOW = '\x1b[33m';
 const C_RED = '\x1b[31m';
+const C_DIM = '\x1b[2m';
 const C_RESET = '\x1b[0m';
 const COLOR = !process.env.NO_COLOR; // install requires a TTY anyway; honor NO_COLOR for piped output
 
 function statusMarker(s: CheckStatus): string {
-  const glyph = s === 'ok' ? '✓' : s === 'warn' ? '⚠' : '✗';
+  const glyph = s === 'ok' ? '✓' : s === 'info' ? '·' : s === 'warn' ? '⚠' : '✗';
   if (!COLOR) return glyph;
-  const color = s === 'ok' ? C_GREEN : s === 'warn' ? C_YELLOW : C_RED;
+  const color = s === 'ok' ? C_GREEN : s === 'info' ? C_DIM : s === 'warn' ? C_YELLOW : C_RED;
   return `${color}${glyph}${C_RESET}`;
 }
 
@@ -464,6 +612,7 @@ function pad(s: string, width: number): string {
 
 function statusBadge(s: CheckStatus): string {
   if (s === 'ok') return '[ ok ]';
+  if (s === 'info') return '[info]';
   if (s === 'warn') return '[warn]';
   return '[FAIL]';
 }

@@ -20,6 +20,8 @@
     "integrations-iterm2",
     "integrations-tmux",
     "integrations-cmux",
+    "---Services---",
+    "integrations-notion",
     "---Providers---",
     "local-docker",
     "hetzner",

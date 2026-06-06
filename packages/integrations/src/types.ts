@@ -49,11 +49,20 @@ export interface IntegrationConnector {
   /** Host binary the relay execs (resolved on PATH). */
   hostBin: string;
   /**
-   * How `agentbox doctor` (T3) detects host presence + auth. T1 only
-   * reads `versionArgs` — for the relay's "binary present?" probe.
-   * `authArgs` is reserved for the doctor's auth check.
+   * How `agentbox doctor` detects host presence + auth. The relay's
+   * `assertIntegrationReady` probe only reads `versionArgs` ("binary
+   * present?"); `agentbox doctor` additionally runs `authArgs` ("logged
+   * in?") and surfaces `installHint` / `loginHint` to the user when those
+   * probes fail. Keeping the hint strings on the descriptor (not in the
+   * doctor) means each connector is self-describing — when Linear lands
+   * its own descriptor carries its own install URL with no doctor change.
    */
-  detect: { versionArgs: readonly string[]; authArgs?: readonly string[] };
+  detect: {
+    versionArgs: readonly string[];
+    authArgs?: readonly string[];
+    installHint?: string;
+    loginHint?: string;
+  };
   /**
    * Extra env vars the relay forces when spawning the host CLI. For Notion
    * this is `NOTION_KEYRING=0` so `ntn` reads file-based auth on Linux
