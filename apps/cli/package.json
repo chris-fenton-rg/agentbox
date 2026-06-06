@@ -70,6 +70,7 @@
     "@agentbox/config": "workspace:*",
     "@agentbox/core": "workspace:*",
     "@agentbox/ctl": "workspace:*",
+    "@agentbox/integrations": "workspace:*",
     "@agentbox/relay": "workspace:*",
     "@agentbox/sandbox-cloud": "workspace:*",
     "@agentbox/sandbox-core": "workspace:*",

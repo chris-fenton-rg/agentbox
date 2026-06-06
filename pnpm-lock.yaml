@@ -82,6 +82,9 @@ importers:
       '@agentbox/ctl':
         specifier: workspace:*
         version: link:../../packages/ctl
+      '@agentbox/integrations':
+        specifier: workspace:*
+        version: link:../../packages/integrations
       '@agentbox/relay':
         specifier: workspace:*
         version: link:../../packages/relay

@@ -29,6 +29,8 @@ export const notionConnector: IntegrationConnector = {
   detect: {
     versionArgs: ['--version'],
     authArgs: ['api', 'v1/users/me'],
+    installHint: 'install ntn: https://developers.notion.com/reference/notion-cli',
+    loginHint: 'ntn login',
   },
   env: { NOTION_KEYRING: '0' },
   ops: {

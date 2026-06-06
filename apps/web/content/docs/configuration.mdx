@@ -230,6 +230,20 @@ See [access your box](/docs/access-your-box).
 
 See [browser and screen](/docs/browser-and-screen).
 
+## integrations
+
+Per-service toggles for relay-gated service integrations. Each integration is **disabled by default** — even when the host CLI is installed and authed, the box can't call out until you flip it on. The box never holds the service's token; reads pass through, writes prompt on the host. See [Notion](/docs/integrations-notion).
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `integrations.notion.enabled` | bool | `false` | proxy `ntn` calls from the box through the host relay; reads pass, writes prompt |
+
+```bash
+agentbox config set --project integrations.notion.enabled true
+```
+
+`agentbox doctor` reports a row per integration in a dedicated `integrations:` group: disabled (default), `ntn not installed`, `not logged in`, or `authed` — with a one-line hint for each non-`ok` state.
+
 ## queue & autopause
 
 `queue.*` schedules background `-i` jobs; `autopause.*` pauses idle boxes.

@@ -92,12 +92,42 @@ Make a box agent able to type `notion …` or `ntn …`.
   flag args to the structured POST body). Added a `whoami` read op so
   `ntn whoami` doesn't have to widen the `api` allowlist.
 
-### T3 — `agentbox doctor` detection + docs  ⬜ not started
-- `agentbox doctor`: report `ntn` presence + auth (`ntn whoami` / `ntn doctor`),
-  with a friendly install/login hint.
-- Docs (same change, per repo rule): new `docs/integrations.md`; a `.mdx` page +
-  CLI reference under `apps/web/content/docs/`; note new RPC methods in
-  `docs/host-relay.md`; mention in `docs/features.md`.
+### T3 — `agentbox doctor` detection + docs  ✅ done
+- `agentbox doctor` now reports each integration in a dedicated
+  `integrations:` group, driven off `ALL_CONNECTORS` (no hardcoded
+  `'notion'`) so Linear/Trello light up here automatically when they land.
+  Each row probes `<hostBin> <versionArgs>` (install check) and
+  `<hostBin> <authArgs>` (login check) and surfaces install/login hints
+  from new optional `IntegrationConnector.detect.installHint` /
+  `loginHint` fields (filled for the Notion connector). The doctor
+  deliberately does NOT force `NOTION_KEYRING=0` — on the host the
+  keychain entry IS the credential, and the file-auth env override would
+  make a keychain-authed user falsely show as "not logged in". A new
+  `info` `CheckStatus` rolls up like `ok` so a disabled-but-configured
+  integration never pushes the overall doctor status to "warn". Unit
+  test (`apps/cli/test/doctor-integrations.test.ts`) stubs a fake `ntn`
+  on PATH and asserts the four transitions: disabled / missing /
+  unauthed / authed.
+- Docs:
+  - `docs/integrations.md` — new internal design/reference doc
+    (descriptor model, relay dispatch flow, the read/write Notion op
+    surface, the enable flag, doctor wiring, the carry-based file-auth
+    path for nested boxes, open follow-ups).
+  - `apps/web/content/docs/integrations-notion.mdx` — new user-facing
+    Fumadocs page (prerequisites, enabling, what works in the box,
+    security model). Wired into `meta.json` under a new `---Services---`
+    section.
+  - `apps/web/content/docs/configuration.mdx` — new `## integrations`
+    section documenting `integrations.notion.enabled`.
+  - `apps/web/content/docs/cli.mdx` — `agentbox doctor` sentence
+    updated to mention the new group.
+  - `docs/host-relay.md` — new RPC method-family bullet for
+    `integration.<service>.<op>` (parser, allowlist, enable gate,
+    `refuseCall`, readiness probe, host-initiated token short-circuit,
+    `askPrompt` for writes, the `<SERVICE>_*` env namespace guard).
+  - `docs/features.md` — Notion integration bullet; the "Additional
+    `/rpc` methods" line updated to list `gh.pr.*` /
+    `integration.<svc>.<op>` already in place.
 
 ### T4 — Nested-box e2e verification + carry + closeout  ⬜ not started
 - Carry `ntn` file-auth into a box; from that box create a nested box; run a
@@ -123,3 +153,17 @@ Make a box agent able to type `notion …` or `ntn …`.
   `comment.add`, added `whoami` read op). Comments deferred to a focused
   follow-up — they need a Notion-API-aware payload translator that maps
   CLI flags to the structured `POST /v1/comments` body.
+- 2026-06-06: T3 shipped — `agentbox doctor` now reports the new
+  `integrations:` group (registry-driven), with `info` for disabled and
+  install/login hints sourced from the connector descriptor.
+  `IntegrationConnector.detect` gained optional `installHint` /
+  `loginHint` fields (filled for Notion: install URL + `ntn login`).
+  Unit test stubs a fake `ntn` on PATH and verifies the four status
+  transitions. Doctor's host probe does NOT set `NOTION_KEYRING=0` (a
+  comment in the code records why). Public docs site + internal
+  reference doc landed in the same PR: new `docs/integrations.md`, new
+  `apps/web/content/docs/integrations-notion.mdx` (Services section in
+  `meta.json`), config-key + doctor sentence in the published
+  `configuration.mdx` / `cli.mdx`, new RPC method-family bullet in
+  `docs/host-relay.md`, Notion entry in `docs/features.md`. T4 (nested-
+  box e2e + carry-based file-auth verification) is the remaining task.

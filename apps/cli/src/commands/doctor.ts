@@ -11,6 +11,7 @@
 import { Command } from 'commander';
 import {
   formatDetailed,
+  integrationsChecks,
   runAllChecks,
   runProviderChecks,
   runSystemChecks,
@@ -42,9 +43,20 @@ export const doctorCommand = new Command('doctor')
         );
         process.exit(1);
       }
+      // Integrations are host-side (not provider-side), but a user running
+      // `doctor -p hetzner` still wants to know whether their Notion is
+      // installed/authed/enabled — otherwise the only way to see the
+      // integrations group is the unscoped doctor, which is a discoverability
+      // gap. Include it alongside system + the scoped provider.
+      const [sys, prov, integrations] = await Promise.all([
+        runSystemChecks(),
+        runProviderChecks(name as ProviderName),
+        integrationsChecks(),
+      ]);
       groups = [
-        { title: 'system', results: await runSystemChecks() },
-        await runProviderChecks(name as ProviderName),
+        { title: 'system', results: sys },
+        prov,
+        { title: 'integrations', results: integrations },
       ];
     } else {
       groups = await runAllChecks();
