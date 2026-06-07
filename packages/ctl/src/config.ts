@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { parse as parseYaml } from 'yaml';
+import { parseReplacements, type ReplaceRule } from './replace.js';
 
 export type RestartPolicy = 'always' | 'on-failure' | 'never';
 export type ProbeOnTimeout = 'kill' | 'mark_unhealthy';
@@ -46,12 +47,28 @@ export interface ExposeSpec {
   as: number;
 }
 
+/**
+ * Declarative "run once" for a task. The supervisor re-runs every task from
+ * `pending` on each box start; `run_once` lets it skip a task that has already
+ * succeeded.
+ *
+ * - `{ kind: 'marker' }` (from `run_once: true`) — the supervisor stores a
+ *   marker keyed by a hash of the resolved command; a warm boot skips while the
+ *   hash matches, and editing the command re-runs.
+ * - `{ kind: 'check', command }` (from `run_once: { check: ... }`) — run the
+ *   probe before launching; exit 0 means already satisfied (skip). No marker:
+ *   the probe is the source of truth (right for data that lives outside the
+ *   checkpointed filesystem, e.g. a containerized DB).
+ */
+export type RunOnceSpec = { kind: 'marker' } | { kind: 'check'; command: string };
+
 export interface TaskSpec {
   name: string;
   command: string | string[];
   cwd?: string;
   env?: Record<string, string>;
   needs: string[];
+  runOnce?: RunOnceSpec;
 }
 
 export interface ServiceSpec {
@@ -66,11 +83,27 @@ export interface ServiceSpec {
   readyWhen?: ReadyProbe;
   /** When set, container port `expose.as` forwards to `127.0.0.1:expose.port`. */
   expose?: ExposeSpec;
+  /**
+   * Declarative docker sidecar. When set, `command` is synthesized into a
+   * `docker start`-or-`run` shell (the in-box dockerd container is reused by
+   * name across restarts). Mutually exclusive with a user `command`. The other
+   * `*image*` fields below are kept for introspection; `env` is baked into the
+   * container's `-e` flags and not set as the process env.
+   */
+  image?: string;
+  /** Port publishes ("<host>:<container>" or "<port>"); image services only. */
+  ports?: string[];
+  /** Extra args appended after the image (shell-tokenized); image services only. */
+  args?: string;
+  /** Container name (default = service name); image services only. */
+  containerName?: string;
 }
 
 export interface CtlConfig {
   services: ServiceSpec[];
   tasks: TaskSpec[];
+  /** Named reusable replacement rule-sets (top-level `replacements:` block). */
+  replacements: Record<string, ReplaceRule[]>;
 }
 
 export const DEFAULT_BACKOFF: BackoffSpec = {
@@ -352,7 +385,125 @@ const SERVICE_KEYS = new Set([
   'ready_when',
   'expose',
   'ide',
+  'image',
 ]);
+
+// The container config nested under a service's `image:` (when it's a mapping).
+const IMAGE_KEYS = new Set(['name', 'ports', 'env', 'args', 'container_name']);
+
+// Minimal POSIX single-quote escaping for values baked into a generated
+// `bash -c` docker command. (sandbox-cloud has an equivalent quoteShellArg, but
+// ctl can't depend on it — wrong direction.)
+function shQuote(s: string): string {
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(s)) return s;
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+function parsePorts(raw: unknown, where: string): string[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw)) {
+    throw new ConfigError(`${where}.ports must be a list of "<host>:<container>" strings`);
+  }
+  const out: string[] = [];
+  for (const [i, v] of raw.entries()) {
+    const s = typeof v === 'number' ? String(v) : v;
+    if (typeof s !== 'string' || !/^\d+(:\d+)?$/.test(s.trim())) {
+      throw new ConfigError(
+        `${where}.ports[${String(i)}] must be "<host>" or "<host>:<container>" (got ${JSON.stringify(v)})`,
+      );
+    }
+    out.push(s.trim());
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+// `args` is a string (appended raw, bash word-splits) or a list of strings
+// (joined with spaces, then bash word-splits) — so both `args: "-c x=1"` and
+// `args: ["-c", "x=1"]` produce the same docker invocation.
+function parseArgs(raw: unknown, where: string): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw === 'string') return raw.trim().length > 0 ? raw : undefined;
+  if (Array.isArray(raw)) {
+    const parts: string[] = [];
+    for (const [i, v] of raw.entries()) {
+      if (typeof v !== 'string') throw new ConfigError(`${where}.args[${String(i)}] must be a string`);
+      parts.push(v);
+    }
+    const joined = parts.join(' ').trim();
+    return joined.length > 0 ? joined : undefined;
+  }
+  throw new ConfigError(`${where}.args must be a string or a list of strings`);
+}
+
+// Build the start-or-run shell for an `image:` service. Reuses the existing
+// container by name across restarts (data lives in the per-box /var/lib/docker);
+// a config change needs a manual `docker rm <name>`.
+function synthesizeImageCommand(opts: {
+  image: string;
+  name: string;
+  ports?: string[];
+  env?: Record<string, string>;
+  args?: string;
+}): string {
+  const name = shQuote(opts.name);
+  const run = ['docker', 'run', '--name', name];
+  for (const p of opts.ports ?? []) run.push('-p', shQuote(p));
+  for (const [k, v] of Object.entries(opts.env ?? {})) run.push('-e', `${k}=${shQuote(v)}`);
+  run.push(shQuote(opts.image));
+  let runLine = run.join(' ');
+  if (opts.args) runLine += ` ${opts.args}`; // raw — bash word-splits
+  return [
+    'set -e',
+    `if docker container inspect ${name} >/dev/null 2>&1; then`,
+    `  docker start ${name} >/dev/null`,
+    `  exec docker logs -f ${name}`,
+    'else',
+    `  exec ${runLine}`,
+    'fi',
+  ].join('\n');
+}
+
+interface ParsedImage {
+  name: string;
+  ports?: string[];
+  env?: Record<string, string>;
+  args?: string;
+  containerName: string;
+}
+
+// Parse a service's `image:` — either a bare ref string (shorthand) or a mapping
+// `{ name, ports?, env?, args?, container_name? }`. `defaultName` (the service
+// name) is the default container name.
+function parseImage(raw: unknown, where: string, defaultName: string): ParsedImage {
+  if (typeof raw === 'string') {
+    const name = raw.trim();
+    if (name.length === 0) throw new ConfigError(`${where}.image must not be empty`);
+    return { name, containerName: defaultName };
+  }
+  if (!isPlainObject(raw)) {
+    throw new ConfigError(`${where}.image must be an image ref string or a mapping`);
+  }
+  rejectUnknownKeys(raw, IMAGE_KEYS, `${where}.image`);
+  const name = assertString(raw.name, `${where}.image.name`).trim();
+  if (name.length === 0) throw new ConfigError(`${where}.image.name must not be empty`);
+  const ports = parsePorts(raw.ports, `${where}.image`);
+  const args = parseArgs(raw.args, `${where}.image`);
+  const env = parseEnv(raw.env, `${where}.image`);
+  const containerName =
+    raw.container_name === undefined
+      ? defaultName
+      : assertString(raw.container_name, `${where}.image.container_name`).trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(containerName)) {
+    throw new ConfigError(
+      `${where}.image.container_name "${containerName}" is not a valid docker container name`,
+    );
+  }
+  const out: ParsedImage = { name, containerName };
+  if (ports !== undefined) out.ports = ports;
+  if (env !== undefined) out.env = env;
+  if (args !== undefined) out.args = args;
+  return out;
+}
 
 const EXPOSE_KEYS = new Set(['port', 'as']);
 
@@ -388,9 +539,17 @@ function parseService(name: string, raw: unknown): ServiceSpec {
     throw new ConfigError(`${where} must be a mapping`);
   }
   rejectUnknownKeys(raw, SERVICE_KEYS, where);
-  const command = parseCommand(raw.command, where);
+
+  const hasImage = raw.image !== undefined && raw.image !== null;
+  const hasCommand = raw.command !== undefined && raw.command !== null;
+  if (hasImage && hasCommand) {
+    throw new ConfigError(`${where} sets both command and image — use exactly one`);
+  }
+  if (!hasImage && !hasCommand) {
+    throw new ConfigError(`${where} must set either command or image`);
+  }
+
   const cwd = raw.cwd === undefined ? undefined : assertString(raw.cwd, `${where}.cwd`);
-  const env = parseEnv(raw.env, where);
   const autostart =
     raw.autostart === undefined ? true : assertBool(raw.autostart, `${where}.autostart`);
   const restart = parseRestart(raw.restart, where);
@@ -398,10 +557,60 @@ function parseService(name: string, raw: unknown): ServiceSpec {
   const needs = parseNeeds(raw.needs, `${where}.needs`);
   const readyWhen = parseReadyWhen(raw.ready_when, where);
   const expose = parseExpose(raw.expose, where);
+
+  if (hasImage) {
+    if (raw.env !== undefined) {
+      throw new ConfigError(`${where}.env is not valid for an image service — use image.env`);
+    }
+    const img = parseImage(raw.image, where, name);
+    const command = synthesizeImageCommand({
+      image: img.name,
+      name: img.containerName,
+      ports: img.ports,
+      env: img.env,
+      args: img.args,
+    });
+    const spec: ServiceSpec = {
+      name,
+      command,
+      cwd,
+      autostart,
+      restart,
+      backoff,
+      needs,
+      readyWhen,
+      expose,
+      image: img.name,
+      containerName: img.containerName,
+    };
+    if (img.ports !== undefined) spec.ports = img.ports;
+    if (img.args !== undefined) spec.args = img.args;
+    return spec;
+  }
+
+  const command = parseCommand(raw.command, where);
+  const env = parseEnv(raw.env, where);
   return { name, command, cwd, env, autostart, restart, backoff, needs, readyWhen, expose };
 }
 
-const TASK_KEYS = new Set(['command', 'cwd', 'env', 'needs']);
+const TASK_KEYS = new Set(['command', 'cwd', 'env', 'needs', 'run_once']);
+
+function parseRunOnce(raw: unknown, where: string): RunOnceSpec | undefined {
+  if (raw === undefined || raw === null || raw === false) return undefined;
+  if (raw === true) return { kind: 'marker' };
+  if (isPlainObject(raw)) {
+    const keys = Object.keys(raw);
+    if (keys.length !== 1 || keys[0] !== 'check') {
+      throw new ConfigError(`${where}.run_once object form must be exactly { check: <command> }`);
+    }
+    const check = raw.check;
+    if (typeof check !== 'string' || check.trim().length === 0) {
+      throw new ConfigError(`${where}.run_once.check must be a non-empty command string`);
+    }
+    return { kind: 'check', command: check };
+  }
+  throw new ConfigError(`${where}.run_once must be true or { check: <command> }`);
+}
 
 function parseTask(name: string, raw: unknown): TaskSpec {
   const where = `tasks.${name}`;
@@ -413,7 +622,10 @@ function parseTask(name: string, raw: unknown): TaskSpec {
   const cwd = raw.cwd === undefined ? undefined : assertString(raw.cwd, `${where}.cwd`);
   const env = parseEnv(raw.env, where);
   const needs = parseNeeds(raw.needs, `${where}.needs`);
-  return { name, command, cwd, env, needs };
+  const runOnce = parseRunOnce(raw.run_once, where);
+  const spec: TaskSpec = { name, command, cwd, env, needs };
+  if (runOnce !== undefined) spec.runOnce = runOnce;
+  return spec;
 }
 
 function assertString(raw: unknown, where: string): string {
@@ -434,7 +646,10 @@ function assertBool(raw: unknown, where: string): boolean {
 // layer via @agentbox/ctl/carry, applied at create time). The supervisor never
 // reads it — listing it here only suppresses the unknown-key error so a project
 // yaml that declares `carry:` still parses cleanly inside the box.
-const TOP_LEVEL_KEYS = new Set(['services', 'tasks', 'ide', 'defaults', 'carry']);
+// `replacements` is the top-level reusable replacement-rule block, consumed by
+// the in-box `agentbox-ctl render` CLI and host-side `carry:` rule refs. We
+// parse + validate it here (regex compile-check) so a typo fails loud in-box.
+const TOP_LEVEL_KEYS = new Set(['services', 'tasks', 'ide', 'defaults', 'carry', 'replacements']);
 
 function validateUnitGraph(tasks: TaskSpec[], services: ServiceSpec[]): void {
   const names = new Set<string>();
@@ -500,7 +715,7 @@ export function parseConfig(text: string): CtlConfig {
   } catch (err) {
     throw new ConfigError(`yaml parse error: ${err instanceof Error ? err.message : String(err)}`);
   }
-  if (doc === null || doc === undefined) return { services: [], tasks: [] };
+  if (doc === null || doc === undefined) return { services: [], tasks: [], replacements: {} };
   if (!isPlainObject(doc)) {
     throw new ConfigError('top-level config must be a mapping');
   }
@@ -557,7 +772,14 @@ export function parseConfig(text: string): CtlConfig {
     );
   }
 
-  return { services, tasks };
+  let replacements: Record<string, ReplaceRule[]>;
+  try {
+    replacements = parseReplacements(doc.replacements);
+  } catch (err) {
+    throw new ConfigError(err instanceof Error ? err.message : String(err));
+  }
+
+  return { services, tasks, replacements };
 }
 
 export async function loadConfig(path: string): Promise<CtlConfig> {
@@ -566,7 +788,7 @@ export async function loadConfig(path: string): Promise<CtlConfig> {
     text = await readFile(path, 'utf8');
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { services: [], tasks: [] };
+      return { services: [], tasks: [], replacements: {} };
     }
     throw err;
   }

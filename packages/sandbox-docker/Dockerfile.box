@@ -72,9 +72,9 @@ RUN apt-get update \
         vim \
         libcap2-bin \
     && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p /workspace /run/agentbox /var/log/agentbox \
+    && mkdir -p /workspace /run/agentbox /var/log/agentbox /var/lib/agentbox \
     && chmod 755 /workspace \
-    && chown vscode:vscode /workspace /run/agentbox /var/log/agentbox
+    && chown vscode:vscode /workspace /run/agentbox /var/log/agentbox /var/lib/agentbox
 
 # The in-box supervisor (runs as non-root `vscode`) owns a TCP forwarder that
 # binds container :80 -> the `expose:`-flagged service (see WebProxy /
@@ -153,6 +153,25 @@ RUN chmod +x /usr/local/bin/agentbox-ctl
 COPY packages/sandbox-docker/scripts/gh-shim /usr/local/bin/gh
 COPY packages/sandbox-docker/scripts/git-shim /usr/local/bin/git
 RUN chmod +x /usr/local/bin/gh /usr/local/bin/git
+
+# `ntn` (Notion CLI) shim — same shape as gh-shim, routes a strict subset
+# of `ntn` subcommands through the host relay (the host's `ntn` runs the
+# call; the box never sees the Notion token). Symlinked as `notion` per
+# docs/integrations_backlog.md's per-service surface naming. Disabled by
+# default; flip `integrations.notion.enabled` to enable. See
+# packages/sandbox-docker/scripts/ntn-shim and docs/notion_backlog.md.
+COPY packages/sandbox-docker/scripts/ntn-shim /usr/local/bin/ntn
+RUN chmod +x /usr/local/bin/ntn && ln -s /usr/local/bin/ntn /usr/local/bin/notion
+
+# `linear` (Linear CLI — @schpet/linear-cli) shim — same shape as ntn-shim,
+# routes a strict subset of `linear` subcommands through the host relay
+# (the host's `linear` runs the call; the box never sees the Linear API
+# token). `linear auth token` (which would print the raw token to stdout)
+# is explicitly rejected by the shim. Disabled by default; flip
+# `integrations.linear.enabled` to enable. See
+# packages/sandbox-docker/scripts/linear-shim and docs/linear_backlog.md.
+COPY packages/sandbox-docker/scripts/linear-shim /usr/local/bin/linear
+RUN chmod +x /usr/local/bin/linear
 
 # Setup guide for the first-run wizard. This baked copy is the single source
 # of the /agentbox-setup skill: seedSetupSkillIntoVolume()

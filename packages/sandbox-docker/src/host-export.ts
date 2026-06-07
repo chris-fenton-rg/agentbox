@@ -1,7 +1,7 @@
 import { mkdir, readFile, readdir, stat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { execa } from 'execa';
 import { sanitizeMnemonic } from '@agentbox/config';
 import { hostOpenCommand } from '@agentbox/sandbox-core';
@@ -854,15 +854,49 @@ async function copyOneEntry(container: string, entry: ResolvedCarryEntry): Promi
   }
 
   if (entry.kind === 'file') {
-    // docker cp preserves file mode and writes to the exact destination path
-    // (no shell, no transform expression — sidesteps all the quoting traps).
-    const cp = await execa(
+    // `docker cp` cannot write into the bind-mounted /workspace (it fails with a
+    // tar "read/write on closed pipe"). Stream the file through `docker exec
+    // tar -x` instead — that extracts from *inside* the container, through the
+    // normal filesystem, exactly like the dir path below. tar archives by the
+    // source basename, so rename in-box afterwards when the dest name differs.
+    const srcDir = dirname(entry.absSrc);
+    const srcBase = basename(entry.absSrc);
+    const destBase = boxDest.slice(boxDest.lastIndexOf('/') + 1);
+    const [packed, extract] = await streamTarPipe(
+      'tar',
+      ['-C', srcDir, '-cf', '-', srcBase],
       'docker',
-      ['cp', entry.absSrc, `${container}:${boxDest}`],
-      { reject: false },
+      [
+        'exec',
+        '-i',
+        '--user',
+        '0:0',
+        container,
+        'tar',
+        '-xf',
+        '-',
+        '-C',
+        parentDir,
+        '--no-same-permissions',
+        '--no-same-owner',
+        '-m',
+      ],
     );
-    if (cp.exitCode !== 0) {
-      throw new Error(`docker cp failed: ${String(cp.stderr).slice(0, 300)}`);
+    if (packed.exitCode !== 0) {
+      throw new Error(`tar pack failed: ${String(packed.stderr).slice(0, 300)}`);
+    }
+    if (extract.exitCode !== 0) {
+      throw new Error(`tar extract failed: ${String(extract.stderr).slice(0, 300)}`);
+    }
+    if (srcBase !== destBase) {
+      const mv = await execa(
+        'docker',
+        ['exec', '--user', '0:0', container, 'mv', '-f', `${parentDir}/${srcBase}`, boxDest],
+        { reject: false },
+      );
+      if (mv.exitCode !== 0) {
+        throw new Error(`rename to ${boxDest} failed: ${String(mv.stderr).slice(0, 300)}`);
+      }
     }
   } else {
     // Tar the directory contents (cd in + tar .) so they extract at the

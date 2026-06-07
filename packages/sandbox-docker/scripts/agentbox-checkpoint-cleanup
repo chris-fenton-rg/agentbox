@@ -32,10 +32,13 @@ rm -rf /var/lib/apt/lists/* 2>/dev/null
 find /tmp /var/tmp -mindepth 1 -maxdepth 1 ! -name 'claude-*' -exec rm -rf {} + 2>/dev/null
 
 # Logs: truncate (don't delete) so the original file modes / ownerships stay
-# intact for the next run. Targets common rotated archives too.
+# intact for the next run. Targets common rotated archives too. Exclude the
+# `state/` subdir — it holds the idempotent-task marker fallback (used when
+# /var/lib/agentbox isn't writable) and must survive the checkpoint.
 find /var/log -type f \( -name '*.log' -o -name '*.gz' -o -name '*.1' \) \
+  -not -path '/var/log/agentbox/state/*' -exec truncate -s0 {} + 2>/dev/null
+find /var/log/agentbox -type f -not -path '/var/log/agentbox/state/*' \
   -exec truncate -s0 {} + 2>/dev/null
-find /var/log/agentbox -type f -exec truncate -s0 {} + 2>/dev/null
 
 # Bash history (root + vscode). Re-assert vscode ownership: `: >` run as root
 # (re)creates the file root-owned 0644 when it didn't exist, which the uid-1000

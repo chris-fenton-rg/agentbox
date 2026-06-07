@@ -22,6 +22,8 @@
 #   /tmp/agentbox-open                 -- in-box xdg-open shim
 #   /tmp/agentbox-gh-shim              -- in-box `gh` shim (routes to host gh)
 #   /tmp/agentbox-git-shim             -- in-box `git` shim (routes via relay)
+#   /tmp/agentbox-ntn-shim             -- in-box `ntn`/`notion` shim (routes to host ntn)
+#   /tmp/agentbox-linear-shim          -- in-box `linear` shim (routes to host linear; rejects `auth token`)
 #   /tmp/agentbox-custom-CLAUDE.md     -- /etc/claude-code/CLAUDE.md content
 #   /tmp/agentbox-managed-settings.json -- /etc/claude-code/managed-settings.json
 #   /tmp/agentbox-codex-hooks.json     -- /usr/local/share/agentbox/codex-hooks.json
@@ -96,10 +98,10 @@ visudo -cf /etc/sudoers >/dev/null
 done_ "vscode user + sudoers"
 
 step "agentbox base dirs + /workspace ownership"
-mkdir -p /workspace /run/agentbox /var/log/agentbox /etc/agentbox /etc/claude-code \
+mkdir -p /workspace /run/agentbox /var/log/agentbox /var/lib/agentbox /etc/agentbox /etc/claude-code \
          /usr/local/share/agentbox
 chmod 755 /workspace
-chown vscode:vscode /workspace /run/agentbox /var/log/agentbox
+chown vscode:vscode /workspace /run/agentbox /var/log/agentbox /var/lib/agentbox
 done_ "agentbox base dirs + /workspace ownership"
 
 step "node setcap (bind <1024 without root)"
@@ -317,15 +319,19 @@ done_ "dnf cleanup"
 # the bake there is no relay, so they must not shadow the real binaries until
 # provisioning is done. Installed from /tmp just before the trim step removes the
 # sources.
-step "relay shims (gh + git)"
-install -m 0755 /tmp/agentbox-gh-shim  /usr/local/bin/gh
-install -m 0755 /tmp/agentbox-git-shim /usr/local/bin/git
-done_ "relay shims (gh + git)"
+step "relay shims (gh + git + ntn + linear)"
+install -m 0755 /tmp/agentbox-gh-shim     /usr/local/bin/gh
+install -m 0755 /tmp/agentbox-git-shim    /usr/local/bin/git
+install -m 0755 /tmp/agentbox-ntn-shim    /usr/local/bin/ntn
+ln -sf /usr/local/bin/ntn /usr/local/bin/notion
+install -m 0755 /tmp/agentbox-linear-shim /usr/local/bin/linear
+done_ "relay shims (gh + git + ntn + linear)"
 
 step "trim /tmp/agentbox-*"
 rm -f /tmp/agentbox-ctl /tmp/agentbox-vnc-start \
       /tmp/agentbox-checkpoint-cleanup /tmp/agentbox-open \
-      /tmp/agentbox-gh-shim /tmp/agentbox-git-shim \
+      /tmp/agentbox-gh-shim /tmp/agentbox-git-shim /tmp/agentbox-ntn-shim \
+      /tmp/agentbox-linear-shim \
       /tmp/agentbox-custom-CLAUDE.md /tmp/agentbox-managed-settings.json \
       /tmp/agentbox-codex-hooks.json /tmp/agentbox-setup-skill.md
 mv /tmp/agentbox-provision.sh /var/log/agentbox/provision.sh 2>/dev/null || true

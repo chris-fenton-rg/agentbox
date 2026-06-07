@@ -31,6 +31,28 @@ node apps/cli/dist/index.js destroy cc -y
 
 For the full lifecycle command list see [`docs/features.md`](./features.md).
 
+### Notion integration — nested-box dev only
+
+Normal users never touch this. The `notion`/`ntn` integration works for any box
+purely through the host relay (the box holds no token), and on macOS the host
+just needs `ntn login` (keychain) — the connector forces **no** auth env, so the
+relay, `agentbox doctor`, and the public docs all agree.
+
+The one exception is AgentBox **dogfooding its own integration** — exercising it
+from a *nested* box (a box that runs its own relay for boxes it creates). A Linux
+box has no keychain, so for the carried credential to be readable there you must
+log the **host** `ntn` in with file-based auth instead of the keychain:
+
+```sh
+NOTION_KEYRING=0 ntn login     # writes ~/.config/notion/auth.json
+```
+
+The `carry:` block in `agentbox.yaml` then ships that file into the box. Because
+the connector no longer forces `NOTION_KEYRING=0`, when you run `ntn` *inside* the
+box you may also need to export `NOTION_KEYRING=0` there so it reads the carried
+file rather than looking for a keychain. (This nested path is internal-dev-only
+and not yet run end-to-end.)
+
 ## Image: pull vs rebuild
 
 The box image is pinned to `agentbox/box:dev` and reused across creates. On

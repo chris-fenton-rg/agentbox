@@ -46,35 +46,56 @@ Look at `/workspace`:
 - **Tasks** = one-shot. `pnpm install`, DB migrations, codegen, fixture loaders, install apt packages. Wire dependent services with `needs:` so they wait for the task to finish successfully.
 - Names: must match `[A-Za-z0-9_-]+`. Task names and service names share a namespace — no collisions.
 - No cycles in `needs:`.
-- **Always generate a dependency-install task** and make it the root of the `needs:` graph (every service that needs deps gets `needs: [install, …]`). Future boxes start from a snapshot of the final filesystem so they won't need this, but updates or moving to a cloud provider might need to rebuild the container from scratch. The filesystem can be then later captured by `agentbox-ctl checkpoint --set-default`. The task must be **idempotent and self-healing**: `agentbox-ctl` re-runs pending tasks on every box stop/start (the daemon dies with the container and is relaunched), so a plain `rm -rf node_modules && install` would wipe + reinstall on every start. Guard the rebuild with a marker file *inside* `node_modules` (the `.agentbox-installed` convention AgentBox uses internally): rebuild only when the marker is absent (fresh box), and be a fast no-op once it exists. Detect the package manager from the lockfile — never hardcode `pnpm`. See the worked example below.
+- **Always generate a dependency-install task** and make it the root of the `needs:` graph (every service that needs deps gets `needs: [install, …]`). Future boxes start from a snapshot of the final filesystem so they won't need this, but updates or moving to a cloud provider might need to rebuild the container from scratch. The filesystem can be then later captured by `agentbox-ctl checkpoint --set-default`. The task must be **idempotent**: `agentbox-ctl` re-runs pending tasks on every box stop/start (the daemon dies with the container and is relaunched), so an unguarded install would reinstall on every start. The clean way is the **`run_once: true`** field — the supervisor stores a marker keyed by a hash of the command and skips warm boots automatically (the marker lives at `/var/lib/agentbox/tasks/<name>`, on the box rootfs, captured by checkpoints, never polluting `/workspace`). Editing the command re-runs it. Detect the package manager from the lockfile — never hardcode `pnpm`. See the worked example below.
 - **Add a comment to the beginning** of the file to explain what you did and what issues you encountered, so that future run might use this information in case the project evolves and you need to update the agentbox.yaml file.
 
 ### Stateful services: data persistence & re-seeding (read this for databases)
 
+**Declare a containerized dependency with the `image:` service form** — AgentBox
+generates the `docker start`-or-`run` shell (no hand-written `docker run … || docker
+start …`). The container runs in the box's dockerd; a published port is reachable
+from other in-box services at `127.0.0.1:<host port>`:
+
+```yaml
+services:
+  postgres:
+    image:                            # bare string (image: postgres:17-alpine) or a mapping:
+      name: postgres:17-alpine
+      ports: ["5432:5432"]
+      env:
+        POSTGRES_PASSWORD: postgres
+        POSTGRES_DB: app
+      args: "-c max_connections=200"  # string or ["-c","max_connections=200"]
+      container_name: app_db          # optional; default = service name
+    ready_when: { port: 5432 }
+    restart: always
+```
+
+The container is reused by name across box stop/start. (Changing `image`/`env`
+reuses the existing container as-is; `docker rm <container_name>` + `agentbox-ctl
+reload` to apply.) Install the DB client the migrate/seed tasks need (e.g.
+`postgresql-client`) in the `install` task and reach the DB over TCP — don't
+`docker exec` the container (nested exec fails with a `setns` error in a box).
+
 **A checkpoint does NOT capture docker-in-docker data.** `agentbox checkpoint` is a `docker commit` of the box's writable filesystem (the system + `/workspace`). The in-box `dockerd` keeps its storage in a *separate* per-box volume (`/var/lib/docker`), which is **not** part of that image — it's fresh on every new box and wiped on `agentbox destroy`. So a database or cache you run as a **docker container** (e.g. `docker run … postgres`) starts **empty on every new box** created from a checkpoint (every `agentbox claude` / `agentbox create`), even though `/workspace` and any marker files you wrote were restored. (A DB run as a **native process** with its data dir on the box filesystem — e.g. `postgres -D /var/lib/postgresql/data` — *is* captured by the checkpoint, since it lives in the writable layer.)
 
-**Consequence for migrate/seed tasks of a containerized DB: do not gate them on a filesystem marker.** A marker like `node_modules/.agentbox-installed` is correct for deps (they live in `/workspace`, which the checkpoint captures), but **wrong** for DB data living in a docker volume: the marker is restored from the checkpoint while the DB is empty, so a marker-guarded seed wrongly skips and the app boots against an empty database. Instead, **gate on the actual data** — connect to the DB and check whether a sentinel table/row exists, and seed only when it's missing:
+**Consequence for migrate/seed tasks of a containerized DB: do NOT use `run_once: true` (the marker form).** A command-hash marker is correct for deps (they live in `/workspace`, which the checkpoint captures), but **wrong** for DB data living in a docker volume: the marker is restored from the checkpoint while the DB is empty, so a marker-guarded seed wrongly skips and the app boots against an empty database. Instead use the **`run_once: { check: <cmd> }`** form — the probe runs first and the seed runs unless the probe exits 0, and **no marker is written** (the DB is the source of truth). Gate on the actual data:
 
 ```yaml
   seed:
-    # Re-seed when the DB is empty. The postgres data lives in the in-box
-    # docker volume, which is NOT captured by `agentbox checkpoint` — so a box
-    # started from a checkpoint has the workspace warm but an empty DB. We can't
-    # use a filesystem marker here (it would be restored while the DB is blank);
-    # instead probe the DB and seed only if the data is absent. Fast no-op once
+    # Re-seed when the DB is empty. The postgres data lives in the in-box docker
+    # volume, which is NOT captured by `agentbox checkpoint` — so a box started
+    # from a checkpoint has the workspace warm but an empty DB. The marker form
+    # would be restored while the DB is blank and wrongly skip; the `check` probe
+    # gates on the data itself. Exit 0 = already seeded, skip. Fast no-op once
     # the data is present.
-    command: |
-      set -e
-      export PGPASSWORD=postgres
-      # Probe for existing data. If the table is missing the query errors,
-      # stderr is suppressed, stdout is empty, the grep fails — so we seed.
-      if psql -h 127.0.0.1 -p 5432 -U postgres -d app -tAc \
-          "SELECT EXISTS (SELECT 1 FROM users LIMIT 1)" 2>/dev/null | grep -q t; then
-        echo "data present — skip seed"
-        exit 0
-      fi
-      pnpm db:seed
+    command: pnpm db:seed
     needs: [install, migrate]
+    run_once:
+      check: |
+        export PGPASSWORD=postgres
+        psql -h 127.0.0.1 -p 5432 -U postgres -d app -tAc \
+          "SELECT EXISTS (SELECT 1 FROM users LIMIT 1)" 2>/dev/null | grep -q t
 ```
 
 **Lifecycle nuance (this is why the data check, not a marker, is right):**
@@ -148,22 +169,19 @@ tasks:
   # Idempotent install. /workspace is the container's writable filesystem, so
   # node_modules persists across pause/stop/start and is captured by
   # `agentbox checkpoint`. The host's node_modules is macOS-native and is
-  # never copied in, so force a clean Linux build the first time — but skip
-  # on every subsequent box start (agentbox-ctl re-runs pending tasks after
-  # stop/start). Adjust the lockfile detection to the project's package
-  # manager.
+  # never copied in, so the first Linux install runs; `run_once: true` then
+  # skips it on every subsequent box start (the supervisor stores a marker
+  # keyed by a hash of the command). Adjust the lockfile detection to the
+  # project's package manager.
   install:
     command: |
       set -e
-      MARKER=node_modules/.agentbox-installed
-      [ -f "$MARKER" ] && { echo "deps installed (marker present) — skip"; exit 0; }
-      apt-get update && apt-get install -y postgresql-client
-      rm -rf node_modules
+      sudo apt-get update && sudo apt-get install -y postgresql-client
       if [ -f pnpm-lock.yaml ]; then
         corepack enable >/dev/null 2>&1 || true
         pnpm install --frozen-lockfile || pnpm install
       fi
-      touch "$MARKER"
+    run_once: true
 
   migrate:
     command: pnpm db:migrate
@@ -258,6 +276,41 @@ On Vercel: this actually STOPS the sandbox, so warn the user about it. Also the 
 
 - For Nextjs/Vite/Tasnstack projects, makes sure to forward also websocket for hot reload.
 
-- Service like flask, nextjs, BETTER_AUTH_URL, NEXT_PUBLIC_APP_URL should use the <boxname>.localhost url for the local development so that on the host it will use the same url as the box.
+- Service like flask, nextjs, BETTER_AUTH_URL, NEXT_PUBLIC_APP_URL should use the `<boxname>.localhost` url for the local development so that on the host it will use the same url as the box. Render this automatically instead of hand-writing `sed` — see section 6c.
 
-- The `install` task is intentionally a no-op once `node_modules/.agentbox-installed` exists. Do **not** remove the marker guard to "force a fresh install" — that reinstalls on every box start. To force a one-off rebuild, delete `node_modules` (or just the marker) then run `agentbox-ctl reload`.
+- The `install` task above uses `run_once: true`, so it is a no-op on warm boots. Do **not** wrap it in a manual marker check too. To force a one-off rebuild, run `agentbox-ctl run-task install --force` (which bypasses the run_once marker), or edit the command (a changed command invalidates the hash and re-runs).
+
+## 11. Pin URLs / render config files (env, secrets)
+
+Many apps hard-code a hostname (e.g. `optima.localhost`) or read a gitignored `.env`. Instead of long `sed` commands in a task, use the built-ins:
+
+- **`agentbox-ctl render <src>`** — a declarative `sed` for files already in the workspace. `--env` substitutes `{{AGENTBOX_*}}` placeholders; `--rules <name>` applies a named rule-set from the top-level `replacements:` block; `--rule 'from=>to'` / `--rule-regex 'pat=>repl'` are inline. Write to `--out <path>` (or `--in-place`). The whitelist placeholders are `{{AGENTBOX_BOX_NAME}}`, `{{AGENTBOX_BOX_HOST}}` (= `<boxname>.localhost`), `{{AGENTBOX_BOX_ID}}`, `{{AGENTBOX_BOX_KIND}}`, `{{AGENTBOX_HOST_WORKSPACE}}`, `{{AGENTBOX_PROJECT_ROOT}}`.
+
+  Render a gitignored `.env` from a committed `env.example` on every boot, pinning the URLs to this box:
+
+  ```yaml
+  replacements:
+    box-host:
+      - { from: 'optima\.localhost', to: '{{AGENTBOX_BOX_HOST}}', regex: true }  # {{AGENTBOX_BOX_HOST}} = <box>.localhost
+
+  tasks:
+    env:
+      # The render is idempotent (the rules re-pin the same lines every boot), so
+      # no `run_once:` guard is needed — it self-corrects on a checkpoint-started
+      # box that carries a different box's host in .env.
+      command: agentbox-ctl render apps/saas/env.example --out apps/saas/.env --env --rules box-host
+  ```
+
+  Note: an `run_once: { check: <cmd> }` probe runs verbatim via `bash -c` with the box env — use shell vars like `$AGENTBOX_BOX_NAME`, NOT `{{…}}` placeholders (those are only expanded by `render`/carry, never by the supervisor).
+
+  **Generated secrets:** put `{{AGENTBOX_AUTO_SECRET}}` in the template for a value like `BETTER_AUTH_SECRET` instead of shelling out to `openssl rand`. Unnamed → a fresh 32-byte base64url secret each render (stable when you render the template→`.env` once). `{{AGENTBOX_AUTO_SECRET:better-auth}}` → generated once, persisted at `/var/lib/agentbox/secrets/<name>`, reused on every render (stable even if you render every boot). Example `env.example` line: `BETTER_AUTH_SECRET="{{AGENTBOX_AUTO_SECRET:better-auth}}"`.
+
+- **`carry:` + `replaceEnvs`/`replace`/`rules`** — for a host-only file (e.g. a real `.env` with secrets that never lives in the repo), carry it in and render it host-side in one step (file entries only):
+
+  ```yaml
+  carry:
+    - src: ~/secrets/optima.env
+      dest: /workspace/apps/saas/.env
+      replaceEnvs: true
+      rules: [box-host]
+  ```

@@ -39,6 +39,24 @@ export type {
   ResolvedCarryEntry,
   ResyncResult,
 } from './provider.js';
+export {
+  applyReplacements,
+  substitutePlaceholders,
+  placeholderContextFromEnv,
+  deriveBoxHost,
+  parseReplaceRule,
+  parseReplaceRules,
+  parseReplacements,
+  resolveRuleRefs,
+  parseRuleArg,
+  PLACEHOLDER_KEYS,
+  ReplaceError,
+} from './replace.js';
+export type {
+  ReplaceRule,
+  ApplyReplacementsOptions,
+  PlaceholderKey,
+} from './replace.js';
 export type {
   CloudBackend,
   CloudExecOptions,

@@ -223,6 +223,82 @@ carry:
     user: 1000
 `,
   },
+  {
+    name: 'task with run_once: true',
+    yaml: `tasks:\n  install:\n    command: pnpm install\n    run_once: true\n`,
+  },
+  {
+    name: 'task with run_once check',
+    yaml: `
+tasks:
+  seed:
+    command: pnpm db:seed
+    run_once:
+      check: "psql -tAc 'select 1' | grep -q 1"
+`,
+  },
+  {
+    name: 'docker image service (nested ports/env/args/container_name)',
+    yaml: `
+services:
+  postgres:
+    image:
+      name: postgres:17-alpine
+      ports: ["5437:5432"]
+      env:
+        POSTGRES_USER: optima
+        POSTGRES_PASSWORD: changeme
+      args: "-c max_connections=200"
+      container_name: optima_db
+    ready_when:
+      port: 5437
+    restart: always
+`,
+  },
+  {
+    name: 'docker image service string shorthand',
+    yaml: `services:\n  cache:\n    image: redis:7\n`,
+  },
+  {
+    name: 'docker image service nested + args list',
+    yaml: `
+services:
+  cache:
+    image:
+      name: redis:7
+      args: ["--save", "60 1"]
+`,
+  },
+  {
+    name: 'top-level replacements block',
+    yaml: `
+replacements:
+  box-host:
+    - from: '\\.optima\\.localhost'
+      to: '.{{AGENTBOX_BOX_NAME}}.localhost'
+      regex: true
+services:
+  web:
+    command: pnpm dev
+`,
+  },
+  {
+    name: 'carry mapping with replaceEnvs + replace + rules',
+    yaml: `
+replacements:
+  box-host:
+    - from: optima.localhost
+      to: '{{AGENTBOX_BOX_HOST}}'
+carry:
+  - src: ~/secrets/.env.prod
+    dest: /workspace/apps/saas/.env
+    replaceEnvs: true
+    rules: [box-host]
+    replace:
+      - from: PLACEHOLDER
+        to: '{{AGENTBOX_BOX_NAME}}'
+`,
+  },
 ];
 
 const INVALID: Fixture[] = [
@@ -536,6 +612,70 @@ services:
   {
     name: 'carry not an array (schema-only)',
     yaml: `carry: 42\n`,
+    schemaOnly: true,
+  },
+  {
+    name: 'service with both command and image',
+    yaml: `services:\n  db:\n    command: postgres\n    image: postgres:17-alpine\n`,
+  },
+  {
+    name: 'service with neither command nor image',
+    yaml: `services:\n  db:\n    ready_when:\n      port: 5432\n`,
+  },
+  {
+    name: 'top-level ports is an unknown key (now nested under image)',
+    yaml: `services:\n  web:\n    command: pnpm dev\n    ports: ["3000:3000"]\n`,
+  },
+  {
+    name: 'image as a mapping without name',
+    yaml: `services:\n  db:\n    image:\n      ports: ["5432:5432"]\n`,
+  },
+  {
+    name: 'image mapping with unknown key',
+    yaml: `services:\n  db:\n    image:\n      name: postgres\n      bogus: 1\n`,
+  },
+  {
+    name: 'image service with non-numeric port',
+    yaml: `services:\n  db:\n    image:\n      name: postgres:17-alpine\n      ports: ["abc"]\n`,
+  },
+  {
+    name: 'image service with invalid container_name',
+    yaml: `services:\n  db:\n    image:\n      name: postgres:17-alpine\n      container_name: "bad name"\n`,
+  },
+  {
+    name: 'top-level env on an image service (validator-only)',
+    yaml: `services:\n  db:\n    image: postgres:17-alpine\n    env:\n      FOO: bar\n`,
+    runtimeOnly: true,
+  },
+  {
+    name: 'run_once as a string',
+    yaml: `tasks:\n  build:\n    command: pnpm build\n    run_once: "yes"\n`,
+  },
+  {
+    name: 'run_once object with unknown key',
+    yaml: `tasks:\n  build:\n    command: pnpm build\n    run_once:\n      probe: foo\n`,
+  },
+  {
+    name: 'replacements rule missing to',
+    yaml: `replacements:\n  r:\n    - from: a\n`,
+  },
+  {
+    name: 'replacements rule unknown key',
+    yaml: `replacements:\n  r:\n    - from: a\n      to: b\n      bogus: 1\n`,
+  },
+  {
+    name: 'replacements invalid regex (validator-only)',
+    yaml: `replacements:\n  r:\n    - from: "(unclosed"\n      to: b\n      regex: true\n`,
+    runtimeOnly: true,
+  },
+  {
+    name: 'carry replace rule missing to (schema-only)',
+    yaml: `carry:\n  - src: ./a\n    dest: ~/a\n    replace:\n      - from: x\n`,
+    schemaOnly: true,
+  },
+  {
+    name: 'carry replaceEnvs wrong type (schema-only)',
+    yaml: `carry:\n  - src: ./a\n    dest: ~/a\n    replaceEnvs: "yes"\n`,
     schemaOnly: true,
   },
 ];
