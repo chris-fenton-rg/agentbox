@@ -83,6 +83,20 @@ export interface ServiceSpec {
   readyWhen?: ReadyProbe;
   /** When set, container port `expose.as` forwards to `127.0.0.1:expose.port`. */
   expose?: ExposeSpec;
+  /**
+   * Declarative docker sidecar. When set, `command` is synthesized into a
+   * `docker start`-or-`run` shell (the in-box dockerd container is reused by
+   * name across restarts). Mutually exclusive with a user `command`. The other
+   * `*image*` fields below are kept for introspection; `env` is baked into the
+   * container's `-e` flags and not set as the process env.
+   */
+  image?: string;
+  /** Port publishes ("<host>:<container>" or "<port>"); image services only. */
+  ports?: string[];
+  /** Extra args appended after the image (shell-tokenized); image services only. */
+  args?: string;
+  /** Container name (default = service name); image services only. */
+  containerName?: string;
 }
 
 export interface CtlConfig {
@@ -371,7 +385,83 @@ const SERVICE_KEYS = new Set([
   'ready_when',
   'expose',
   'ide',
+  'image',
+  'ports',
+  'args',
+  'container_name',
 ]);
+
+// Minimal POSIX single-quote escaping for values baked into a generated
+// `bash -c` docker command. (sandbox-cloud has an equivalent quoteShellArg, but
+// ctl can't depend on it — wrong direction.)
+function shQuote(s: string): string {
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(s)) return s;
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+function parsePorts(raw: unknown, where: string): string[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw)) {
+    throw new ConfigError(`${where}.ports must be a list of "<host>:<container>" strings`);
+  }
+  const out: string[] = [];
+  for (const [i, v] of raw.entries()) {
+    const s = typeof v === 'number' ? String(v) : v;
+    if (typeof s !== 'string' || !/^\d+(:\d+)?$/.test(s.trim())) {
+      throw new ConfigError(
+        `${where}.ports[${String(i)}] must be "<host>" or "<host>:<container>" (got ${JSON.stringify(v)})`,
+      );
+    }
+    out.push(s.trim());
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+// `args` is a string (appended raw, bash word-splits) or a list of strings
+// (joined with spaces, then bash word-splits) — so both `args: "-c x=1"` and
+// `args: ["-c", "x=1"]` produce the same docker invocation.
+function parseArgs(raw: unknown, where: string): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw === 'string') return raw.trim().length > 0 ? raw : undefined;
+  if (Array.isArray(raw)) {
+    const parts: string[] = [];
+    for (const [i, v] of raw.entries()) {
+      if (typeof v !== 'string') throw new ConfigError(`${where}.args[${String(i)}] must be a string`);
+      parts.push(v);
+    }
+    const joined = parts.join(' ').trim();
+    return joined.length > 0 ? joined : undefined;
+  }
+  throw new ConfigError(`${where}.args must be a string or a list of strings`);
+}
+
+// Build the start-or-run shell for an `image:` service. Reuses the existing
+// container by name across restarts (data lives in the per-box /var/lib/docker);
+// a config change needs a manual `docker rm <name>`.
+function synthesizeImageCommand(opts: {
+  image: string;
+  name: string;
+  ports?: string[];
+  env?: Record<string, string>;
+  args?: string;
+}): string {
+  const name = shQuote(opts.name);
+  const run = ['docker', 'run', '--name', name];
+  for (const p of opts.ports ?? []) run.push('-p', shQuote(p));
+  for (const [k, v] of Object.entries(opts.env ?? {})) run.push('-e', `${k}=${shQuote(v)}`);
+  run.push(shQuote(opts.image));
+  let runLine = run.join(' ');
+  if (opts.args) runLine += ` ${opts.args}`; // raw — bash word-splits
+  return [
+    'set -e',
+    `if docker container inspect ${name} >/dev/null 2>&1; then`,
+    `  docker start ${name} >/dev/null`,
+    `  exec docker logs -f ${name}`,
+    'else',
+    `  exec ${runLine}`,
+    'fi',
+  ].join('\n');
+}
 
 const EXPOSE_KEYS = new Set(['port', 'as']);
 
@@ -407,9 +497,17 @@ function parseService(name: string, raw: unknown): ServiceSpec {
     throw new ConfigError(`${where} must be a mapping`);
   }
   rejectUnknownKeys(raw, SERVICE_KEYS, where);
-  const command = parseCommand(raw.command, where);
+
+  const hasImage = raw.image !== undefined && raw.image !== null;
+  const hasCommand = raw.command !== undefined && raw.command !== null;
+  if (hasImage && hasCommand) {
+    throw new ConfigError(`${where} sets both command and image — use exactly one`);
+  }
+  if (!hasImage && !hasCommand) {
+    throw new ConfigError(`${where} must set either command or image`);
+  }
+
   const cwd = raw.cwd === undefined ? undefined : assertString(raw.cwd, `${where}.cwd`);
-  const env = parseEnv(raw.env, where);
   const autostart =
     raw.autostart === undefined ? true : assertBool(raw.autostart, `${where}.autostart`);
   const restart = parseRestart(raw.restart, where);
@@ -417,6 +515,49 @@ function parseService(name: string, raw: unknown): ServiceSpec {
   const needs = parseNeeds(raw.needs, `${where}.needs`);
   const readyWhen = parseReadyWhen(raw.ready_when, where);
   const expose = parseExpose(raw.expose, where);
+
+  if (hasImage) {
+    const image = assertString(raw.image, `${where}.image`).trim();
+    if (image.length === 0) throw new ConfigError(`${where}.image must not be empty`);
+    const ports = parsePorts(raw.ports, where);
+    const args = parseArgs(raw.args, where);
+    const env = parseEnv(raw.env, where); // container -e env
+    const containerName =
+      raw.container_name === undefined
+        ? name
+        : assertString(raw.container_name, `${where}.container_name`).trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(containerName)) {
+      throw new ConfigError(
+        `${where}.container_name "${containerName}" is not a valid docker container name`,
+      );
+    }
+    const command = synthesizeImageCommand({ image, name: containerName, ports, env, args });
+    const spec: ServiceSpec = {
+      name,
+      command,
+      cwd,
+      autostart,
+      restart,
+      backoff,
+      needs,
+      readyWhen,
+      expose,
+      image,
+      containerName,
+    };
+    if (ports !== undefined) spec.ports = ports;
+    if (args !== undefined) spec.args = args;
+    return spec;
+  }
+
+  // command service — the image-only keys are rejected.
+  for (const k of ['ports', 'args', 'container_name']) {
+    if (raw[k] !== undefined) {
+      throw new ConfigError(`${where}.${k} is only valid alongside image:`);
+    }
+  }
+  const command = parseCommand(raw.command, where);
+  const env = parseEnv(raw.env, where);
   return { name, command, cwd, env, autostart, restart, backoff, needs, readyWhen, expose };
 }
 

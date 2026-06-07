@@ -238,6 +238,32 @@ tasks:
 `,
   },
   {
+    name: 'docker image service (ports/env/args/container_name)',
+    yaml: `
+services:
+  postgres:
+    image: postgres:17-alpine
+    ports: ["5437:5432"]
+    env:
+      POSTGRES_USER: optima
+      POSTGRES_PASSWORD: changeme
+    args: "-c max_connections=200"
+    container_name: optima_db
+    ready_when:
+      port: 5437
+    restart: always
+`,
+  },
+  {
+    name: 'docker image service minimal + args list',
+    yaml: `
+services:
+  cache:
+    image: redis:7
+    args: ["--save", "60 1"]
+`,
+  },
+  {
     name: 'top-level replacements block',
     yaml: `
 replacements:
@@ -581,6 +607,30 @@ services:
     name: 'carry not an array (schema-only)',
     yaml: `carry: 42\n`,
     schemaOnly: true,
+  },
+  {
+    name: 'service with both command and image',
+    yaml: `services:\n  db:\n    command: postgres\n    image: postgres:17-alpine\n`,
+  },
+  {
+    name: 'service with neither command nor image',
+    yaml: `services:\n  db:\n    ready_when:\n      port: 5432\n`,
+  },
+  {
+    name: 'ports without image',
+    yaml: `services:\n  web:\n    command: pnpm dev\n    ports: ["3000:3000"]\n`,
+  },
+  {
+    name: 'container_name without image',
+    yaml: `services:\n  web:\n    command: pnpm dev\n    container_name: web1\n`,
+  },
+  {
+    name: 'image service with non-numeric port',
+    yaml: `services:\n  db:\n    image: postgres:17-alpine\n    ports: ["abc"]\n`,
+  },
+  {
+    name: 'image service with invalid container_name',
+    yaml: `services:\n  db:\n    image: postgres:17-alpine\n    container_name: "bad name"\n`,
   },
   {
     name: 'idempotent as a string',

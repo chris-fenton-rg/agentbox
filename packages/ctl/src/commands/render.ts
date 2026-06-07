@@ -1,6 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { Command } from 'commander';
-import { DEFAULT_CONFIG_PATH } from '../types.js';
+import { DEFAULT_CONFIG_PATH, DEFAULT_STATE_DIR } from '../types.js';
 import {
   applyReplacements,
   loadReplacementsSection,
@@ -9,6 +9,7 @@ import {
   resolveRuleRefs,
   type ReplaceRule,
 } from '../replace.js';
+import { resolveAutoSecrets } from '../secret.js';
 
 interface RenderOptions {
   out?: string;
@@ -18,6 +19,7 @@ interface RenderOptions {
   ruleRegex: string[];
   rules?: string;
   config: string;
+  stateDir: string;
 }
 
 function collect(value: string, prev: string[]): string[] {
@@ -38,8 +40,16 @@ export const renderCommand = new Command('render')
   .option('--rule-regex <pat=>repl>', 'regex replacement (repeatable)', collect, [])
   .option('--rules <names>', 'comma-separated replacements: rule-set names to apply')
   .option('--config <path>', 'agentbox.yaml to read replacements: from', DEFAULT_CONFIG_PATH)
+  .option('--state-dir <path>', 'where named {{AGENTBOX_AUTO_SECRET:x}} secrets persist', DEFAULT_STATE_DIR)
   .action(async (src: string, opts: RenderOptions) => {
-    const content = await readFile(src, 'utf8');
+    const raw = await readFile(src, 'utf8');
+
+    // Resolve {{AGENTBOX_AUTO_SECRET}} tokens first (generate / persist), then
+    // the placeholder + rule substitutions.
+    const content = await resolveAutoSecrets(raw, {
+      stateDir: opts.stateDir,
+      onLog: (msg) => process.stderr.write(`agentbox-ctl render: ${msg}\n`),
+    });
 
     const rules: ReplaceRule[] = [];
     if (opts.rules) {

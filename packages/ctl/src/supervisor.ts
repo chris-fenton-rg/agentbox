@@ -12,6 +12,7 @@ import {
   type TaskSpec,
 } from './config.js';
 import { DEFAULT_STATE_DIR } from './types.js';
+import { resolveWritableStateDir } from './state-dir.js';
 import { startProbe, type ProbeHandle } from './probe.js';
 import { RelayClient } from './relay-client.js';
 import { WebProxy } from './web-proxy.js';
@@ -753,22 +754,12 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
    * and off /workspace (no git noise).
    */
   private async ensureStateDir(): Promise<string> {
-    const want = this.opts.stateDir ?? DEFAULT_STATE_DIR;
-    try {
-      await mkdir(join(want, 'tasks'), { recursive: true });
-      return want;
-    } catch {
-      const fallback = join(this.opts.logDir, 'state');
-      try {
-        await mkdir(join(fallback, 'tasks'), { recursive: true });
-        process.stderr.write(
-          `[ctl] idempotent markers: ${want} not writable, using ${fallback}\n`,
-        );
-        return fallback;
-      } catch {
-        return want; // give up; per-task marker writes will warn
-      }
-    }
+    return resolveWritableStateDir(
+      this.opts.stateDir ?? DEFAULT_STATE_DIR,
+      this.opts.logDir,
+      'tasks',
+      (m) => process.stderr.write(`[ctl] idempotent markers: ${m}\n`),
+    );
   }
 
   private emitChange(): void {

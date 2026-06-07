@@ -51,6 +51,31 @@ Look at `/workspace`:
 
 ### Stateful services: data persistence & re-seeding (read this for databases)
 
+**Declare a containerized dependency with the `image:` service form** — AgentBox
+generates the `docker start`-or-`run` shell (no hand-written `docker run … || docker
+start …`). The container runs in the box's dockerd; a published port is reachable
+from other in-box services at `127.0.0.1:<host port>`:
+
+```yaml
+services:
+  postgres:
+    image: postgres:17-alpine
+    ports: ["5432:5432"]
+    env:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: app
+    args: "-c max_connections=200"   # string or ["-c","max_connections=200"]
+    container_name: app_db            # optional; default = service name
+    ready_when: { port: 5432 }
+    restart: always
+```
+
+The container is reused by name across box stop/start. (Changing `image`/`env`
+reuses the existing container as-is; `docker rm <container_name>` + `agentbox-ctl
+reload` to apply.) Install the DB client the migrate/seed tasks need (e.g.
+`postgresql-client`) in the `install` task and reach the DB over TCP — don't
+`docker exec` the container (nested exec fails with a `setns` error in a box).
+
 **A checkpoint does NOT capture docker-in-docker data.** `agentbox checkpoint` is a `docker commit` of the box's writable filesystem (the system + `/workspace`). The in-box `dockerd` keeps its storage in a *separate* per-box volume (`/var/lib/docker`), which is **not** part of that image — it's fresh on every new box and wiped on `agentbox destroy`. So a database or cache you run as a **docker container** (e.g. `docker run … postgres`) starts **empty on every new box** created from a checkpoint (every `agentbox claude` / `agentbox create`), even though `/workspace` and any marker files you wrote were restored. (A DB run as a **native process** with its data dir on the box filesystem — e.g. `postgres -D /var/lib/postgresql/data` — *is* captured by the checkpoint, since it lives in the writable layer.)
 
 **Consequence for migrate/seed tasks of a containerized DB: do NOT use `idempotent: true` (the marker form).** A command-hash marker is correct for deps (they live in `/workspace`, which the checkpoint captures), but **wrong** for DB data living in a docker volume: the marker is restored from the checkpoint while the DB is empty, so a marker-guarded seed wrongly skips and the app boots against an empty database. Instead use the **`idempotent: { check: <cmd> }`** form — the probe runs first and the seed runs unless the probe exits 0, and **no marker is written** (the DB is the source of truth). Gate on the actual data:
@@ -276,6 +301,8 @@ Many apps hard-code a hostname (e.g. `optima.localhost`) or read a gitignored `.
   ```
 
   Note: an `idempotent: { check: <cmd> }` probe runs verbatim via `bash -c` with the box env — use shell vars like `$AGENTBOX_BOX_NAME`, NOT `{{…}}` placeholders (those are only expanded by `render`/carry, never by the supervisor).
+
+  **Generated secrets:** put `{{AGENTBOX_AUTO_SECRET}}` in the template for a value like `BETTER_AUTH_SECRET` instead of shelling out to `openssl rand`. Unnamed → a fresh 32-byte base64url secret each render (stable when you render the template→`.env` once). `{{AGENTBOX_AUTO_SECRET:better-auth}}` → generated once, persisted at `/var/lib/agentbox/secrets/<name>`, reused on every render (stable even if you render every boot). Example `env.example` line: `BETTER_AUTH_SECRET="{{AGENTBOX_AUTO_SECRET:better-auth}}"`.
 
 - **`carry:` + `replaceEnvs`/`replace`/`rules`** — for a host-only file (e.g. a real `.env` with secrets that never lives in the repo), carry it in and render it host-side in one step (file entries only):
 

@@ -42,13 +42,14 @@ tasks:
 
 ## Services
 
-A service is a long-running process. The spec requires `command`; unknown fields are rejected.
+A service is a long-running process. It needs **either** `command` **or** [`image`](#docker-image-services) (not both); unknown fields are rejected.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `command` | (required) | Shell string (run via `bash -c`) or an argv array. |
+| `command` | (required, or `image`) | Shell string (run via `bash -c`) or an argv array. |
+| `image` | (required, or `command`) | Run a docker container instead — see [docker image services](#docker-image-services). |
 | `cwd` | `/workspace` | Working directory; relative paths resolve against `/workspace`. |
-| `env` | — | Extra env vars; scalar values, coerced to strings. |
+| `env` | — | Extra env vars; scalar values, coerced to strings. (Container `-e` env for an `image` service.) |
 | `autostart` | `true` | Start automatically when the daemon boots. |
 | `restart` | `on-failure` | Restart policy — see [needs and restart](#needs-and-restart). |
 | `backoff` | — | Exponential backoff between restarts. |
@@ -56,6 +57,7 @@ A service is a long-running process. The spec requires `command`; unknown fields
 | `ready_when` | — | Readiness probe — see [ready_when](#ready_when). |
 | `expose` | — | Mark the one web service — see [expose](#expose). |
 | `ide` | — | Per-service VS Code hints (host-side only). |
+| `ports`, `args`, `container_name` | — | `image`-service only — see [docker image services](#docker-image-services). |
 
 A service moves through `pending → waiting → starting → running → ready`, and can land in `unhealthy`, `crashed`, `backoff`, or `stopped`. Logs land at `/var/log/agentbox/<svc>.log` inside the box.
 
@@ -90,6 +92,32 @@ $ agentbox-ctl start web
 
 <Callout title="TIP">
 Use the array form of `command` to avoid shell quoting; use the string form (`bash -c`) when you need shell features like pipes, `&&`, or sourcing env files.
+</Callout>
+
+### Docker image services
+
+For a containerized dependency (a database, cache, …) set `image:` instead of `command:` and AgentBox generates the `docker start`-or-`run` shell for you — no hand-written `docker run … || docker start …` block. It runs in the box's own dockerd, so a published port like `5437:5432` is reachable from other in-box services at `127.0.0.1:5437`.
+
+```yaml
+services:
+  postgres:
+    image: postgres:17-alpine
+    ports: ["5437:5432"]            # "<host>:<container>" (or "<port>")
+    env:                            # the container's -e env
+      POSTGRES_USER: optima
+      POSTGRES_PASSWORD: changeme
+      POSTGRES_DB: optima
+    args: "-c max_connections=200"  # string OR ["-c", "max_connections=200"]; shell-tokenized
+    container_name: optima_db       # optional; default = service name
+    ready_when:
+      port: 5437
+    restart: always
+```
+
+All the usual service fields (`ready_when`, `restart`, `backoff`, `needs`, `expose`, `autostart`) still apply. The container is **reused by name** across box stop/start (its data lives in the per-box docker volume, which a checkpoint does not capture — see the database note in [services and tasks](/docs/services-and-tasks)).
+
+<Callout type="warn" title="HEADS UP">
+A change to `image`/`ports`/`env` reuses the existing container as-is — AgentBox never auto-`docker rm`s it (that would wipe its data). To apply the change, `docker rm <container_name>` inside the box, then `agentbox-ctl reload`.
 </Callout>
 
 ## Tasks
@@ -362,7 +390,23 @@ tasks:
 
 Arbitrary substitutions go through explicit `replace:` / `rules:` rules, not the placeholder whitelist.
 
-`agentbox-ctl render <src>` flags: `--out <path>` (or `--in-place`, else stdout), `--env` (placeholder substitution), `--rules <names>` (comma-separated `replacements:` refs), `--rule 'from=>to'` (literal, repeatable), and `--rule-regex 'pat=>repl'` (regex, repeatable).
+### Generated secrets
+
+`render` also expands a secret-generator token, so you can stop shelling out to `openssl rand`:
+
+| Token | Behavior |
+| --- | --- |
+| `{{AGENTBOX_AUTO_SECRET}}` | A fresh 32-byte base64url secret each render. Stable in practice because you render the template→file once (guarded). |
+| `{{AGENTBOX_AUTO_SECRET:<name>}}` | Generated once, persisted at `/var/lib/agentbox/secrets/<name>`, **reused** on every later render — stable even if you render every boot. |
+
+```yaml
+# env.example
+BETTER_AUTH_SECRET="{{AGENTBOX_AUTO_SECRET:better-auth}}"
+```
+
+`AGENTBOX_AUTO_SECRET` is a `render`-only token (the persistent store lives in the box); it isn't a `replaceEnvs` whitelist placeholder and isn't expanded by `carry:`.
+
+`agentbox-ctl render <src>` flags: `--out <path>` (or `--in-place`, else stdout), `--env` (placeholder substitution), `--rules <names>` (comma-separated `replacements:` refs), `--rule 'from=>to'` (literal, repeatable), `--rule-regex 'pat=>repl'` (regex, repeatable), and `--state-dir <path>` (where named secrets persist).
 
 <Callout title="TIP">
 Reach for `replaceEnvs`/`render` instead of hand-written `sed`: an `env` task that pins `BETTER_AUTH_URL`/`NEXT_PUBLIC_APP_URL` to `https://{{AGENTBOX_BOX_HOST}}` becomes a one-liner, and the box and host browser then resolve the app at the same URL.
