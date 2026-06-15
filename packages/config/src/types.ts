@@ -122,6 +122,13 @@ export interface UserConfig {
   };
   relay?: {
     port?: number;
+    /**
+     * Public HTTPS URL of an always-on control-box relay. When set, newly
+     * created cloud boxes route their host-actions (git push, PR, …) through
+     * it instead of a laptop-local relay, so they keep working with the laptop
+     * off. Empty/unset = laptop-local relay (the default).
+     */
+    controlBoxUrl?: string;
   };
   vnc?: {
     containerPort?: number;
@@ -246,6 +253,7 @@ export interface EffectiveConfig {
   };
   relay: {
     port: number;
+    controlBoxUrl: string | undefined;
   };
   vnc: {
     containerPort: number;
@@ -391,6 +399,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   },
   relay: {
     port: 8787,
+    controlBoxUrl: undefined,
   },
   vnc: {
     containerPort: 6080,
@@ -785,6 +794,12 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'int',
     description: 'Host relay TCP port (advanced).',
     advanced: true,
+  },
+  {
+    key: 'relay.controlBoxUrl',
+    type: 'string',
+    description:
+      'Public HTTPS URL of an always-on control-box relay. When set, new cloud boxes route host-actions (git push, PR) through it so they keep working with the laptop off. Set via `agentbox control-box create`.',
   },
   {
     key: 'vnc.containerPort',
