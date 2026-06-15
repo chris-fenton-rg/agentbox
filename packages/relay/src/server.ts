@@ -55,6 +55,7 @@ import type {
   DownloadRpcParams,
   GitRpcParams,
   GitRpcResult,
+  HostAction,
   PostEventBody,
   PostRpcBody,
   PromptAnswerBody,
@@ -456,6 +457,34 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         return;
       }
       if (body.method === 'git.push' || body.method === 'git.fetch') {
+        // Cloud box reaching a host-mode relay directly over the forwarder
+        // (the control-box model): there is no host worktree to push from, so
+        // run the cloud bundle pull-back executor. It does its own gating and,
+        // in control-box mode, pushes to origin with the PAT. (On a laptop
+        // relay this would still work via the host workspace, but cloud boxes
+        // normally reach the laptop via the poller, not this path.)
+        if (reg.kind === 'cloud') {
+          const action: HostAction = {
+            id: '',
+            boxId: reg.boxId,
+            method: body.method,
+            params: body.params,
+            createdAt: new Date().toISOString(),
+          };
+          const result = await executeCloudAction(action, {
+            backendName: reg.backend ?? '',
+            boxId: reg.boxId,
+            boxName: reg.name,
+            prompts,
+            subscribers,
+            hostInitiatedTokens,
+            controlBox,
+            githubToken: process.env.GH_TOKEN,
+            log,
+          });
+          send(res, result.exitCode === 0 ? 200 : 500, result);
+          return;
+        }
         // Only `push` mutates the user's remote; fetch is read-only and noisy.
         // Per-box `agentbox/<name>` branches are the box's own scratch branch
         // — pushes to them are the whole point of agentbox, so they bypass

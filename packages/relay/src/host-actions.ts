@@ -40,6 +40,7 @@ import {
   type GhPrRpcParams,
   type GhRunRpcParams,
 } from './gh.js';
+import { pushBundleToRemote, repoSlugFromRemote, toAuthedHttpsUrl } from './git-pat.js';
 import { hashRpcParams, type HostInitiatedTokens } from './host-initiated.js';
 import {
   assertIntegrationReady,
@@ -75,6 +76,15 @@ export interface CloudActionExecutorDeps {
   subscribers?: PromptSubscribers;
   /** Host CLI one-time tokens; presence + scope-match skips the confirm prompt. */
   hostInitiatedTokens?: HostInitiatedTokens;
+  /**
+   * Control-box mode: this relay runs on an always-on cloud box with no local
+   * checkout of any repo. `git.push` materializes a throwaway repo from the
+   * box's bundle and pushes to origin over HTTPS with `githubToken` instead of
+   * fast-forwarding a host workspace and pushing with host SSH/gh creds.
+   */
+  controlBox?: boolean;
+  /** Fine-grained GitHub PAT used for `git.push` in control-box mode. */
+  githubToken?: string;
   /** Best-effort logger. */
   log?: (line: string) => void;
 }
@@ -281,6 +291,13 @@ async function runGhPrRpc(
   const lookup = await lookupCloudBox(deps.boxId);
 
   if (op === 'checkout') {
+    if (deps.controlBox) {
+      return {
+        exitCode: 64,
+        stdout: '',
+        stderr: 'gh pr checkout is not supported on a control-box relay (no host checkout).\n',
+      };
+    }
     // The cloud host repo isn't bind-mounted by anything; the only "branch
     // we must not stomp" concern is the host's own current branch, which is
     // a generic dirty-tree / "already on this branch" question gh itself
@@ -362,24 +379,59 @@ async function runGhPrRpc(
   }
 
   // Default `--head` to the box's branch for `create` (the host repo cwd isn't
-  // on the box branch, so gh can't infer it). Resolve the branch from the
-  // sandbox HEAD the same way `runGitRpc` does; a failed probe leaves args
-  // unchanged (today's behavior). Only probed when we'd actually inject.
+  // on the box branch, so gh can't infer it). In control-box mode also inject
+  // `--repo` — there is no checkout for gh to infer the repo from. Both come
+  // from probing the box; resolve the backend/handle once when either is
+  // needed. A failed `--head` probe leaves args unchanged (today's behavior);
+  // a failed `--repo` probe is fatal (gh would error obscurely otherwise).
   let finalArgs = args;
-  if (op === 'create' && !args.some((a) => a === '--head' || a.startsWith('--head='))) {
+  const containerPath = params.path ?? '/workspace';
+  const needsHeadProbe =
+    op === 'create' && !args.some((a) => a === '--head' || a.startsWith('--head='));
+  const needsRepoProbe =
+    (deps.controlBox ?? false) &&
+    !args.some((a) => a === '--repo' || a === '-R' || a.startsWith('--repo='));
+  if (needsHeadProbe || needsRepoProbe) {
     const backend = await resolveCloudBackend(deps.backendName);
     const handle: CloudHandle = { sandboxId: lookup.cloudSandboxId };
-    const containerPath = params.path ?? '/workspace';
-    const branchProbe = await backend.exec(
-      handle,
-      `git -C ${shellQuote(containerPath)} rev-parse --abbrev-ref HEAD`,
-    );
-    const branch = branchProbe.exitCode === 0 ? (branchProbe.stdout ?? '').trim() : '';
-    finalArgs = injectPrCreateHead(op, branch, args);
+    if (needsHeadProbe) {
+      const branchProbe = await backend.exec(
+        handle,
+        `git -C ${shellQuote(containerPath)} rev-parse --abbrev-ref HEAD`,
+      );
+      const branch = branchProbe.exitCode === 0 ? (branchProbe.stdout ?? '').trim() : '';
+      finalArgs = injectPrCreateHead(op, branch, finalArgs);
+    }
+    if (needsRepoProbe) {
+      const originProbe = await backend.exec(
+        handle,
+        `git -C ${shellQuote(containerPath)} remote get-url origin`,
+      );
+      const originUrl = (originProbe.stdout ?? '').trim();
+      if (originProbe.exitCode !== 0 || originUrl.length === 0) {
+        return {
+          exitCode: originProbe.exitCode || 1,
+          stdout: '',
+          stderr: `failed to read box origin for gh --repo: ${originProbe.stderr || originProbe.stdout}`,
+        };
+      }
+      try {
+        finalArgs = ['--repo', repoSlugFromRemote(originUrl), ...finalArgs];
+      } catch (err) {
+        return {
+          exitCode: 1,
+          stdout: '',
+          stderr: `cannot derive gh --repo from '${originUrl}': ${err instanceof Error ? err.message : String(err)}\n`,
+        };
+      }
+    }
   }
   // Never let `gh` fall back to the host repo's checked-out branch.
   if (prCreateNeedsHead(op, finalArgs)) return PR_CREATE_NO_HEAD_REFUSAL;
-  return runHostGh(['pr', op, ...finalArgs], lookup.workspacePath);
+  // Control box has no workspace dir: gh runs from a neutral cwd and relies on
+  // --repo + GH_TOKEN. Otherwise run inside the host repo as before.
+  const cwd = deps.controlBox ? tmpdir() : lookup.workspacePath;
+  return runHostGh(['pr', op, ...finalArgs], cwd);
 }
 
 /**
@@ -1013,6 +1065,22 @@ async function runGitRpc(action: HostAction, deps: CloudActionExecutorDeps): Pro
       }
       // 2b. Download to host tmp.
       await backend.downloadFile(handle, remoteBundle, hostBundle);
+      // Control-box mode: there is no host checkout to fast-forward. Push the
+      // bundle's branch straight to origin over HTTPS with the PAT.
+      if (deps.controlBox) {
+        return await pushBundleWithPat({
+          deps,
+          backend,
+          handle,
+          containerPath,
+          branch,
+          remote: params.remote ?? 'origin',
+          hostBundle,
+          extraArgs: Array.isArray(params.args)
+            ? params.args.filter((a): a is string => typeof a === 'string')
+            : [],
+        });
+      }
       // 3. Fast-forward the host repo's per-box branch ref to the sandbox tip.
       const fetch = await execa(
         'git',
@@ -1080,6 +1148,16 @@ async function runGitRpc(action: HostAction, deps: CloudActionExecutorDeps): Pro
       };
     }
     // git.fetch: host fetches origin, bundles, uploads, sandbox fetches.
+    // Control-box mode has no host checkout to fetch into; pulling origin
+    // changes back into the box from a PAT clone is a follow-up.
+    if (deps.controlBox) {
+      return {
+        exitCode: 64,
+        stdout: '',
+        stderr:
+          'git.fetch is not yet supported on a control-box relay (no host checkout). Push works; fetch is a follow-up.\n',
+      };
+    }
     const remote = params.remote ?? 'origin';
     const hostFetch = await execa('git', ['-C', lookup.workspacePath, 'fetch', remote], { reject: false });
     if (hostFetch.exitCode !== 0) {
@@ -1120,6 +1198,93 @@ async function runGitRpc(action: HostAction, deps: CloudActionExecutorDeps): Pro
         /* best-effort */
       });
   }
+}
+
+interface PushBundleWithPatArgs {
+  deps: CloudActionExecutorDeps;
+  backend: CloudBackend;
+  handle: CloudHandle;
+  containerPath: string;
+  branch: string;
+  remote: string;
+  hostBundle: string;
+  extraArgs: string[];
+}
+
+/**
+ * Control-box `git.push`: the relay has no checkout, so it probes the box's
+ * origin URL, rewrites it to carry the PAT, and pushes the bundle's branch to
+ * GitHub from a throwaway repo. On success it mirrors the laptop path's
+ * post-push in-box sync (origin tracking ref + upstream) so the box's PR badge
+ * works — using the pushed tip rather than a host rev-parse.
+ */
+async function pushBundleWithPat(args: PushBundleWithPatArgs): Promise<HostActionResult> {
+  const { deps, backend, handle, containerPath, branch, remote, hostBundle, extraArgs } = args;
+  const token = deps.githubToken ?? '';
+  if (token.length === 0) {
+    return {
+      exitCode: 64,
+      stdout: '',
+      stderr:
+        'control-box git.push needs a GitHub token but none is configured — run `agentbox control-box set-token`.\n',
+    };
+  }
+  // Probe the box's origin URL (the box was seeded from origin). An SSH origin
+  // is fine — toAuthedHttpsUrl converts it to PAT-authed HTTPS.
+  const originProbe = await backend.exec(
+    handle,
+    `git -C ${shellQuote(containerPath)} remote get-url ${shellQuote(remote)}`,
+  );
+  const originUrl = (originProbe.stdout ?? '').trim();
+  if (originProbe.exitCode !== 0 || originUrl.length === 0) {
+    return {
+      exitCode: originProbe.exitCode || 1,
+      stdout: '',
+      stderr: `failed to read box remote '${remote}': ${originProbe.stderr || originProbe.stdout}`,
+    };
+  }
+  let authedUrl: string;
+  try {
+    authedUrl = toAuthedHttpsUrl(originUrl, token);
+  } catch (err) {
+    return {
+      exitCode: 1,
+      stdout: '',
+      stderr: `cannot derive a push URL from '${originUrl}': ${err instanceof Error ? err.message : String(err)}\n`,
+    };
+  }
+  const result = await pushBundleToRemote({
+    bundlePath: hostBundle,
+    branch,
+    remoteUrl: authedUrl,
+    extraArgs,
+  });
+  // Keep the token out of any surfaced error text (defense-in-depth — it lives
+  // in the temp remote URL, not argv, but stderr could echo a config dump).
+  const scrub = (s: string): string => (token.length > 0 ? s.split(token).join('***') : s);
+  let stderr = scrub(result.stderr);
+
+  if (result.exitCode === 0 && result.tipSha.length > 0 && !branch.startsWith('agentbox/')) {
+    try {
+      const updateRef = await backend.exec(
+        handle,
+        `git -C ${shellQuote(containerPath)} update-ref refs/remotes/${remote}/${branch} ${shellQuote(result.tipSha)}`,
+      );
+      if (updateRef.exitCode !== 0) {
+        stderr += `\nrelay: post-push in-box update-ref refs/remotes/${remote}/${branch} failed: ${updateRef.stderr || updateRef.stdout}`;
+      }
+      const setUpstream = await backend.exec(
+        handle,
+        `git -C ${shellQuote(containerPath)} branch --set-upstream-to=${remote}/${branch} ${shellQuote(branch)}`,
+      );
+      if (setUpstream.exitCode !== 0) {
+        stderr += `\nrelay: post-push in-box --set-upstream-to=${remote}/${branch} failed: ${setUpstream.stderr || setUpstream.stdout}`;
+      }
+    } catch (err) {
+      stderr += `\nrelay: post-push in-box origin/upstream sync threw: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+  return { exitCode: result.exitCode, stdout: result.stdout, stderr };
 }
 
 /** Local helper — sandbox-cloud's `quoteShellArg` would be a cross-package import. */
