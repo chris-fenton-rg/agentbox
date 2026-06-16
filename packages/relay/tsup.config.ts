@@ -31,7 +31,10 @@ const externalAtRuntime = [
 
 export default defineConfig([
   {
-    entry: { index: 'src/index.ts' },
+    // `index` is the full library (consumed by the CLI / sandbox packages).
+    // `control-plane` is the lean hosted-plane entry (the Next.js app) — no
+    // server.ts/host-actions, so its graph carries none of the cloud SDKs.
+    entry: { index: 'src/index.ts', 'control-plane': 'src/control-plane.ts' },
     format: ['esm'],
     target: 'node20',
     clean: true,

@@ -38,13 +38,10 @@ import {
   runHostIntegration,
   type IntegrationRpcParams,
 } from './integrations.js';
-import { parseGitRemote, repoSlugFromRemote, toAuthedHttpsUrl } from './git-pat.js';
-import {
-  GitHubAppLeaser,
-  loadGitHubAppConfig,
-  type GitHubAppConfig,
-} from './github-app.js';
+import { GitHubAppLeaser, loadGitHubAppConfig, type GitHubAppConfig } from './github-app.js';
+import { leaseTokenResult } from './lease.js';
 import { gateApproval, type GateDeps, type PromptMode } from './permission.js';
+import { resolveWorktree } from './worktree.js';
 import { askPrompt, isPromptAnswerBody, PendingPrompts, PromptSubscribers } from './prompts.js';
 import { BoxRegistry, EventBuffer } from './registry.js';
 import { BoxStatusStore, isValidBoxStatus } from './status-store.js';
@@ -621,7 +618,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             return;
           }
         }
-        const result = await leaseTokenAction(reg);
+        const result = await leaseTokenResult(leaser, reg);
         send(res, result.exitCode === 0 ? 200 : 500, result);
         return;
       }
@@ -1265,61 +1262,6 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   }
 
   /**
-   * Mint a repo-scoped GitHub-App installation token for the box and return it
-   * (in `stdout` as JSON: `{ token, expiresAt, remoteUrl, repo }`). The repo is
-   * resolved from the box's REGISTERED origin URL — never from box-supplied
-   * params — so a box can only ever lease a token for its own repo.
-   */
-  async function leaseTokenAction(reg: BoxRegistration): Promise<GitRpcResult> {
-    if (!leaser) {
-      return {
-        exitCode: 64,
-        stdout: '',
-        stderr: 'git.lease-token: no GitHub App configured on this relay\n',
-      };
-    }
-    const origin = reg.originUrl;
-    if (!origin) {
-      return {
-        exitCode: 64,
-        stdout: '',
-        stderr: `git.lease-token: box ${reg.boxId} has no registered origin URL\n`,
-      };
-    }
-    let owner = '';
-    let repo = '';
-    let slug = '';
-    try {
-      const { path } = parseGitRemote(origin);
-      const [o, r] = path.replace(/\.git$/, '').split('/');
-      owner = o ?? '';
-      repo = r ?? '';
-      slug = repoSlugFromRemote(origin);
-    } catch {
-      return { exitCode: 65, stdout: '', stderr: `git.lease-token: unrecognized origin ${origin}\n` };
-    }
-    if (!owner || !repo) {
-      return { exitCode: 65, stdout: '', stderr: `git.lease-token: cannot derive owner/repo from ${origin}\n` };
-    }
-    try {
-      const leased = await leaser.leaseRepoToken(owner, repo);
-      const payload = {
-        token: leased.token,
-        expiresAt: leased.expiresAt,
-        remoteUrl: toAuthedHttpsUrl(origin, leased.token),
-        repo: slug,
-      };
-      return { exitCode: 0, stdout: JSON.stringify(payload), stderr: '' };
-    } catch (err) {
-      return {
-        exitCode: 1,
-        stdout: '',
-        stderr: `git.lease-token: ${err instanceof Error ? err.message : String(err)}\n`,
-      };
-    }
-  }
-
-  /**
    * Run a host action that has already cleared its approval gate (poll mode:
    * the box reached `/rpc/status` after a `y`). No re-gating here. Extended per
    * method as the hosted plane grows.
@@ -1333,7 +1275,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       return handleGitRpc(reg, method, params as GitRpcParams | undefined);
     }
     if (method === 'git.lease-token') {
-      return leaseTokenAction(reg);
+      return leaseTokenResult(leaser, reg);
     }
     return {
       exitCode: 64,
@@ -1404,23 +1346,6 @@ function sanitizeWorktrees(input: BoxWorktree[] | undefined): BoxWorktree[] | un
     }
   }
   return out;
-}
-
-/**
- * Resolve `params.path` (a path inside the container) to the registered
- * worktree whose hostMainRepo + branch the relay should run git in.
- * `/workspace` maps to the root repo; `/workspace/<sub>` maps to the nested
- * repo when one is registered (longest prefix wins).
- */
-function resolveWorktree(reg: BoxRegistration, containerPath: string): BoxWorktree | null {
-  const trees = reg.worktrees ?? [];
-  if (trees.length === 0) return null;
-  const exact = trees.find((w) => w.containerPath === containerPath);
-  if (exact) return exact;
-  const prefixMatches = trees
-    .filter((w) => containerPath === w.containerPath || containerPath.startsWith(w.containerPath + '/'))
-    .sort((a, b) => b.containerPath.length - a.containerPath.length);
-  return prefixMatches[0] ?? trees.find((w) => w.containerPath === '/workspace') ?? null;
 }
 
 /**

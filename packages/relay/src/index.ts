@@ -45,6 +45,14 @@ export {
   type GateDeps,
   type PromptMode,
 } from './permission.js';
+export { resolveWorktree } from './worktree.js';
+export { leaseTokenResult } from './lease.js';
+export {
+  handleRelayRequest,
+  type ControlPlaneDeps,
+  type GenericRequest,
+  type RelayResponse,
+} from './core/handler.js';
 export {
   PostgresStore,
   type PostgresStoreOptions,

@@ -23,8 +23,10 @@ export type ApprovalGate =
 export interface GateDeps {
   mode: PromptMode;
   store: Store;
-  prompts: PendingPrompts;
-  subscribers: PromptSubscribers;
+  /** Required for block mode (the in-process blocking wait). */
+  prompts?: PendingPrompts;
+  /** Optional: SSE fan-out to an attached human dashboard. Absent on the stateless plane. */
+  subscribers?: PromptSubscribers;
 }
 
 /**
@@ -48,13 +50,28 @@ export async function gateApproval(
 ): Promise<ApprovalGate> {
   if (deps.mode === 'block') {
     // askPrompt handles AGENTBOX_PROMPT=off + autoApprove (with audit) + the
-    // blocking wait, exactly as before.
+    // blocking wait, exactly as before. Block mode requires in-process state.
+    if (!deps.prompts || !deps.subscribers) return { kind: 'deny' };
     const verdict = await askPrompt(deps.prompts, deps.subscribers, boxId, promptParams);
     return verdict.answer === 'y' && !verdict.cancelled ? { kind: 'allow' } : { kind: 'deny' };
   }
-  // poll mode: replicate the no-human fast paths, then park.
+  // poll mode: store-based fast paths (works on the stateless hosted plane, no
+  // in-process registry/prompts), then park a row the box will poll for.
   if (process.env.AGENTBOX_PROMPT === 'off') return { kind: 'allow' };
-  if (deps.prompts.consumeAutoApprove(boxId, promptParams)) return { kind: 'allow' };
+  const box = await deps.store.getBox(boxId);
+  if (box?.autoApproveHostActions) {
+    // Audited bypass — still observable in the event feed.
+    await deps.store.appendEvent({
+      boxId,
+      type: 'host-action-auto-approved',
+      payload: {
+        command: promptParams.context?.command,
+        argv: promptParams.context?.argv,
+        message: promptParams.message,
+      },
+    });
+    return { kind: 'allow' };
+  }
   const promptId = randomUUID();
   const ev: PromptAskEvent = { id: promptId, ...promptParams };
   await deps.store.createPrompt({
@@ -68,6 +85,6 @@ export async function gateApproval(
   });
   // Best-effort SSE for an attached human dashboard (no-op when none / on the
   // stateless plane); the box itself never relies on SSE — it polls /rpc/status.
-  deps.subscribers.broadcast(boxId, 'prompt-ask', ev);
+  deps.subscribers?.broadcast(boxId, 'prompt-ask', ev);
   return { kind: 'pending', promptId };
 }
