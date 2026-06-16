@@ -110,10 +110,26 @@ export { ensureVercelCredentials } from './credentials.js';
 export type { EnsureVercelCredentialsOptions } from './credentials.js';
 export {
   readVercelCredStatus,
+  resolveVercelApiAuth,
   secretsPath,
   maskKey,
   type VercelCredStatus,
 } from './credentials.js';
+export {
+  getProject,
+  createGitProject,
+  deleteProject,
+  patchProjectSettings,
+  upsertProjectEnv,
+  createGitDeployment,
+  getDeployment,
+  getProductionAlias,
+  type VercelProjectFull,
+  type CreateGitProjectInput,
+  type CreateGitDeploymentInput,
+  type DeploymentStatus,
+  type VercelEnvVar,
+} from './vercel-rest.js';
 export {
   prepareVercel,
   prepareVercelProvider,

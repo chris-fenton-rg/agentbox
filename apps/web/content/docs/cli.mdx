@@ -327,6 +327,7 @@ agentbox self-update --dry-run
 # Create the GitHub App, deploy the plane, and point the CLI at it
 agentbox control-plane setup
 agentbox control-plane setup --deploy hetzner   # or vercel | none (non-interactive)
+agentbox control-plane setup --deploy vercel --repo <you>/agentbox --ref main  # deploy your fork
 
 # Authorize the current project's repo on the plane's GitHub App
 agentbox control-plane add
@@ -342,7 +343,7 @@ agentbox control-plane worker --store "$POSTGRES_URL"
 agentbox control-plane worker --store "$POSTGRES_URL" --once
 ```
 
-The optional [control plane](/docs/control-plane) is a hosted service (Next.js + Postgres) that holds the centralized concerns — git-token leasing via a GitHub App, permission state, the box registry/events — so cloud boxes keep pushing and opening PRs with your laptop off. `setup` creates the GitHub App, deploys the plane (Vercel or a Hetzner VPS at `https://<ip>.sslip.io`), and wires `relay.controlPlaneUrl`; `add` authorizes a repo on the App; `set-url` points boxes at an existing deployment; `worker` provisions boxes from the plane's queue.
+The optional [control plane](/docs/control-plane) is a hosted service (Next.js + Postgres) that holds the centralized concerns — git-token leasing via a GitHub App, permission state, the box registry/events — so cloud boxes keep pushing and opening PRs with your laptop off. `setup` creates the GitHub App, deploys the plane **from GitHub** (Vercel or a Hetzner VPS at `https://<ip>.sslip.io`; `--repo`/`--ref` choose the source, default `madarco/agentbox`@`main`), and wires `relay.controlPlaneUrl`; `add` authorizes a repo on the App; `set-url` points boxes at an existing deployment; `worker` provisions boxes from the plane's queue. Vercel needs you to own (or fork) the repo; Hetzner clones it on the VPS so no ownership is needed.
 
 <Callout type="warn" title="HEADS UP">`agentbox queue cancel` only cancels *queued* jobs — a job that's already running is not killed; destroy its box (`agentbox destroy <box>`) to stop it. And `prune --all` removes docker containers, volumes, and snapshots — run `--dry-run` first.</Callout>
 

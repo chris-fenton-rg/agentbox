@@ -30,13 +30,17 @@ It will:
 3. **Point your CLI at it** (`relay.controlPlaneUrl`) and poll `/healthz`.
 4. Open the App's **repo-selection page** so you can authorize the repos your boxes work in.
 
+Both deploy targets build the plane **from GitHub** (`--repo`, default `madarco/agentbox`; `--ref`, default `main`) — so you don't need a monorepo checkout, and a globally-installed CLI can deploy.
+
 ### Vercel
 
-`--deploy vercel` drives the logged-in [`vercel`](https://vercel.com/docs/cli) CLI: it links the project, **auto-provisions Neon Postgres** (`vercel integration add neon`), pushes the App env, and `vercel deploy --prod`. Run it from an agentbox repo checkout (Vercel uploads `apps/control-plane`). Log in first with `vercel login` (or `agentbox vercel login`).
+`--deploy vercel` creates a **Git-connected** Vercel project (repo `--repo`, Root Directory `apps/control-plane`, framework Next.js), **auto-provisions Neon Postgres**, sets the App env, and triggers a production build of `--ref` from GitHub — no local upload. Log in first with `vercel login` (or `agentbox vercel login`).
+
+<Callout type="warn" title="Repo ownership">Vercel only connects a GitHub repo whose **owner** has the Vercel GitHub App installed; it won't clone an arbitrary public repo. So deploy `madarco/agentbox` if you own/maintain it — otherwise **fork** it and pass `--repo <yourfork>/agentbox`.</Callout>
 
 ### Hetzner
 
-`--deploy hetzner` provisions a small VPS (cloud-init installs Docker and clones the public repo), brings up the docker-compose (Postgres + the app + Caddy), and serves it over **HTTPS at `https://<ip>.sslip.io`** — Caddy auto-obtains a Let's Encrypt cert, so there's no DNS to configure. The firewall locks SSH to your egress IP and opens `:80`/`:443`. Needs `agentbox hetzner login`.
+`--deploy hetzner` provisions a small VPS (cloud-init installs Docker and `git clone`s `--repo` at `--ref`), brings up the docker-compose (Postgres + the app + Caddy), and serves it over **HTTPS at `https://<ip>.sslip.io`** — Caddy auto-obtains a Let's Encrypt cert, so there's no DNS to configure. The firewall locks SSH to your egress IP and opens `:80`/`:443`. Needs `agentbox hetzner login`. No repo ownership required (the VPS clones the public repo).
 
 ### Self-host (docker-compose)
 

@@ -189,6 +189,17 @@ The plane is deployed and validated on real infrastructure:
   on `<ip>.sslip.io` + `/healthz`) needs the Dockerfile fix on `origin` first (the
   VPS clones the public repo at `--ref`); validated locally pending that push.
 
+- **Git-backed Vercel deploy live (2026-06-16):** `control-plane setup --deploy vercel` now
+  builds the plane **from GitHub** via the Vercel REST API (no local upload), so it works from
+  a global npm install. Live-validated: created a Git-connected project (`madarco/agentbox`,
+  Root Directory `apps/control-plane`), auto-provisioned Neon, upserted the App env, and a
+  `gitSource` production build of `feat/control-box` went READY at
+  `https://agentbox-control-plane.vercel.app` — `/healthz`, the fail-closed admin gate, and the
+  new `/admin/app/repo-installed` endpoint all answer. **Ownership constraint:** Vercel only
+  connects a repo whose owner has the Vercel GitHub App; non-owners fork + `--repo <fork>`
+  (Hetzner needs no ownership — it clones the public repo on the VPS). Replaced the old
+  local-folder `vercel deploy` (monorepo-only, hit the Root-Directory bug).
+
 ## Security notes
 
 - **Token blast radius:** leased tokens are per-repo, minimal perms

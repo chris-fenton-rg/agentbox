@@ -354,6 +354,28 @@ function resolveCliTeamId(defaultTeamId?: string): string | null {
 }
 
 /**
+ * Resolve a token + teamId for direct Vercel REST API calls (the Git-backed
+ * control-plane deploy), reusing the same sources as the login flow: a
+ * `VERCEL_TOKEN` (env / secrets.env) else the CLI session's live access token;
+ * teamId from `VERCEL_TEAM_ID` / the CLI's selected team / the account default.
+ * Returns null when no token is available (caller tells the user to log in).
+ */
+export async function resolveVercelApiAuth(): Promise<{ token: string; teamId: string | undefined } | null> {
+  ensureVercelEnvLoaded();
+  const token = process.env.VERCEL_TOKEN ?? readCliAuth()?.token;
+  if (!token) return null;
+  let teamId: string | undefined = process.env.VERCEL_TEAM_ID ?? readCliCurrentTeam() ?? undefined;
+  if (!teamId) {
+    try {
+      teamId = (await getUser(token)).defaultTeamId;
+    } catch {
+      /* personal scope / unreachable — proceed without a teamId */
+    }
+  }
+  return { token, teamId };
+}
+
+/**
  * Pick the Vercel project sandboxes run under. Lists the team's projects in a
  * clack select (pre-selecting an existing `agentbox` / sandbox-default project),
  * plus a "create a new project" entry. Returns the project id, or null if the
