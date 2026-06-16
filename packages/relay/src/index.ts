@@ -40,6 +40,12 @@ export { BoxRegistry, EventBuffer } from './registry.js';
 export { type Store } from './store/store.js';
 export { MemoryStore, type MemoryStoreParts } from './store/memory-store.js';
 export {
+  PostgresStore,
+  type PostgresStoreOptions,
+  SCHEMA_SQL,
+} from './store/postgres-store.js';
+export { makeStore } from './store/index.js';
+export {
   askPrompt,
   type AutoApprovePolicy,
   isPromptAnswerBody,

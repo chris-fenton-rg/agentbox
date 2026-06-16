@@ -23,6 +23,10 @@ const externalAtRuntime = [
   '@agentbox/sandbox-daytona',
   '@agentbox/sandbox-cloud',
   '@daytonaio/sdk',
+  // `pg` is only used by the Postgres store on the hosted control plane, loaded
+  // via a lazy dynamic `import('pg')`. Keep it out of both relay bundles (esp.
+  // the self-contained bin.cjs) so the laptop relay never carries it.
+  'pg',
 ];
 
 export default defineConfig([

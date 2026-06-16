@@ -52,6 +52,10 @@ export default defineConfig({
     // constructor (`getCallerDirectory`), which esbuild's `__require` shim
     // throws on under ESM. External + real dep, like daytona/vercel.
     'e2b',
+    // `pg` is referenced only by @agentbox/relay's PostgresStore (hosted
+    // control plane), reached via a lazy `import('pg')` the laptop CLI never
+    // hits. Keep it external + unlisted so the CLI bundle stays pg-free.
+    'pg',
   ],
   noExternal: [/^@agentbox\//],
   banner: {
