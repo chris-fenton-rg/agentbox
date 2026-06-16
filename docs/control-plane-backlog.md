@@ -175,6 +175,19 @@ The plane is deployed and validated on real infrastructure:
 - **Dashboard live:** the token-gated dashboard deployed to the same Vercel plane
   (`/` serves the admin-token form, `/healthz` + `/admin/registry` still answer
   200/401) — the page and the `/[...path]` API route coexist in the serverless env.
+- **Hetzner deploy path live (2026-06-16):** `deployControlPlaneToHetzner` ran end
+  to end against real Hetzner — firewall (`:22` host-only, `:80/:443` open), `cx23`
+  VPS, cloud-init (Docker install + public-repo clone), secret `.env` + Caddy
+  compose overlay scp'd, `docker compose` pulled postgres+caddy and invoked the app
+  build. It exposed a pre-existing **self-host image build bug** (Vercel was
+  unaffected — turbo there built deps in order): the `apps/control-plane/Dockerfile`
+  built the relay before its workspace deps emitted `dist/`. Fixed to build via
+  `turbo run build --filter=@agentbox/control-plane`, and added a root `.dockerignore`
+  (host `node_modules` was being copied in, breaking native-dep arch). A clean-context
+  `docker build` now goes 6/6 turbo tasks + `next build` green. VPS + firewall
+  destroyed after the run. **Caveat:** a full live green (Caddy + Let's Encrypt cert
+  on `<ip>.sslip.io` + `/healthz`) needs the Dockerfile fix on `origin` first (the
+  VPS clones the public repo at `--ref`); validated locally pending that push.
 
 ## Security notes
 
