@@ -257,7 +257,7 @@ async function spawnRelay(
  *   2. legacy workspace: `<repo>/packages/sandbox-docker/dist` ↔ `<repo>/packages/relay/dist/bin.cjs`
  *   3. legacy externalized install: `<...>/node_modules/@agentbox/relay/dist/bin.cjs`
  */
-function resolveRelayBin(): string {
+export function resolveRelayBin(): string {
   const override = process.env.AGENTBOX_RELAY_BIN;
   if (override && existsSync(override)) return override;
   const here = dirname(fileURLToPath(import.meta.url));

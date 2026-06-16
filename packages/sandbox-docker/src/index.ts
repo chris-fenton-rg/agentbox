@@ -172,6 +172,7 @@ export {
   mintHostInitiatedToken,
   registerBoxWithRelay,
   rehydrateRelayRegistry,
+  resolveRelayBin,
   RELAY_CONTAINER_NAME,
   RELAY_IMAGE_REF,
   RELAY_NETWORK_NAME,

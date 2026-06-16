@@ -98,3 +98,12 @@ export {
   type CreateFirewallOptions,
 } from './firewall.js';
 export { withHetznerRetry, isAttemptTimeout, isRetriable } from './retry.js';
+export {
+  provisionControlBox,
+  destroyControlBox,
+  setControlBoxToken,
+  readControlBoxState,
+  type ControlBoxState,
+  type ProvisionControlBoxOptions,
+  type ProvisionResult,
+} from './control-box.js';
