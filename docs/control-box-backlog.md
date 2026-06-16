@@ -1,146 +1,113 @@
-# Control box — build-out status
+# Control plane (control-box v2) — build-out status
 
-Status of the **control-box** feature: an always-on cloud box that runs the host
-relay and holds a GitHub fine-grained PAT, so boxes keep pushing / opening PRs /
-(later) being created when the user's laptop is off. Maintained live during
-implementation (per project convention), not as end-of-PR cleanup.
+Status of the **control plane**: a portable service that holds the centralized
+concerns for boxes — git credentials (GitHub-App token leasing), permission
+state, the box registry/events — so boxes keep pushing / opening PRs while the
+user's laptop is off. Maintained live during implementation (per project
+convention).
 
-Plan: `~/.claude/plans/to-allow-using-agentbox-rustling-comet.md`.
+Plan of record: `~/.claude/plans/design-a-new-approach-synthetic-bee.md`.
 
-## The idea
+## The pivot (vs v1)
 
-Today the host relay (`agentbox-relay serve`) runs on the laptop and performs
-every privileged action a box can't (git push, PR, box creation, cp, checkpoint)
-with host-native credentials. Laptop off ⇒ all of that stops for cloud boxes.
+v1 was a **dedicated control-box**: an always-on Hetzner VPS running the relay
+binary with a long-lived fine-grained PAT. It worked but (1) billed a
+never-sleeping VPS for something mostly idle, and (2) pushed by reaching back
+into the box over the cloud SDK to make + download a git bundle — the part that
+resists a stateless/serverless deployment.
 
-A **control box** is just a `host`-mode relay running on an always-on cloud box,
-reached by other cloud boxes the same way docker boxes already reach the laptop
-relay — via the in-box `box-relay-forwarder`, but pointed at the control box's
-**public HTTPS URL** instead of `host.docker.internal`. The control box has no
-local checkout and no SSH/gh login, so it pushes with a **fine-grained PAT**
-using the existing cloud git-bundle pull-back (materialize a throwaway repo from
-the box's bundle → push to origin over HTTPS).
+v2 is **one portable control plane** — the `@agentbox/relay` core wrapped as a
+single **Next.js + Postgres app** (`apps/control-plane`). The same code deploys
+to **Vercel** (managed) or self-hosts on a **VPS** (Postgres + `next start`, via
+docker-compose). It is stateless per request (all state in Postgres) and does no
+host execution. Git auth is **GitHub-App leasing**: it mints 1-hour, single-repo
+installation tokens and leases them to boxes, which push to GitHub directly — no
+bundle transfer, no SDK reach-back. The dedicated control-box (VPS + PAT) is
+removed. The laptop loopback relay (`agentbox-relay serve`) is unchanged and
+shares the same core.
 
-## Decisions (locked with the user)
-
-- **Host:** provider-agnostic; persistent Vercel/E2B boxes are the natural fit
-  (persistent snapshot + free public HTTPS preview URL). **Open risk:** does an
-  inbound HTTPS request wake a *slept* persistent VM? → Phase 0 PoC.
-- **GitHub auth:** fine-grained PAT, set/refreshed manually via
-  `agentbox control-box set-token` (no refresh-token flow for fine-grained PATs).
-  Stored on the control box (root-only env file), mirrored to
-  `~/.agentbox/secrets.env`.
-- **Phase 1 scope:** (1) git push + PRs, (2) creating new boxes — both laptop-off.
-  Teleport-through-control-box and box→box fork are deferred.
-
-## Comms model
+## Architecture
 
 ```
-cloud box  --(forwarder, https)-->  control-box relay (mode:'host', --control-box)
-   |  /rpc git.push (per-box bearer)        |  executeCloudAction (PAT push)
-   |  /events                               |  /admin/*, /remote/*  (admin bearer)
-laptop CLI --(register-box, admin bearer)--> same relay
+cloud box  --(forwarder, https)-->  control plane (Next.js + Postgres)
+   |  POST /events (per-box bearer)        |  Store (boxes/events/status/prompts)
+   |  POST /rpc git.lease-token            |  GitHub App -> 1h repo-scoped token
+   |  GET  /rpc/status/:id (poll)          |  /admin/* (admin bearer, fail-closed)
+laptop CLI --(register/answer, admin bearer)
+box --(push directly with leased token)--> GitHub
 ```
 
-- `/admin/*` and `/remote/*` are gated on a constant-time **admin-bearer** match
-  (not loopback) in control-box mode — the provider HTTPS proxy can present as
-  loopback, so loopback is NOT trusted. Fails closed without a token.
-- Per-box `/events` + `/rpc` keep their per-box bearers (already 0.0.0.0-safe).
-- TLS terminates at the provider's public HTTPS proxy; the relay stays HTTP.
+- **Store seam** (`packages/relay/src/store/`) — every relay handler talks to an
+  async `Store`. `MemoryStore` (laptop + tests, wraps the historical in-memory
+  structures), `PostgresStore` (hosted plane). `pg` is lazy-imported + bundler-
+  external, so the laptop relay/CLI carry no pg.
+- **Poll-based approvals** (`permission.ts`) — `promptMode` is `block` on the
+  laptop (in-process wait, unchanged) and `poll` on the hosted plane (parks a
+  prompt row; the box polls `/rpc/status/:id`; the approved action runs there).
+- **GitHub-App leasing** (`github-app.ts`, `lease.ts`) — `git.lease-token` gated
+  like push (`agentbox/*` auto, else approval); repo resolved from the box's
+  REGISTERED `originUrl`, never box params. In-box `git push` leases + pushes
+  directly when `AGENTBOX_GIT_LEASE=1` (token in the remote URL for the push
+  only, scrubbed after).
+- **Hosted-plane handler** (`core/handler.ts`) — framework-agnostic
+  `handleRelayRequest(GenericRequest) -> RelayResponse`; the Next.js app
+  (`apps/control-plane`) is a thin Web-Request adapter over it. Rejects
+  host-local RPCs (cp/download/checkpoint/docker git.push) — no host on the plane.
 
 ## Phase status
 
-- [x] **W1 — control-box relay mode.** `RelayServerOptions.controlBox` +
-  `adminToken`; `/admin/*` & `/remote/*` admin-bearer guard (constant-time,
-  fail-closed); `agentbox-relay serve --control-box` reads
-  `AGENTBOX_RELAY_ADMIN_TOKEN`. Laptop relay unchanged (loopback-only, `/remote`
-  hidden). Unit tests: `packages/relay/test/control-box-admin.test.ts`.
-  (W2 box-wiring details moved below, after the pull decision.)
-- [x] **W3 — PAT git push/PR.** `git-pat.ts` (`toAuthedHttpsUrl`,
-  `repoSlugFromRemote`, `pushBundleToRemote`); `runGitRpc`/`runGhPrRpc`
-  control-box variants; `assertGhReady` honors `GH_TOKEN`; server `/rpc` routes
-  cloud-kind boxes through `executeCloudAction`. Unit tests:
-  `packages/relay/test/git-pat.test.ts` (incl. a real local bundle→bare-repo push).
-- [x] **W4 — `agentbox control-box` command + Hetzner provisioning.** Live-validated
-  2026-06-16 on a real `cx23` VPS: Caddy + Let's Encrypt TLS for `<ip>.sslip.io`,
-  relay in `--control-box` mode reachable over public HTTPS, admin endpoints
-  401-without / 200-with the bearer. `create`/`set-token`/`status`/`destroy` in
-  `apps/cli/src/commands/control-box.ts`; provisioning in
-  `packages/sandbox-hetzner/src/control-box.ts`. Secrets (admin token + PAT) in
-  `/etc/agentbox/relay.env` 0600; **no provider tokens** on the box.
-  `relay.controlBoxUrl` persisted to global config; admin token in
-  `~/.agentbox/control-box.json` (0600).
-
-  **DECIDED 2026-06-16 — pull, and the control box is a full agentbox node.**
-  Rationale: W5 (create boxes from the control box) needs provider API tokens + the
-  backend SDKs on the box *anyway*, so "keep the VPS minimal" doesn't apply — the
-  control box holds provider tokens regardless. Therefore git push reuses the
-  existing pull-based `runGitRpc` (control box `backend.exec`/`downloadFile`s the
-  box's bundle), no protocol change. Consequence: the minimal relay-bin-only VPS
-  from W4 must become a **full agentbox install** (relay bin + `@agentbox/sandbox-*`
-  resolvable + provider tokens + its own `~/.agentbox/state.json`). Hetzner per-box
-  SSH keys: boxes *created by* the control box mint their keys on the box (fine);
-  laptop-created Hetzner boxes pushing via the control box is a follow-up.
-
-- [ ] **W4b — upgrade the control box to a full install.** Replace the
-  scp-relay-bin step with installing the agentbox CLI (backends bundled) so the
-  relay resolves `@agentbox/sandbox-*` and `agentbox create` works on the box. Ship
-  provider tokens into `/etc/agentbox/relay.env` + `~/.agentbox/secrets.env` on the
-  box. Approach TBD: `npm pack` the dev build + install the tarball (dev) →
-  `npm i -g @madarco/agentbox` (once published). Verify the relay's `resolveCloudBackend`
-  works on the box.
-- [ ] **W2 — boxes/laptop reach the remote relay (pull wiring).**
-  - [x] `box-relay-forwarder` https + `relay.controlBoxUrl` config key.
-  - [ ] `ENDPOINT`/`ensureRelay` resolvable from `relay.controlBoxUrl`;
-    `registerBoxWithRelay`/`adminPost` parameterized base URL + admin bearer;
-    thread box origin URL into `BoxRegistration`; `daemon.ts` selects the forwarder.
-  - [ ] Sync the box's `BoxRecord` to the control box's `state.json` so
-    `lookupCloudBox` resolves the sandboxId there.
-- [ ] **W5 — create boxes from the control box.** Provider tokens on the box (W4b);
-  `seedCloudWorkspace` origin-clone mode (clone via PAT, strip after); bearer-
-  gated `POST /remote/queue/enqueue` reusing `startQueueLoop` + `runCloudJob`.
-
-> Validation gap: any live git-push test needs a GitHub fine-grained PAT (scoped to
-> the test repo) set via `agentbox control-box set-token`. Not yet provided.
-
-## Phase 0 PoC results
-
-1. **Wake-on-inbound (make-or-break) — ❌ FALSE for Vercel (verified 2026-06-16).**
-   Created a persistent Vercel box, `agentbox stop` it (→ state `paused`), then
-   `curl` its public `*.vercel.run` URL 3×: every request returned **HTTP 502 in
-   ~0.1s** and the box **stayed paused**. An inbound HTTPS request does NOT
-   resume a stopped/paused Vercel box — only an SDK `Sandbox.get({resume:true})`
-   /`backend.start` does. (Matches the documented persistent model.) E2B is
-   expected to behave the same (SDK-only resume).
-
-   **Implication:** a Vercel/E2B box can't be an always-on control box reached by
-   inbound traffic on its own — it dies at the session cap (~45 min Hobby / 5 h
-   Pro) and nothing wakes it from a box's outbound `/rpc`. It would need an
-   **external always-on driver** (e.g. a scheduled GitHub Action / cron service)
-   to periodically SDK-resume it. That's extra moving parts and still depends on
-   something always-on.
-
-   **Decision needed (was Vercel):** either (A) put the control box on **Hetzner**
-   — a real VPS that never sleeps + public IP, no waker needed (only adds a TLS
-   terminator, e.g. Caddy); or (B) keep Vercel/E2B and add the external keep-alive
-   driver. Leaning **(A) Hetzner** now that the wake assumption is disproven.
-2. **PAT push from a no-checkout host — ✅ validated (unit).**
-   `pushBundleToRemote` + `toAuthedHttpsUrl` push a real bundle to a local bare
-   repo in `git-pat.test.ts`. Live GitHub round-trip still TODO once a control box
-   exists.
-3. **Control-box relay over public HTTPS — ✅ partially validated.** The built
-   relay bin runs in `--control-box` mode and enforces admin-bearer auth over a
-   live listener (healthz 200, admin 401/401/200, `/remote` gated). Full
-   box→control-box→GitHub round trip needs W2 wiring + a real control box.
+- [x] **Phase 0 — Store seam (MemoryStore).** Async `Store` over boxes/events/
+  status; handlers route through it; zero behavior change. Conformance suite.
+- [x] **Phase 1 — PostgresStore.** `pg` (lazy + external), `makeStore()`,
+  `migrate()`; conformance green vs live `postgres:16`. Laptop/CLI verified pg-free.
+- [x] **Phase 2 — Poll-based approvals.** Prompt mailbox in both stores;
+  `promptMode`; `202 {promptId}` + `GET /rpc/status/:id`; ctl polls transparently.
+- [x] **Phase 3 — GitHub-App leasing + remove dedicated control-box.**
+  `github-app.ts`, `git.lease-token`, in-box lease/push; deleted the
+  `agentbox control-box` command + `sandbox-hetzner/control-box.ts`. The relay's
+  `--control-box` admin-bearer mode + `relay.controlBoxUrl` key stay.
+- [x] **Phase 4 — Control-plane Next.js app (`apps/control-plane`).**
+  `handleRelayRequest` core + lean `@agentbox/relay/control-plane` entry;
+  catch-all route handler; PostgresStore + App leaser from env; docker-compose +
+  Dockerfile + README + Vercel notes. Verified: `next build`, live HTTP smoke vs
+  postgres:16 (fail-closed admin gate, register/events persisted, agentbox/*
+  lease, host-local -> 501).
+- [ ] **Phase 4b — Federated laptop relay (RemoteStore).** A `RemoteStore`
+  HTTP-client so a laptop relay backs its state with the hosted plane (one
+  cross-machine view) while still executing host-local actions locally; gate the
+  "point boxes at the hosted URL" bypass to CLOUD boxes only; retarget the admin
+  CLI base URL. NOTE: needs a generic store-sync admin API on the plane (the
+  current `/admin/*` is a curated set, not full Store CRUD) — design that first.
+- [ ] **Phase 5 — Box creation from the plane.** Bearer-gated `POST /remote/boxes`
+  (currently 501) -> durable worker (Vercel Cron/WDK; self-host worker) +
+  origin-clone workspace seeding (clone via a leased token, no host bundle).
+- [ ] **Phase 6 — Dashboard pages + remaining docs.** App-Router dashboard over
+  the Postgres Store; finish docs sync (`host-relay.md`, `cloud-providers.md`,
+  public `apps/web/content/docs/`).
 
 ## Security notes
 
-- Admin/remote endpoints: constant-time bearer, fail-closed, never loopback-open
-  when `--control-box`.
-- PAT blast radius is broader than per-box SSH (any repo in scope, any served
-  box). Keep it fine-grained + short-lived; keep the `askPrompt` /
-  host-initiated-token gates for non-`agentbox/` branches; unattended pushes to
-  arbitrary branches need an explicit opt-in (`AGENTBOX_GIT_PUSH_NO_SUB=allow`
-  or per-box `autoApproveHostActions`).
-- PAT + provider tokens live in a root-only on-box env file, never baked into a
-  snapshot. The push token lives in a throwaway temp remote URL, not in argv.
+- **Token blast radius:** leased tokens are per-repo, minimal perms
+  (`contents`+`pull_requests` write), 1h, never persisted (in-memory cache only).
+  Compromise of one box yields at most a 1h single-repo token; the plane holds
+  only the App private key.
+- **Repo-scope != branch-scope:** an installation token can write any branch in
+  the repo. The lease gate auto-allows only `agentbox/*` (decided with the user);
+  any other branch needs approval. Branch protection on protected branches is the
+  real backstop.
+- **Lease gate == push gate**, and the repo is always re-derived from the
+  registered origin, never box params.
+- **Admin auth:** the hosted plane gates `/admin/*` + `/remote/*` on a
+  constant-time admin-bearer, fail-closed (never loopback).
+
+## Verify
+
+- Unit: `pnpm --filter @agentbox/relay test` (Memory conformance, poll-prompt,
+  github-app, control-plane-handler). Postgres conformance:
+  `AGENTBOX_TEST_DATABASE_URL=... pnpm --filter @agentbox/relay test postgres-store`
+  against a disposable `postgres:16`.
+- Self-host: `apps/control-plane` -> `docker compose up --build` (or `next start`)
+  with `POSTGRES_URL` + `AGENTBOX_RELAY_ADMIN_TOKEN`; `curl /healthz`, admin
+  401/200, register a box, `git.lease-token`.
+- Live App round-trip (pending a real GitHub App on a test repo): register a
+  cloud box, push on `agentbox/*`, confirm via `git ls-remote`.
