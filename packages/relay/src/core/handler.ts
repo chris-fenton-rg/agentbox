@@ -52,6 +52,13 @@ export interface ControlPlaneDeps {
   leaser: GitHubAppLeaser | null;
   /** Admin bearer gating `/admin/*` + `/remote/*`. Required (fail-closed). */
   adminToken: string;
+  /**
+   * Providers this plane can CREATE boxes on (gates `POST /remote/boxes`).
+   * `undefined`/empty → all providers allowed. A serverless plane (Vercel, no
+   * worker) sets this to the SDK-native set so it cleanly refuses providers
+   * whose `create()` needs host execution (e.g. hetzner).
+   */
+  createProviders?: string[];
   log?: (line: string) => void;
 }
 
@@ -283,6 +290,13 @@ export async function handleRelayRequest(
     const body = parseJson<CreateJobRequest>(req.bodyText);
     if (!body || typeof body.repoUrl !== 'string' || typeof body.provider !== 'string') {
       return err(400, 'expected {repoUrl, provider, branch?, name?, agent?, prompt?}');
+    }
+    const allowed = deps.createProviders;
+    if (allowed && allowed.length > 0 && !allowed.includes(body.provider)) {
+      return err(
+        400,
+        `provider '${body.provider}' is not supported by this control plane (allowed: ${allowed.join(', ')})`,
+      );
     }
     const id = randomUUID();
     await store.enqueueCreateJob({

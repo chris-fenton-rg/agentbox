@@ -203,4 +203,32 @@ describe('hosted control-plane handler', () => {
     expect(good.status).toBe(202);
     expect(typeof (good.body as { jobId: string }).jobId).toBe('string');
   });
+
+  it('createProviders gates which providers a plane can create', async () => {
+    const store = new MemoryStore();
+    const gated: ControlPlaneDeps = {
+      store,
+      leaser: null,
+      adminToken: ADMIN,
+      createProviders: ['e2b', 'vercel', 'daytona'],
+    };
+    const refused = await handleRelayRequest(
+      req('POST', '/remote/boxes', {
+        bearer: ADMIN,
+        body: { repoUrl: 'https://github.com/acme/widgets.git', provider: 'hetzner' },
+      }),
+      gated,
+    );
+    expect(refused.status).toBe(400);
+    expect((refused.body as { error: string }).error).toMatch(/not supported by this control plane/);
+
+    const allowed = await handleRelayRequest(
+      req('POST', '/remote/boxes', {
+        bearer: ADMIN,
+        body: { repoUrl: 'https://github.com/acme/widgets.git', provider: 'e2b' },
+      }),
+      gated,
+    );
+    expect(allowed.status).toBe(202);
+  });
 });

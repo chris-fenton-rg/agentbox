@@ -23,10 +23,18 @@ function buildDeps(): Promise<ControlPlaneDeps> {
   const store = new PostgresStore({ connectionString: url });
   const appCfg = loadGitHubAppConfig();
   const leaser = appCfg ? new GitHubAppLeaser(appCfg) : null;
+  // Which providers this plane can create boxes on. A serverless (Vercel) plane
+  // sets this to the SDK-native set (no host execution) so it refuses hetzner;
+  // a self-host plane with a worker leaves it unset (= all providers).
+  const createProviders = (process.env.AGENTBOX_PLANE_PROVIDERS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
   return store.migrate().then(() => ({
     store,
     leaser,
     adminToken,
+    createProviders: createProviders.length > 0 ? createProviders : undefined,
     log: (line: string) => console.log(`[control-plane] ${line}`),
   }));
 }

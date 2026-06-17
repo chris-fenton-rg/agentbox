@@ -425,10 +425,10 @@ precedence over `box.defaultCheckpoint` for Hetzner boxes. Set via
 
 ### 3.5 DinD inside the VPS
 
-Reuses the unchanged `launchCloudDockerdDaemon` scaffolding — the
-install script bakes `/usr/local/bin/agentbox-dockerd-start` (the same
-script the docker provider ships), and `createCloudProvider.create()`
-auto-launches it via `backend.exec` at provision + resume time.
+The install script bakes `/usr/local/bin/agentbox-dockerd-start` (the same
+script the docker provider ships), and the in-box bootstrap
+(`agentbox-ctl bootstrap`, kicked by `createCloudProvider.create()` /
+`reEnsureCloudBox()` at provision + resume) launches it before the ctl daemon.
 `docker run --rm hello-world` works inside the box without any
 hetzner-specific code (verified live in Phase-7 smoke).
 

@@ -6,8 +6,7 @@ export {
   renderInnerCommand,
   type CreateCloudProviderOptions,
 } from './cloud-provider.js';
-export { launchCloudCtlDaemon, type LaunchCloudCtlArgs } from './ctl-launch.js';
-export { launchCloudDockerdDaemon, type CloudDockerdLaunchResult } from './dockerd-launch.js';
+export { kickCloudBootstrap, type KickCloudBootstrapArgs } from './bootstrap-launch.js';
 export {
   seedCloudWorkspace,
   type SeedCloudWorkspaceArgs,

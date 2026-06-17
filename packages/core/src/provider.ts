@@ -131,6 +131,16 @@ export interface CreateBoxRequest {
    * now (Phase 2).
    */
   resyncOnStart?: boolean;
+  /**
+   * Seed /workspace by cloning inside the box instead of host-seeding. When set,
+   * cloud providers skip the host-side `seedCloudWorkspace` and the in-box
+   * bootstrap clones `authedUrl` (a leased, token-bearing URL) into /workspace,
+   * then resets origin to `originUrl` (scrubbing the token). Used by the plane /
+   * cloud-IDE create path, which has no host checkout to seed from; the laptop
+   * path omits this and host-seeds (carrying local uncommitted state). Cloud
+   * only — the docker provider bind-mounts the host `.git` and never clones.
+   */
+  inBoxClone?: { authedUrl: string; originUrl: string; branch?: string };
   /** Provider-specific knobs (docker: sharedCache/portless; daytona: resources/region). */
   providerOptions?: Record<string, unknown>;
   onLog?: (line: string) => void;

@@ -73,10 +73,8 @@ import { uploadEnvFiles } from './env-files.js';
 import { uploadCarryPaths } from './carry.js';
 import { readExposedServicePorts } from './expose-ports.js';
 import { downloadFromCloudBox, pullCloudDirContents, uploadToCloudBox } from './cloud-cp.js';
-import { launchCloudCtlDaemon } from './ctl-launch.js';
-import { launchCloudDockerdDaemon } from './dockerd-launch.js';
+import { kickCloudBootstrap } from './bootstrap-launch.js';
 import { quoteShellArgv } from './shell.js';
-import { launchCloudVncDaemon } from './vnc-launch.js';
 import { seedCloudWorkspace } from './workspace-seed.js';
 
 /** Workspace mount path inside every cloud sandbox. Matches the Docker model. */
@@ -407,23 +405,15 @@ export function createCloudProvider(
       },
     };
     await recordBox(next);
-    // Re-launch in-box dockerd — it dies with the sandbox. Done BEFORE the ctl
-    // supervisor (mirrors the docker provider's startBox) so a docker-based
-    // agentbox.yaml service doesn't race a not-yet-ready socket on resume.
-    // launchCloudDockerdDaemon blocks until ready. Best-effort. Skipped for
-    // backends that can't run nested containers (vercel).
-    if (opts.launchDockerd !== false) {
-      try {
-        const dockerd = await launchCloudDockerdDaemon({ backend, handle: h, timeoutMs: 60_000 });
-        if (!dockerd.up) {
-          // swallowed; surface only on follow-up `docker info`
-        }
-      } catch {
-        // best-effort
-      }
-    }
-    // Re-launch the ctl daemon — it dies with the sandbox.
-    await launchCloudCtlDaemon({
+    // Re-run the single in-box bootstrap — daemons die with the sandbox on
+    // stop/start. It's idempotent: it relaunches only what's dead (so Vercel's
+    // persistent snapshots, which keep daemons alive across resume, don't get
+    // duplicates). dockerd is started before the supervisor inside the bootstrap
+    // so a docker-based service doesn't race a not-yet-ready socket. No clone on
+    // resume — /workspace already exists. dockerd/VNC are best-effort inside the
+    // bootstrap; a dead ctl daemon throws and fails start (matching the previous
+    // behavior, where the ctl relaunch was the one un-caught step).
+    await kickCloudBootstrap({
       backend,
       handle: h,
       boxId: box.id,
@@ -432,18 +422,9 @@ export function createCloudProvider(
       relayToken: box.relayToken ?? '',
       bridgeToken: box.cloud?.bridgeToken,
       webProxyPort: backend.webProxyPort,
+      launchDockerd: opts.launchDockerd !== false,
+      vncPassword: box.vncEnabled ? box.vncPassword : undefined,
     });
-    // Re-launch the VNC stack — Xvnc + websockify die with the sandbox.
-    // Best-effort: a failure here shouldn't block start; `agentbox screen`
-    // surfaces the missing daemon with a clear error.
-    if (box.vncEnabled && box.vncPassword) {
-      try {
-        await launchCloudVncDaemon({ backend, handle: h, vncPassword: box.vncPassword });
-      } catch {
-        // swallowed; user-visible error comes from `agentbox screen` if it
-        // can't reach websockify after a few retries.
-      }
-    }
     // Re-register with the host relay so its CloudBoxPoller picks up the
     // fresh preview URL/token.
     if (relayPreview && box.relayToken && box.cloud?.bridgeToken) {
@@ -622,12 +603,28 @@ export function createCloudProvider(
         }
       }
 
+      // Optional in-box clone: when the caller passes a leased, token-bearing
+      // URL (the plane / cloud-IDE path), the box clones /workspace itself at
+      // bootstrap instead of the host seeding it. The laptop path omits this and
+      // host-seeds below (carrying local uncommitted state).
+      const inBoxClone = req.inBoxClone
+        ? {
+            authedUrl: req.inBoxClone.authedUrl,
+            originUrl: req.inBoxClone.originUrl,
+            branch: req.inBoxClone.branch,
+            depth: req.bundleDepth,
+          }
+        : undefined;
+
       try {
         if (snapshotName) {
           // Snapshot already carries /workspace (captured by the source box's
           // `agentbox checkpoint create`). Re-seeding would clobber the
           // user's setup state. Match Docker's `applyCheckpointRef` behavior.
           log('skipping workspace seed — snapshot already contains /workspace');
+        } else if (inBoxClone) {
+          // The box clones itself at bootstrap; no host-side seed.
+          log('skipping host workspace seed — box will clone in-box at bootstrap');
         } else {
           await seedCloudWorkspace({
             backend,
@@ -751,31 +748,21 @@ export function createCloudProvider(
           }
         }
 
-        // Always-on in-box dockerd, matching the Docker provider
-        // (packages/sandbox-docker/src/create.ts). Launched (and awaited ready)
-        // BEFORE the ctl supervisor: the supervisor starts agentbox.yaml
-        // services as soon as it's up, so a docker-based service must not race a
-        // not-yet-ready socket. The image already bakes
-        // /usr/local/bin/agentbox-dockerd-start; Daytona sandboxes ship with
-        // CAP_SYS_ADMIN so it starts cleanly. Best-effort — a slow or failed
-        // start shouldn't fail create; `agentbox start` re-launches it on
-        // resume because dockerd dies with the sandbox. Skipped for backends
-        // that can't run nested containers (vercel), which set launchDockerd:false.
-        if (opts.launchDockerd !== false) {
-          log('launching in-box dockerd');
-          try {
-            const dockerd = await launchCloudDockerdDaemon({ backend, handle, timeoutMs: 60_000 });
-            if (!dockerd.up)
-              log(`dockerd did not become ready (continuing): ${dockerd.reason ?? 'unknown'}`);
-          } catch (err) {
-            log(
-              `dockerd daemon launch failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
-            );
-          }
-        }
+        // Per-box VNC password (default-on, matching Docker). Threaded into the
+        // bootstrap below; reused later for the record + preview URLs.
+        const vncEnabled = req.vnc?.enabled !== false;
+        const vncPassword = vncEnabled ? generateVncPassword() : undefined;
 
-        log('launching agentbox-ctl daemon');
-        await launchCloudCtlDaemon({
+        // Hand off to the single in-box bootstrap: it (optionally) clones the
+        // workspace, then launches dockerd → the ctl supervisor → VNC, each only
+        // if not already live. One exec replaces the three previous host-driven
+        // launches; the same kick serves resume (idempotent). dockerd is started
+        // before the supervisor (inside the bootstrap) so a docker-based
+        // agentbox.yaml service doesn't race a not-yet-ready socket. dockerd/VNC
+        // are best-effort there; only a failed ctl daemon throws. Vercel sets
+        // launchDockerd:false (no nested containers).
+        log('running in-box bootstrap (clone? + dockerd + ctl + vnc)');
+        await kickCloudBootstrap({
           backend,
           handle,
           boxId: id,
@@ -784,24 +771,11 @@ export function createCloudProvider(
           relayToken,
           bridgeToken,
           webProxyPort: backend.webProxyPort,
+          launchDockerd: opts.launchDockerd !== false,
+          vncPassword,
+          clone: inBoxClone,
+          onLog: log,
         });
-
-        // Mint the per-box VNC password and start the in-sandbox VNC stack
-        // when VNC is opted in (default-on, matching Docker). Best-effort —
-        // a failure logs but doesn't fail create; `agentbox screen` will
-        // surface "daemon may not be up" if the URL stays 502.
-        const vncEnabled = req.vnc?.enabled !== false;
-        const vncPassword = vncEnabled ? generateVncPassword() : undefined;
-        if (vncEnabled && vncPassword) {
-          log('launching VNC stack (Xvnc + websockify + noVNC)');
-          try {
-            await launchCloudVncDaemon({ backend, handle, vncPassword });
-          } catch (err) {
-            log(
-              `VNC daemon launch failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
-            );
-          }
-        }
 
         // The box's "web" port: the in-box WebProxy port the provider exposes.
         // Defaults to 80; Vercel uses 8080 (it can't expose privileged ports).
