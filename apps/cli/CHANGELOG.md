@@ -9,6 +9,23 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.17.1] - 2026-06-17
+
+### Fixed
+
+- **The CLI no longer crashes on startup with `ERR_REQUIRE_ESM` on Node
+  20.10–20.18.** Every `agentbox` command (not just the `e2b` ones) failed to
+  start on Node versions before 20.19, because the bundled E2B SDK loaded an
+  ESM-only build of `chalk` that older Node can't `require()`. E2B's `chalk` is
+  now pinned to a CommonJS build, so the CLI loads on every supported Node
+  (>=20.10).
+- **`agentbox vercel login` (Sign in with Vercel) no longer dead-ends after a
+  successful sign-in.** Recent Vercel sandbox CLIs stopped writing the team id
+  to their config, so the login harvest reported "no credentials were found in
+  the Vercel CLI store" even though a valid token was present. Login now
+  resolves the team from `VERCEL_TEAM_ID`, the CLI config, or your account's
+  default team.
+
 ## [0.17.0] - 2026-06-15
 
 ### Added
