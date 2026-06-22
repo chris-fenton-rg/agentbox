@@ -22,16 +22,28 @@ function entry(p: Partial<KeepaliveScanEntry> & { boxId: string }): KeepaliveSca
 }
 
 describe('selectBoxesToRenew', () => {
-  it('renews an active box, anchoring the target at lastActivity + window', () => {
+  it('renews an active box, anchoring the target at now + window', () => {
     const out = selectBoxesToRenew([entry({ boxId: 'a', lastActivityMs: NOW })], WINDOW, NOW);
     expect(out).toEqual([
       { boxId: 'a', backend: 'vercel', targetDeadlineEpochMs: NOW + WINDOW },
     ]);
   });
 
-  it('renews an idle box still within the window', () => {
+  it('renews an active box even when updatedAt is very stale (now + window, not stale + window)', () => {
+    // The in-box status reporter freezes updatedAt during a long single
+    // `working` op; the target must still anchor on `now` so the box isn't
+    // killed mid-work. (Regression for the high-sev bugbot finding.)
+    const e = entry({ boxId: 'a', agentState: 'active', lastActivityMs: NOW - 100 * 60_000 });
+    expect(selectBoxesToRenew([e], WINDOW, NOW)).toEqual([
+      { boxId: 'a', backend: 'vercel', targetDeadlineEpochMs: NOW + WINDOW },
+    ]);
+  });
+
+  it('renews an idle box still within the window, anchored at lastActivity + window', () => {
     const e = entry({ boxId: 'a', agentState: 'idle', lastActivityMs: NOW - WINDOW + 1 });
-    expect(selectBoxesToRenew([e], WINDOW, NOW)).toHaveLength(1);
+    expect(selectBoxesToRenew([e], WINDOW, NOW)).toEqual([
+      { boxId: 'a', backend: 'vercel', targetDeadlineEpochMs: NOW - WINDOW + 1 + WINDOW },
+    ]);
   });
 
   it('skips an idle box past the window (it lapses)', () => {
@@ -48,10 +60,10 @@ describe('selectBoxesToRenew', () => {
     ).toEqual([]);
   });
 
-  it('recomputes the target from lastActivity, not now (restart-robust)', () => {
-    const e = entry({ boxId: 'a', lastActivityMs: NOW });
+  it('idle target is now-independent (restart-robust)', () => {
+    const e = entry({ boxId: 'a', agentState: 'idle', lastActivityMs: NOW - 60_000 });
     const a = selectBoxesToRenew([e], WINDOW, NOW);
-    const b = selectBoxesToRenew([e], WINDOW, NOW + 999_999);
+    const b = selectBoxesToRenew([e], WINDOW, NOW + 30_000);
     expect(a[0]!.targetDeadlineEpochMs).toBe(b[0]!.targetDeadlineEpochMs);
   });
 });

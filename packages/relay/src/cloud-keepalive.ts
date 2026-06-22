@@ -62,15 +62,22 @@ export interface RenewDecision {
 
 /**
  * Pure selection: given each cloud box's activity facts, the window, and the
- * clock, return the boxes to renew with their target death-time. A box is
- * renewed while its agent is active, or while it has been idle for LESS than
- * the window (so a just-idle box keeps living a little, then lapses — the
- * "death = lastActivity + window" anchor the user asked for). Boxes with no
- * activity signal are skipped (let the create-time timeout govern); a wedged
- * agent (error/unknown) is never kept alive.
+ * clock, return the boxes to renew with their target death-time.
  *
- * The target is recomputed purely from `lastActivityMs + windowMs` every tick,
- * so it's deterministic and survives a relay restart (no persisted state).
+ *   - active agent  -> keep alive a full window from NOW (`now + windowMs`).
+ *   - idle, < window since it went idle -> lapse `window` after it went idle
+ *     (`lastActivityMs + windowMs`, where `lastActivityMs` is the fresh
+ *     working->idle transition time).
+ *   - idle >= window, or no activity signal, or a wedged agent (error/unknown)
+ *     -> skip (let the box lapse / let the create-time timeout govern).
+ *
+ * The active case anchors on `now`, NOT on `lastActivityMs`: the in-box status
+ * reporter bumps `updatedAt` on state changes (per-tool-call), not during a
+ * long single `working` operation (a 30-min test run), so a stale `updatedAt`
+ * would freeze the target below the tracked deadline and the box would be
+ * killed mid-work — the exact failure this feature exists to prevent. Anchoring
+ * the active case on `now` keeps a working box alive regardless of `updatedAt`
+ * staleness; the idle case stays `now`-independent so an idle box still lapses.
  */
 export function selectBoxesToRenew(
   entries: KeepaliveScanEntry[],
@@ -80,13 +87,14 @@ export function selectBoxesToRenew(
   const out: RenewDecision[] = [];
   for (const e of entries) {
     if (e.lastActivityMs == null || e.agentState == null) continue;
-    const withinWindow = now - e.lastActivityMs < windowMs;
-    if (e.agentState === 'active' || (e.agentState === 'idle' && withinWindow)) {
-      out.push({
-        boxId: e.boxId,
-        backend: e.backend,
-        targetDeadlineEpochMs: e.lastActivityMs + windowMs,
-      });
+    let target: number | null = null;
+    if (e.agentState === 'active') {
+      target = now + windowMs;
+    } else if (e.agentState === 'idle' && now - e.lastActivityMs < windowMs) {
+      target = e.lastActivityMs + windowMs;
+    }
+    if (target != null) {
+      out.push({ boxId: e.boxId, backend: e.backend, targetDeadlineEpochMs: target });
     }
   }
   return out;

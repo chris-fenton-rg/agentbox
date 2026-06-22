@@ -82,7 +82,7 @@ agentbox vercel claude
 | SSH | none — attach uses the Vercel CLI PTY |
 
 <Callout title="SESSION KEEPALIVE">
-While the in-box agent is actively working, the host relay automatically renews the box's session timeout (anchored at the agent's last activity + the [`autopause.idleMinutes`](/docs/configuration) window), so a long Claude/Codex run isn't killed mid-work. An idle box stops being renewed and lapses normally. The renewal is bounded by your Vercel plan's max session (Hobby ~45 min hard cap; Pro+ ~5 hr) — it mainly helps Pro+ plans run past the conservative 45-min default.
+While the in-box agent is actively working, the host relay automatically renews the box's session timeout (keeping it a rolling [`autopause.idleMinutes`](/docs/configuration) window ahead of now), so a long Claude/Codex run isn't killed mid-work. Once the agent goes idle the box stops being renewed and lapses about one window later. The renewal is bounded by your Vercel plan's max session (Hobby ~45 min hard cap; Pro+ ~5 hr) — it mainly helps Pro+ plans run past the conservative 45-min default.
 </Callout>
 
 <Callout title="IN-BOX DOCKER">

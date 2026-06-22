@@ -499,9 +499,11 @@ the shape in brief:
   per vCPU, 45 min (Hobby) / 5 hr (Pro+) sessions.
 - **Session keepalive.** The host relay (`cloud-keepalive` loop, sibling to
   auto-pause) renews a running box's session timeout while its in-box agent is
-  active, anchoring the death-time at `lastActivity + autopause.idleMinutes` so a
-  long agent run isn't killed mid-work; an idle box lapses. Bounded by the plan's
-  max session (the renewal mainly benefits Pro+). Same mechanism on E2B. Uses
+  active — holding the death-time a rolling `autopause.idleMinutes` window ahead
+  of now so a long agent run isn't killed mid-work; once idle the box stops being
+  renewed and lapses ~one window later. The active case anchors on `now` (not the
+  agent's `updatedAt`, which freezes during a long single `working` op). Bounded
+  by the plan's max session (mainly benefits Pro+). Same mechanism on E2B. Uses
   `CloudBackend.renewTimeout` (vercel `extendTimeout`, e2b `setTimeout`).
 
 ## 3c. The E2B shape
