@@ -10,6 +10,7 @@ import { renderEndpointLines } from '../endpoints-render.js';
 import { fmtBytes } from '../fmt.js';
 import { providerForBox } from '../provider/registry.js';
 import { watchRender } from '../watch.js';
+import { fetchLive, renderLiveSections, renderPersistedSections } from './_status-render.js';
 import { handleLifecycleError } from './_errors.js';
 
 export interface InspectRunOptions {
@@ -63,6 +64,16 @@ async function renderText(i: InspectedBox): Promise<string> {
     `host export   ${i.hostPaths.mergedExport}  (run \`agentbox open\` to refresh)`,
     `created       ${i.record.createdAt}`,
   ];
+
+  // Append the same service/task/port detail plain `status` shows: live from the
+  // in-box daemon when running, else the persisted snapshot.
+  const live = await fetchLive(i.state, i.record.container);
+  if (live) {
+    lines.push('', ...renderLiveSections(live));
+  } else if (i.persistedStatus) {
+    lines.push('', `(persisted snapshot from ${i.persistedStatus.timestamp})`, '');
+    lines.push(...renderPersistedSections(i.persistedStatus));
+  }
   return lines.join('\n');
 }
 
@@ -165,6 +176,13 @@ async function renderCloudText(box: BoxRecord): Promise<string> {
     `persisted     ${persisted ? `${persisted.timestamp} (${String(persisted.services.length)} svc, ${String(persisted.tasks.length)} tasks, ${String(persisted.ports.length)} ports)` : '(none)'}`,
     `created       ${box.createdAt}`,
   ];
+
+  // Cloud boxes have no host container to `docker exec` into, so the persisted
+  // snapshot (mirrored by the host poller) is the only source for task/service
+  // detail. Surface it instead of just the count line above.
+  if (persisted) {
+    lines.push('', ...renderPersistedSections(persisted));
+  }
   return lines.join('\n');
 }
 
