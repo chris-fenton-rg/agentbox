@@ -39,6 +39,7 @@ import {
   trustWorkspace,
 } from './claude-hooks-filter.js';
 import { CREDENTIALS_BACKUP_FILE } from './claude-credentials.js';
+import { sanitizeCodexConfigForBox } from './codex-config.js';
 
 export interface StageResult {
   /** Absolute path to the .tar.gz, or null when there was nothing to stage. */
@@ -492,6 +493,22 @@ const CODEX_KEYCHAIN_WARNING =
  * sandbox FS alike. Broken symlinks would abort rsync under `-L`, so pre-scan
  * and skip them.
  */
+/**
+ * Best-effort, in-place sanitize of a staged `config.toml`: drops host-only-path
+ * `mcp_servers` / `notify` / local marketplaces via {@link
+ * sanitizeCodexConfigForBox}. A missing file, a parse failure, or any IO error
+ * leaves the file untouched — staging must never fail on config sanitization.
+ */
+async function sanitizeStagedCodexConfig(configPath: string, hostHome: string): Promise<void> {
+  try {
+    if (!(await pathExists(configPath))) return;
+    const { text, changed } = sanitizeCodexConfigForBox(await readFile(configPath, 'utf8'), hostHome);
+    if (changed) await writeFile(configPath, text);
+  } catch {
+    // leave the rsynced copy as-is
+  }
+}
+
 export async function stageCodexStaticForUpload(
   opts: StageCodexOptions = {},
 ): Promise<StageResult> {
@@ -512,6 +529,11 @@ export async function stageCodexStaticForUpload(
       `${hostCodex}/`,
       `${stageDir}/`,
     ]);
+    // Strip host-only-path entries (desktop-Codex.app MCP servers like
+    // node_repl, a macOS notify helper, local-source marketplaces) from the
+    // staged config.toml so the in-box codex doesn't try to exec macOS paths.
+    // Best-effort: a parse failure leaves the rsynced copy intact.
+    await sanitizeStagedCodexConfig(join(stageDir, 'config.toml'), hostHome);
     tarballPath = await tarballFromDir(stageDir, 'codex-static');
     return {
       tarballPath,

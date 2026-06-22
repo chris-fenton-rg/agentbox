@@ -147,7 +147,10 @@ function isUnder(parent: string, child: string): boolean {
  * Crosses into subdirs; doesn't follow symlinks (the whole point is to test
  * them rather than traverse them).
  */
-async function findUnsyncableSymlinks(root: string, reachableRoots: string[]): Promise<string[]> {
+export async function findUnsyncableSymlinks(
+  root: string,
+  reachableRoots: string[],
+): Promise<string[]> {
   // realpath the reachable roots so a symlinked ancestor (e.g. macOS
   // /var -> /private/var) doesn't make a containment check spuriously fail.
   const reachable = await Promise.all(

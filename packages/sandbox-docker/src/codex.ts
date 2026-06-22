@@ -1,9 +1,10 @@
 import { spawnSync } from 'node:child_process';
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
-import { buildTmuxSessionArgs, CONTAINER_USER } from './claude.js';
+import { buildTmuxSessionArgs, CONTAINER_USER, findUnsyncableSymlinks } from './claude.js';
+import { sanitizeCodexConfigForBox, MINIMAL_TRUSTED_CODEX_CONFIG } from './codex-config.js';
 import { ensureVolume, volumeExists } from './docker.js';
 
 /**
@@ -113,7 +114,20 @@ export async function ensureCodexVolume(
   const hostCodex = join(homedir(), '.codex');
   const willSync = opts.syncFromHost && (await pathExists(hostCodex));
   if (willSync) {
-    await execa('docker', [
+    // Codex's user-skills convention mirrors claude's: ~/.codex/skills/<name>
+    // is a RELATIVE symlink to ../../.agents/skills/<name>. Bind-mount the
+    // host's ~/.agents at /.agents so `--copy-unsafe-links` dereferences each
+    // into a real directory in the volume; without this the box gets dangling
+    // symlinks and codex silently drops those skills. Symlinks that are broken
+    // or point outside the mounted trees are `--exclude`d so the sync can't
+    // abort with "symlink has no referent".
+    const hostAgents = join(homedir(), '.agents');
+    const hasAgents = await pathExists(hostAgents);
+    const reachableRoots = hasAgents ? [hostCodex, hostAgents] : [hostCodex];
+    const unsyncable = await findUnsyncableSymlinks(hostCodex, reachableRoots);
+    const symlinkExcludes = unsyncable.map((rel) => ` --exclude=/${rel}`).join('');
+
+    const args = [
       'run',
       '--rm',
       '--user',
@@ -122,9 +136,14 @@ export async function ensureCodexVolume(
       `${spec.volume}:/dst`,
       '-v',
       `${hostCodex}:/src:ro`,
+    ];
+    if (hasAgents) args.push('-v', `${hostAgents}:/.agents:ro`);
+    args.push(
       opts.image,
       'sh',
       '-c',
+      // --copy-unsafe-links: dereference skills symlinks (-> ~/.agents) into real
+      //   dirs (see above).
       // --exclude=hooks.json: the AgentBox activity hooks file is box-owned
       // (seeded by seedCodexHooks); never let the host copy clobber it.
       // The session-state DBs / indexes are excluded so a teleported session
@@ -136,14 +155,18 @@ export async function ensureCodexVolume(
       // --delete only adds/updates. The globs are no-ops with `-f` when absent,
       // and never touch box-owned `sessions/` (the teleported rollouts) or
       // `hooks.json`.
-      'rsync -a --exclude=sessions --exclude=log --exclude=history.jsonl --exclude=hooks.json' +
+      'rsync -a --copy-unsafe-links' +
+        ' --exclude=sessions --exclude=log --exclude=history.jsonl --exclude=hooks.json' +
         ' --exclude=state_*.sqlite* --exclude=logs_*.sqlite* --exclude=session_index.jsonl' +
         ' --exclude=external_agent_session_imports.json --exclude=shell_snapshots' +
+        symlinkExcludes +
         ' /src/ /dst/' +
         ' && rm -rf /dst/state_*.sqlite* /dst/logs_*.sqlite* /dst/session_index.jsonl' +
         ' /dst/external_agent_session_imports.json /dst/shell_snapshots' +
         ' && chown -R 1000:1000 /dst',
-    ]);
+    );
+    await execa('docker', args);
+    await sanitizeVolumeCodexConfig(spec.volume, opts.image);
     return { created, synced: true };
   }
 
@@ -165,6 +188,12 @@ export async function ensureCodexVolume(
     ],
     { reject: false },
   );
+  // Even with nothing to sync, pre-trust /workspace so a Codex user with no host
+  // ~/.codex/config.toml doesn't hit the trust prompt. sanitizeVolumeCodexConfig
+  // writes a minimal trusted config when the host has none.
+  if (!(await pathExists(join(hostCodex, 'config.toml')))) {
+    await sanitizeVolumeCodexConfig(spec.volume, opts.image);
+  }
   return { created, synced: false };
 }
 
@@ -176,6 +205,17 @@ export async function ensureCodexVolume(
  *
  * Re-seeded on every create/start (image-versioned) so an image upgrade
  * propagates. Best-effort — a failure must not fail box creation.
+ *
+ * Shape note (codex 0.134.0): `hooks.json` must be `{ hooks: { Event: [...] } }`
+ * (matching the `HooksFile` Rust struct), with NO extra top-level keys — codex's
+ * strict parser rejects unknown fields (a stray `$comment` produced a startup
+ * `failed to parse hooks config` warning). Loading also needs `--enable hooks`
+ * and either the in-TUI trust dialog or `--dangerously-bypass-hook-trust`, both
+ * supplied by {@link CODEX_AGENTBOX_FLAGS}. In practice JSON-hook firing is still
+ * unreliable in 0.134.0 (TUI mode skips them on some startup paths) — the real
+ * mechanism that lights up state in production is the tmux-pane scraper in
+ * `packages/ctl/src/codex-scraper.ts`. These hooks remain a defense-in-depth
+ * seed so any future codex build that fixes the firing also lights up state.
  */
 export async function seedCodexHooks(
   volume: string,
@@ -198,6 +238,63 @@ export async function seedCodexHooks(
     return { seeded: stdout.includes('SEEDED') };
   } catch {
     return { seeded: false };
+  }
+}
+
+/**
+ * Overwrite the box's just-synced `~/.codex/config.toml` with a sanitized copy
+ * that drops host-only-path entries (desktop-Codex.app MCP servers like
+ * `node_repl`, a macOS `notify` helper, local-source marketplaces) — see
+ * {@link sanitizeCodexConfigForBox}. Without this the in-box codex tries to exec
+ * macOS paths and prints `MCP client ... failed to start: No such file` warnings.
+ *
+ * Runs AFTER the rsync so the raw copy already exists: best-effort, and a no-op
+ * when nothing host-only is present. On a missing host config, a TOML parse
+ * failure, or a container error we leave the raw rsynced copy intact — the box
+ * must never end up without a `config.toml`.
+ */
+async function sanitizeVolumeCodexConfig(
+  volume: string,
+  image: string,
+): Promise<{ sanitized: boolean }> {
+  try {
+    const hostConfig = join(homedir(), '.codex', 'config.toml');
+    // No host config to sanitize: still seed a minimal config that pre-trusts
+    // /workspace, so a Codex user without a host config.toml doesn't hit the
+    // "trust this folder?" prompt in the box.
+    let text: string;
+    if (!(await pathExists(hostConfig))) {
+      text = MINIMAL_TRUSTED_CODEX_CONFIG;
+    } else {
+      const sanitized = sanitizeCodexConfigForBox(await readFile(hostConfig, 'utf8'));
+      if (!sanitized.changed || sanitized.text.length === 0) return { sanitized: false };
+      text = sanitized.text;
+    }
+    // `-i` keeps stdin attached so execa's `input` reaches `cat`; without it the
+    // container gets immediate EOF and `>` truncates config.toml to empty. Write
+    // to a temp file then `mv` so a partial/failed write never clobbers the
+    // rsynced copy.
+    await execa(
+      'docker',
+      [
+        'run',
+        '--rm',
+        '-i',
+        '--user',
+        '0',
+        '-v',
+        `${volume}:/dst`,
+        image,
+        'sh',
+        '-c',
+        'cat > /dst/config.toml.tmp && chown 1000:1000 /dst/config.toml.tmp && ' +
+          'mv /dst/config.toml.tmp /dst/config.toml',
+      ],
+      { input: text },
+    );
+    return { sanitized: true };
+  } catch {
+    return { sanitized: false };
   }
 }
 
@@ -307,9 +404,21 @@ export interface StartCodexSessionOptions {
 //   dialog that would otherwise block startup on every fresh box. The hooks
 //   are AgentBox-managed and pre-vetted; the user never sees them, so trust
 //   verification has no UX value here.
+// The flag makes codex print a (cosmetic, duplicated) "--dangerously-bypass-
+//   hook-trust is enabled" warning at startup. There is NO codex option to
+//   silence only that warning. The only way to drop it is to stop passing the
+//   flag and instead persist hook trust in config.toml as
+//   `[hooks.state."<hooks.json path>:<event>:0:0"] trusted_hash = "sha256:…"`
+//   (one entry per event, written when you accept the dialog). We deliberately
+//   do NOT seed those: the hash is an opaque codex-internal digest (not
+//   reproducible from the hook command) tied to both hooks.json content and the
+//   codex version — a mismatch turns the cosmetic warning into a *blocking*
+//   "Hooks need review" dialog on every box. The bypass flag always works, so
+//   the warning is the accepted cost. (`hooks.managed_dir` auto-trusts but did
+//   not fire the hooks in testing.)
 // The actual mechanism that lights up codex.state in production is the
 // tmux-pane scraper (codex-scraper.ts); these flags are defense-in-depth for
-// the day codex's JSON-hook firing becomes reliable.
+// the day codex's JSON-hook firing becomes reliable (it does fire on 0.141.0).
 const CODEX_AGENTBOX_FLAGS = ['--enable', 'hooks', '--dangerously-bypass-hook-trust'] as const;
 
 export async function startCodexSession(opts: StartCodexSessionOptions): Promise<void> {
