@@ -30,10 +30,10 @@ agentbox prepare --provider daytona    # bake the base snapshot
 agentbox daytona claude
 ```
 
-`agentbox daytona create|claude|codex|opencode` is sugar for the same command with `--provider daytona`.
+`agentbox daytona create|claude|codex|opencode|pi` is sugar for the same command with `--provider daytona`.
 
-<Callout type="warn" title="HEADS UP">
-`agentbox pi` is not supported on Daytona in v1 — pi is Docker-only.
+<Callout title="NOTE">
+`agentbox pi --provider daytona` is supported. The pi binary is baked into the base snapshot at `agentbox prepare --provider daytona` time; pi config (`settings.json`, `models.json`, extensions) is staged at prepare time; and credentials (`~/.pi/agent/auth.json`, including ChatGPT/openai-codex OAuth tokens) are seeded at create time via the shared `agentbox-credentials` volume. Run `agentbox prepare --provider daytona` before your first `agentbox pi --provider daytona`.
 </Callout>
 
 ## Prepare image

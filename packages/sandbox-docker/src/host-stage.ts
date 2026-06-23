@@ -91,6 +91,23 @@ async function mkStageDir(prefix: string): Promise<string> {
   return mkdtemp(join(tmpdir(), `agentbox-${prefix}-stage-`));
 }
 
+/**
+ * Run rsync, tolerating exit 23 (partial transfer). The static stagers
+ * pre-exclude the broken/unsafe symlinks they can find, but can't catch a link
+ * inside a reachable symlinked dir (e.g. a `~/.claude/skills/*` link into a
+ * checkout that isn't staged, or a venv's `bin/python` -> host interpreter).
+ * Those files are exactly the ones we don't want in a box anyway, so copying
+ * everything else and moving on is the right call; any other non-zero exit still
+ * throws so real failures aren't masked.
+ */
+async function runRsyncTolerant(args: string[]): Promise<void> {
+  const r = await execa('rsync', args, { reject: false });
+  if (r.exitCode === 0 || r.exitCode === 23) return;
+  throw new Error(
+    `rsync failed (exit ${String(r.exitCode)}): ${(r.stderr ?? '').toString().slice(-400)}`,
+  );
+}
+
 function emptyResult(warnings: string[] = []): StageResult {
   return { tarballPath: null, cleanup: async () => {}, warnings };
 }
@@ -349,7 +366,7 @@ export async function stageClaudeStaticForUpload(
       ...CLAUDE_RUNTIME_EXCLUDES.map((p) => `--exclude=${p}`),
       ...broken.map((r) => `--exclude=/${r}`),
     ];
-    await execa('rsync', [
+    await runRsyncTolerant([
       '-a',
       '--copy-unsafe-links',
       ...excludes,
@@ -499,7 +516,7 @@ export async function stageCodexStaticForUpload(
   let tarballPath: string | null = null;
   try {
     const codexBroken = await findBrokenSymlinks(hostCodex);
-    await execa('rsync', [
+    await runRsyncTolerant([
       '-a',
       '-L',
       ...codexBroken.map((r) => `--exclude=/${r}`),
@@ -594,7 +611,7 @@ export async function stageOpencodeStaticForUpload(
     // would abort rsync under `-L`, so pre-scan and skip them.
     if (hasData) {
       const dataBroken = await findBrokenSymlinks(hostData);
-      await execa('rsync', [
+      await runRsyncTolerant([
         '-a',
         '-L',
         ...dataBroken.map((r) => `--exclude=/${r}`),
@@ -607,7 +624,7 @@ export async function stageOpencodeStaticForUpload(
     if (hasConfig) {
       const configStage = join(stageDir, 'config');
       const cfgBroken = await findBrokenSymlinks(hostConfig);
-      await execa('rsync', [
+      await runRsyncTolerant([
         '-a',
         '-L',
         ...cfgBroken.map((r) => `--exclude=/${r}`),
@@ -663,4 +680,85 @@ export async function stageOpencodeStateForUpload(
   const hostModel = join(hostHome, '.local', 'state', 'opencode', 'model.json');
   if (!(await pathExists(hostModel))) return emptyResult();
   return stageSingleFileTarball('opencode-state', hostModel, 'model.json');
+}
+
+// ---------- pi ----------
+
+export interface StagePiOptions {
+  hostHome?: string;
+}
+
+// Mirrors the pi docker sync excludes: sessions, history, the live IPC socket
+// dir, the npm extension cache, host binaries, and editor backups — large,
+// host-specific, or box-irrelevant. `auth.json` is excluded here and ships via
+// the credentials variant. Extracts into `/home/vscode/.pi/agent/`.
+const PI_RSYNC_EXCLUDES = [
+  '--exclude=sessions',
+  '--exclude=run-history.jsonl',
+  '--exclude=intercom',
+  '--exclude=npm',
+  '--exclude=bin',
+  '--exclude=cache',
+  '--exclude=node_modules',
+  '--exclude=*.bak',
+  '--exclude=*.bak-*',
+];
+
+/**
+ * Filtered tarball of pi static config from `~/.pi/agent/` (settings.json,
+ * models.json, extensions/, ...) minus `auth.json` (ships via the credentials
+ * variant). Extracts into `/home/vscode/.pi/agent/`. `-L` dereferences symlinks
+ * (Daytona FUSE volumes reject symlink creation); broken symlinks are pre-scanned
+ * and skipped so `-L` doesn't abort.
+ */
+export async function stagePiStaticForUpload(
+  opts: StagePiOptions = {},
+): Promise<StageResult> {
+  const hostHome = opts.hostHome ?? homedir();
+  const hostPiAgent = join(hostHome, '.pi', 'agent');
+  if (!(await pathExists(hostPiAgent))) return emptyResult();
+
+  const stageDir = await mkStageDir('pi-static');
+  let tarballPath: string | null = null;
+  try {
+    const piBroken = await findBrokenSymlinks(hostPiAgent);
+    await runRsyncTolerant([
+      '-a',
+      '-L',
+      ...piBroken.map((r) => `--exclude=/${r}`),
+      '--exclude=auth.json',
+      ...PI_RSYNC_EXCLUDES,
+      `${hostPiAgent}/`,
+      `${stageDir}/`,
+    ]);
+    tarballPath = await tarballFromDir(stageDir, 'pi-static');
+    return {
+      tarballPath,
+      cleanup: makeCleanup([stageDir, tarballPath]),
+      warnings: [],
+    };
+  } catch (err) {
+    await rm(stageDir, { recursive: true, force: true });
+    if (tarballPath) await rm(tarballPath, { force: true });
+    throw err;
+  }
+}
+
+/**
+ * Tarball with **only** `auth.json`. Prefers the cloud backup
+ * `~/.agentbox/pi-credentials.json` (captured from a previous cloud box); falls
+ * back to the host's real `~/.pi/agent/auth.json`. Returns an empty result when
+ * neither exists (pi can still auth from forwarded API-key env vars).
+ */
+export async function stagePiCredentialsForUpload(
+  opts: StagePiOptions = {},
+): Promise<StageResult> {
+  const hostHome = opts.hostHome ?? homedir();
+  const cloudBackup = join(hostHome, '.agentbox', 'pi-credentials.json');
+  if (await pathExists(cloudBackup)) {
+    return stageSingleFileTarball('pi-creds', cloudBackup, 'auth.json');
+  }
+  const hostAuth = join(hostHome, '.pi', 'agent', 'auth.json');
+  if (!(await pathExists(hostAuth))) return emptyResult();
+  return stageSingleFileTarball('pi-creds', hostAuth, 'auth.json');
 }

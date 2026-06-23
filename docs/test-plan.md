@@ -580,7 +580,13 @@ EOF`
   - **Providers:** [docker]
   - **Run:** `node apps/cli/dist/index.js pi -y -n pi-smoke &` then `tail -f ~/.agentbox/logs/pi.log` until ready.
   - **Signal:** box `running`; tmux session named `pi` present (`agentbox shell pi-smoke -- tmux list-sessions | grep -q pi`); pi TUI alive via `pnpm drive`.
-  - **Note:** End-to-end create + agent attach for pi (docker-only in v1; cloud providers are not supported).
+  - **Note:** End-to-end create + agent attach for pi on Docker.
+
+- [ ] **PI-005** `pi --provider daytona` provisions a cloud sandbox and completes a live turn.
+  - **Providers:** [daytona]
+  - **Run:** (prereq: `agentbox prepare --provider daytona` already run with pi baked in) `node apps/cli/dist/index.js pi --provider daytona -y -n pi-daytona &` then `tail -f ~/.agentbox/logs/pi.log` until session ready.
+  - **Signal:** box `running`; tmux session `pi` present in the Daytona sandbox; pi config (`settings.json`, `models.json`, extensions) visible at `/home/vscode/.pi/agent/` inside box; `~/.pi/agent/auth.json` (including ChatGPT/openai-codex OAuth tokens) seeded via the shared `agentbox-credentials` volume; a live openai-codex (codex GPT OAuth) turn succeeds.
+  - **Note:** End-to-end Daytona cloud pi path — verified live in production.
 
 - [ ] **PI-002** `pi` subcommand parity with opencode (attach, start).
   - **Providers:** [docker]
@@ -1043,7 +1049,8 @@ These appear in the test plan as **`EXPECTED-FAIL-*`** entries — they're track
 | EXPECTED-FAIL-CKPT-PAUSE | `checkpoint create --pause` flag on hetzner | `hertzner_backlog.md` |
 | EXPECTED-FAIL-HET-ZEROPAUSE | True zero-cost pause on hetzner (snapshot + respawn) | `hertzner_backlog.md` |
 | EXPECTED-FAIL-DAYTONA-WSCKPT | Daytona workspace-state checkpoint (`_experimental_createSnapshot` blocker) | `daytona-backlog.md` |
-| EXPECTED-FAIL-PI-CLOUD | `agentbox pi` on cloud providers (daytona/hetzner/vercel/e2b) not yet supported | backlog — pi is docker-only in v1 |
+| PI-005 (passing) | `agentbox pi --provider daytona` create + attach + live turn verified end-to-end | closed — Daytona is supported; see PI-005 |
+| EXPECTED-FAIL-PI-CLOUD | `agentbox pi` on Hetzner, Vercel, and E2B not yet supported (Daytona is; per-provider static-config staging in prepare.ts is the missing piece) | backlog |
 | EXPECTED-FAIL-PI-TELEPORT | `agentbox pi -c` / `--resume` session teleport not yet supported | backlog — emits a friendly error |
 
 ---

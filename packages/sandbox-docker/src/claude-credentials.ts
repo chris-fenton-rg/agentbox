@@ -34,9 +34,10 @@ export const CREDENTIALS_BACKUP_FILE = join(STATE_DIR, 'claude-credentials.json'
  */
 export const CODEX_CREDENTIALS_BACKUP_FILE = join(STATE_DIR, 'codex-credentials.json');
 export const OPENCODE_CREDENTIALS_BACKUP_FILE = join(STATE_DIR, 'opencode-credentials.json');
+export const PI_CREDENTIALS_BACKUP_FILE = join(STATE_DIR, 'pi-credentials.json');
 
 /** Agents whose credentials we extract from a cloud box back to the host. */
-export type CredentialAgentKind = 'claude' | 'codex' | 'opencode';
+export type CredentialAgentKind = 'claude' | 'codex' | 'opencode' | 'pi';
 
 /**
  * True iff `text` looks like a real (usable) credential for `agent`, not an

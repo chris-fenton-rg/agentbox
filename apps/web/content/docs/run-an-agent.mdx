@@ -72,7 +72,7 @@ Auto-approve is on by default because the box is isolated from your host; pass `
 You can run different agents in different boxes for the same project and switch between them with `agentbox dashboard`. Claude and Codex resume sessions; OpenCode does not yet (resume starts a fresh box).
 
 <Callout type="warn" title="HEADS UP">
-`agentbox pi` is **Docker-only** in v1 — cloud providers (Daytona, Hetzner, Vercel, E2B) are not yet supported. Session teleport (`-c`/`--resume` carrying a host session into a fresh box) is also not yet supported for pi and emits a friendly error; pi's own `--continue` flag still works inside the box.
+`agentbox pi` runs on **Docker and Daytona** (`--provider daytona`, requires `agentbox prepare --provider daytona`). Hetzner, Vercel, and E2B are not yet supported. Session teleport (`-c`/`--resume` carrying a host session into a fresh box) is also not yet supported for pi and emits a friendly error; pi's own `--continue` flag still works inside the box.
 </Callout>
 
 <Callout title="WHY">

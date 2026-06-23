@@ -26,6 +26,7 @@ import {
   stageClaudeStaticForUpload,
   stageCodexStaticForUpload,
   stageOpencodeStaticForUpload,
+  stagePiStaticForUpload,
   type StageResult,
 } from '@agentbox/sandbox-cloud';
 import { getClient } from './backend.js';
@@ -52,7 +53,7 @@ function defaultSnapshotName(fingerprint: string | null): string {
 }
 
 interface AgentStage {
-  kind: 'claude' | 'codex' | 'opencode';
+  kind: 'claude' | 'codex' | 'opencode' | 'pi';
   /** Path inside the image build that the tarball is uploaded to. */
   remoteTar: string;
   /** Path the image build extracts the tarball into. */
@@ -66,10 +67,11 @@ interface AgentStage {
  * file up.
  */
 async function stageAllAgentStatic(opts: { hostWorkspace?: string }): Promise<AgentStage[]> {
-  const [claudeStaged, codexStaged, opencodeStaged] = await Promise.all([
+  const [claudeStaged, codexStaged, opencodeStaged, piStaged] = await Promise.all([
     stageClaudeStaticForUpload({ hostWorkspace: opts.hostWorkspace }),
     stageCodexStaticForUpload(),
     stageOpencodeStaticForUpload(),
+    stagePiStaticForUpload(),
   ]);
   return [
     {
@@ -89,6 +91,12 @@ async function stageAllAgentStatic(opts: { hostWorkspace?: string }): Promise<Ag
       remoteTar: '/tmp/agentbox-seed-opencode.tar.gz',
       extractDir: '/home/vscode/.local/share/opencode',
       staged: opencodeStaged,
+    },
+    {
+      kind: 'pi',
+      remoteTar: '/tmp/agentbox-seed-pi.tar.gz',
+      extractDir: '/home/vscode/.pi/agent',
+      staged: piStaged,
     },
   ];
 }
@@ -192,7 +200,7 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
       // One final pass: own the extracted trees as the box user, then drop the
       // staging tarballs (no point shipping them twice in the image layer).
       extractCmds.push(
-        'chown -R vscode:vscode /home/vscode/.claude /home/vscode/.codex /home/vscode/.local',
+        'chown -R vscode:vscode /home/vscode/.claude /home/vscode/.codex /home/vscode/.local /home/vscode/.pi',
       );
       extractCmds.push('rm -f /tmp/agentbox-seed-*.tar.gz');
     }

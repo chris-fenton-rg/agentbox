@@ -33,9 +33,12 @@ import {
   stageOpencodeStaticForUpload,
   stageOpencodeCredentialsForUpload,
   stageOpencodeStateForUpload,
+  stagePiStaticForUpload,
+  stagePiCredentialsForUpload,
   CREDENTIALS_BACKUP_FILE,
   CODEX_CREDENTIALS_BACKUP_FILE,
   OPENCODE_CREDENTIALS_BACKUP_FILE,
+  PI_CREDENTIALS_BACKUP_FILE,
   DEFAULT_BOX_IMAGE,
   SHARED_CLAUDE_VOLUME,
   SHARED_CODEX_VOLUME,
@@ -50,7 +53,7 @@ import {
 import type { CloudBackend, CloudHandle, CloudVolumeMount } from '@agentbox/core';
 
 /** Identifier for one of the three agents we sync into cloud sandboxes. */
-export type CloudAgentKind = 'claude' | 'codex' | 'opencode';
+export type CloudAgentKind = 'claude' | 'codex' | 'opencode' | 'pi';
 
 /**
  * Single per-org volume that holds all three agents' credentials. Mounted
@@ -102,12 +105,24 @@ const AGENT_SPECS: AgentSpec[] = [
     stageStatic: () => stageOpencodeStaticForUpload(),
     stageCredentials: () => stageOpencodeCredentialsForUpload(),
   },
+  {
+    kind: 'pi',
+    // pi reads its agent state from PI_CODING_AGENT_DIR=/home/vscode/.pi/agent;
+    // the static tarball (settings/models/extensions) extracts there. auth.json
+    // is symlinked to the creds mount by Dockerfile.box (baked into the snapshot).
+    staticMountPath: '/home/vscode/.pi/agent',
+    credentialsMountPath: '/home/vscode/.agentbox-creds/pi',
+    credentialsSubpath: 'pi/',
+    stageStatic: () => stagePiStaticForUpload(),
+    stageCredentials: () => stagePiCredentialsForUpload(),
+  },
 ];
 
 import {
   CLAUDE_FORWARDED_ENV_KEYS,
   CODEX_FORWARDED_ENV_KEYS,
   OPENCODE_FORWARDED_ENV_KEYS,
+  PI_FORWARDED_ENV_KEYS,
 } from '@agentbox/sandbox-docker';
 
 /**
@@ -188,6 +203,11 @@ function buildForwardedEnv(agents: CloudAgentKind[]): Record<string, string> {
   if (agents.includes('opencode')) {
     env['OPENCODE_CONFIG_DIR'] = '/home/vscode/.local/share/opencode/config';
   }
+  // pi reads its agent-state dir from $PI_CODING_AGENT_DIR; the snapshot bake
+  // extracts the static config to /home/vscode/.pi/agent (mirrors buildPiMounts).
+  if (agents.includes('pi')) {
+    env['PI_CODING_AGENT_DIR'] = '/home/vscode/.pi/agent';
+  }
   // Forward provider API keys from the host process env into the sandbox.
   // For agents authenticated via env-var (ANTHROPIC_API_KEY etc.) rather
   // than a stored auth file, this is the only way the in-box agent finds
@@ -196,6 +216,7 @@ function buildForwardedEnv(agents: CloudAgentKind[]): Record<string, string> {
     ...CLAUDE_FORWARDED_ENV_KEYS,
     ...CODEX_FORWARDED_ENV_KEYS,
     ...OPENCODE_FORWARDED_ENV_KEYS,
+    ...PI_FORWARDED_ENV_KEYS,
   ]);
   for (const k of forwardedKeys) {
     const v = process.env[k];
@@ -493,6 +514,7 @@ const EXTRACT_SPECS: Array<{ kind: CloudAgentKind; boxPath: string; hostBackup: 
     boxPath: '/home/vscode/.local/share/opencode/auth.json',
     hostBackup: OPENCODE_CREDENTIALS_BACKUP_FILE,
   },
+  { kind: 'pi', boxPath: '/home/vscode/.pi/agent/auth.json', hostBackup: PI_CREDENTIALS_BACKUP_FILE },
 ];
 
 /**

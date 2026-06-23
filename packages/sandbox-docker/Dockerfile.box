@@ -217,20 +217,26 @@ RUN mkdir -p /home/vscode/.claude \
 RUN mkdir -p /home/vscode/.agentbox-creds/claude \
              /home/vscode/.agentbox-creds/codex \
              /home/vscode/.agentbox-creds/opencode \
+             /home/vscode/.agentbox-creds/pi \
              /home/vscode/.codex \
              /home/vscode/.local/share/opencode \
+             /home/vscode/.pi/agent \
     && ln -s /home/vscode/.agentbox-creds/claude/.credentials.json \
              /home/vscode/.claude/.credentials.json \
     && ln -s /home/vscode/.agentbox-creds/codex/auth.json \
              /home/vscode/.codex/auth.json \
     && ln -s /home/vscode/.agentbox-creds/opencode/auth.json \
              /home/vscode/.local/share/opencode/auth.json \
+    && ln -s /home/vscode/.agentbox-creds/pi/auth.json \
+             /home/vscode/.pi/agent/auth.json \
     && chown -R vscode:vscode /home/vscode/.agentbox-creds \
                               /home/vscode/.codex \
                               /home/vscode/.local \
+                              /home/vscode/.pi \
     && chown -h vscode:vscode /home/vscode/.claude/.credentials.json \
                               /home/vscode/.codex/auth.json \
-                              /home/vscode/.local/share/opencode/auth.json
+                              /home/vscode/.local/share/opencode/auth.json \
+                              /home/vscode/.pi/agent/auth.json
 
 # Prepare /home/vscode/.vscode-server and /home/vscode/.cursor-server (+ their
 # extensions subdirs) so the named volumes mounted at runtime — per-box
@@ -277,6 +283,15 @@ RUN apt-get update \
 # across ~/.config/opencode (config) and ~/.local/share/opencode (data + auth);
 # the volume holds both, with the config dir relocated via OPENCODE_CONFIG_DIR.
 RUN npm install -g opencode-ai
+
+# pi coding agent (https://pi.dev). Parallel to the Claude/Codex/OpenCode
+# installs: `agentbox pi` launches it in a tmux session and the box mounts a
+# synced `agentbox-pi-config` volume at ~/.pi (see
+# packages/sandbox-docker/src/pi.ts). `--ignore-scripts` skips pi's postinstall
+# (which would try to fetch its own Node runtime); the box already has Node 24.
+# ensurePiInstalled() reinstalls into the writable layer for boxes built from a
+# checkpoint / published base image that predates this layer.
+RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 
 # Browser support for in-box agents: Vercel's agent-browser drives Chrome via
 # CDP. Two things have to happen here:

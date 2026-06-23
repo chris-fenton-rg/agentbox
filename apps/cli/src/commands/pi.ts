@@ -38,6 +38,9 @@ import {
 } from './_attach-in.js';
 import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
+import { providerForCreate } from '../provider/registry.js';
+import { cloudAgentAttach } from './_cloud-attach.js';
+import { cloudAgentCreate } from './_cloud-agent-create.js';
 import { prepareTeleport, TeleportError } from '../session-teleport/index.js';
 import { makeProgressReporter } from '../lib/progress.js';
 import { printLaunchRecap } from '../lib/launch-recap.js';
@@ -72,17 +75,6 @@ function pickPiCreateOpts(opts: PiCreateOptions): import('@agentbox/relay').Queu
 
 /** Host-side URL for the relay (loopback for the wrapper's SSE subscription). */
 const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
-
-/** Reject cloud providers — pi is docker-only in v1 (cloud base snapshots don't ship pi yet). */
-function assertDockerProvider(providerName: string): void {
-  if (providerName !== 'docker') {
-    throw new PiSessionError(
-      `agentbox pi is currently docker-only; the '${providerName}' provider is not yet supported ` +
-        `(pi is not baked into the cloud base snapshots — tracked as a follow-up). ` +
-        `Run \`agentbox pi\` without --provider, or use claude/codex/opencode on cloud providers.`,
-    );
-  }
-}
 
 /**
  * Attach to a box's pi tmux session through the wrapped-pty footer (same
@@ -285,17 +277,10 @@ export const piCommand = new Command('pi')
       cliOverrides: buildPiCliOverrides(opts),
     });
     const projectRoot = (await findProjectRoot(opts.workspace)).root;
+    // Resolve provider. Cloud path skips docker-only steps (Portless, createBox)
+    // and delegates to cloudAgentCreate.
     const providerName = opts.provider ?? cfg.effective.box.provider ?? 'docker';
-    try {
-      assertDockerProvider(providerName);
-    } catch (err) {
-      if (err instanceof PiSessionError) {
-        log.error(err.message);
-        cmdLog.close();
-        process.exit(2);
-      }
-      throw err;
-    }
+    const isCloud = providerName !== 'docker';
     const providerDefault = resolveDefaultCheckpoint(cfg.effective, providerName);
     const checkpointRef =
       opts.snapshot && opts.snapshot.length > 0
@@ -382,6 +367,40 @@ export const piCommand = new Command('pi')
         process.exit(2);
       }
       throw err;
+    }
+
+    if (isCloud) {
+      // Cloud path: pi has no interactive login (auth rides the synced
+      // ~/.pi/agent/auth.json + forwarded API-key env vars), so there is no
+      // sign-in offer here — credentials are seeded by the cloud agent push.
+      const provider = await providerForCreate({ flag: opts.provider, config: cfg.effective });
+      const withPlaywright =
+        cfg.effective.box.withPlaywright || cfg.effective.browser.default !== 'agent-browser';
+      await cloudAgentCreate({
+        provider,
+        request: {
+          workspacePath: opts.workspace,
+          name: opts.name,
+          checkpointRef,
+          image: cfg.effective.box.image,
+          withPlaywright,
+          withEnv: cfg.effective.box.withEnv,
+          carry: carryEntries,
+          vnc: { enabled: cfg.effective.box.vnc },
+          limits: resolveLimits(cfg.effective.box, opts),
+          fromBranch,
+          useBranch,
+          projectRoot,
+        },
+        binary: 'pi',
+        sessionName: cfg.effective.pi.sessionName,
+        mode: 'pi',
+        extraArgs: piArgs,
+        verbose: opts.verbose === true,
+        openIn: hostAwareOpenIn(cfg),
+        attach: opts.attach !== false,
+      });
+      return;
     }
 
     // First-run Portless opt-in (Docker Desktop only).
@@ -611,10 +630,20 @@ const piAttachCommand = new Command('attach')
     const opts = this.optsWithGlobals() as PiStartOptions;
     intro('Attaching to pi session...');
     try {
+      const attachIn = resolveAttachInOption(opts);
       const box = await resolveBoxOrExit(idOrName);
       if ((box.provider ?? 'docker') !== 'docker') {
-        log.error('agentbox pi is docker-only in v1; this box is on a cloud provider.');
-        process.exit(2);
+        const cfg = await loadEffectiveConfig(box.workspacePath, {
+          cliOverrides: attachIn ? { attach: { openIn: attachIn } } : {},
+        });
+        await cloudAgentAttach({
+          box,
+          binary: 'pi',
+          sessionName: opts.sessionName ?? 'pi',
+          mode: 'pi',
+          openIn: hostAwareOpenIn(cfg),
+        });
+        return;
       }
       await startOrAttachPi(box, [], { ...opts, syncConfig: false });
     } catch (err) {
@@ -679,8 +708,25 @@ const piStartCommand = new Command('start')
         }
       }
       if ((box.provider ?? 'docker') !== 'docker') {
-        log.error('agentbox pi is docker-only in v1; this box is on a cloud provider.');
-        process.exit(2);
+        if (opts.attach === false) {
+          outro(
+            `--no-attach: cloud agent sessions are started lazily on attach. Run: agentbox pi attach ${reattachRef(box)}`,
+          );
+          return;
+        }
+        const attachIn = resolveAttachInOption(opts);
+        const cfg = await loadEffectiveConfig(box.workspacePath, {
+          cliOverrides: attachIn ? { attach: { openIn: attachIn } } : {},
+        });
+        await cloudAgentAttach({
+          box,
+          binary: 'pi',
+          sessionName: opts.sessionName ?? 'pi',
+          mode: 'pi',
+          extraArgs: effectivePiArgs,
+          openIn: hostAwareOpenIn(cfg),
+        });
+        return;
       }
       await startOrAttachPi(box, effectivePiArgs, opts);
     } catch (err) {

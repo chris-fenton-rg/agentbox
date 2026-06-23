@@ -77,7 +77,7 @@ interface ResyncOpts {
   agent?: string;
 }
 
-const KNOWN_AGENTS: readonly CloudAgentKind[] = ['claude', 'codex', 'opencode'];
+const KNOWN_AGENTS: readonly CloudAgentKind[] = ['claude', 'codex', 'opencode', 'pi'];
 
 /**
  * Parse `--agent` into the list of agents to refresh. Defaults to all three;

@@ -58,7 +58,7 @@ Shared create/agent flags include `-n, --name`, `-w, --workspace <path>`, `--pro
 
 Agent-specific: `--attach-in <split|window|tab|same>`, `-d, --no-attach`, `-i, --initial-prompt <text>` (background queue), and for `claude` only `-c, --continue`, `--resume <id>`, `--plan <path>`, and `--dangerously-skip-permissions` (on by default in boxes). `fork` adds `--agent`, `--session <id>`, and `--attach-in` (default `tab`). pi adds `--isolate-pi-config` (per-box volume instead of the shared `agentbox-pi-config`); pi does **not** support `-c`/`--resume` (session teleport) or a `login` subcommand.
 
-<Callout type="warn" title="HEADS UP">`agentbox pi` is **Docker-only** in v1. Cloud providers (Daytona, Hetzner, Vercel, E2B) are not yet supported for pi.</Callout>
+<Callout type="warn" title="HEADS UP">`agentbox pi` runs on **Docker and Daytona** (`--provider daytona`, requires `agentbox prepare --provider daytona`). Hetzner, Vercel, and E2B are not yet supported for pi.</Callout>
 
 <Callout type="warn" title="HEADS UP">`-i` / `--initial-prompt` is AgentBox's background-queue prompt, not the agent's own `-p` print mode. To run the agent headless, pass it after `--` (e.g. `agentbox claude -- -p "..."`). Note also that `-i` means `--inline` on the `attach`/`start` subcommands.</Callout>
 

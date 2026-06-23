@@ -42,6 +42,7 @@ export {
   CREDENTIALS_BACKUP_FILE,
   CODEX_CREDENTIALS_BACKUP_FILE,
   OPENCODE_CREDENTIALS_BACKUP_FILE,
+  PI_CREDENTIALS_BACKUP_FILE,
   hostBackupHasCredentials,
   hostClaudeBackupExpired,
   isRealAgentCredential,
@@ -216,12 +217,15 @@ export {
   stageOpencodeStaticForUpload,
   stageOpencodeCredentialsForUpload,
   stageOpencodeStateForUpload,
+  stagePiStaticForUpload,
+  stagePiCredentialsForUpload,
   encodeClaudeProjectsKey,
   resolveClaudeMemoryDir,
   BOX_CLAUDE_PROJECT_DIR,
   type StageClaudeOptions,
   type StageCodexOptions,
   type StageOpencodeOptions,
+  type StagePiOptions,
   type StageResult,
 } from './host-stage.js';
 export {

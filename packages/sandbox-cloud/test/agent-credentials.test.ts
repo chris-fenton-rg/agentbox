@@ -93,8 +93,8 @@ describe('ensureAgentVolumesForCloud', () => {
   it('returns three subpath mounts of the shared credentials volume', async () => {
     const { backend } = makeMockBackend({});
     const res = await ensureAgentVolumesForCloud(backend);
-    expect(res.agents).toEqual(['claude', 'codex', 'opencode']);
-    expect(res.mounts).toHaveLength(3);
+    expect(res.agents).toEqual(['claude', 'codex', 'opencode', 'pi']);
+    expect(res.mounts).toHaveLength(4);
 
     // All three mounts share the same volumeId (single shared volume).
     const volumeIds = new Set(res.mounts.map((m) => m.volumeId));
@@ -120,7 +120,7 @@ describe('ensureAgentVolumesForCloud', () => {
     // box-baked ~/.agentbox-creds/<agent>/ dirs. No volume to mount, but the
     // agent list must be populated so the seed actually runs.
     expect(res.mounts).toEqual([]);
-    expect(res.agents).toEqual(['claude', 'codex', 'opencode']);
+    expect(res.agents).toEqual(['claude', 'codex', 'opencode', 'pi']);
     expect(res.env['OPENCODE_CONFIG_DIR']).toBe('/home/vscode/.local/share/opencode/config');
     expect(logs.some((l) => l.includes('has no volume primitive'))).toBe(true);
   });
@@ -148,6 +148,7 @@ describe('seedAgentVolumesIfFresh (credentials-only)', () => {
         '/home/vscode/.agentbox-creds/claude/.agentbox-seeded-at',
         '/home/vscode/.agentbox-creds/codex/.agentbox-seeded-at',
         '/home/vscode/.agentbox-creds/opencode/.agentbox-seeded-at',
+        '/home/vscode/.agentbox-creds/pi/.agentbox-seeded-at',
       ]),
     });
     const logs: string[] = [];
@@ -155,7 +156,7 @@ describe('seedAgentVolumesIfFresh (credentials-only)', () => {
       onLog: (l) => logs.push(l),
     });
     expect(uploadCalls).toEqual([]);
-    expect(execCalls.filter((c) => c.cmd.startsWith('test -f ')).length).toBe(3);
+    expect(execCalls.filter((c) => c.cmd.startsWith('test -f ')).length).toBe(4);
     expect(execCalls.some((c) => c.cmd.includes('tar -xzf'))).toBe(false);
     expect(
       logs.every((l) => l.includes('already seeded') || l.includes('mounting only')),

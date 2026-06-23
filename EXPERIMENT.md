@@ -1,12 +1,14 @@
 # EXPERIMENT: Adding the `pi` agent harness to AgentBox (+ Colima support)
 
 **Repo:** `chris-fenton-rg/agentbox` (fork of `madarco/agentbox`)
-**Date:** 2026-06-22
+**Date:** 2026-06-22 (Docker + Colima); 2026-06-23 (Daytona cloud)
 **Author:** Claude Code (Opus 4.8), driven by chris@rogerhealthcare.com
 **Goal:** Fork AgentBox, add the [pi](https://pi.dev/docs/latest) coding agent as a
 first-class harness alongside Claude Code / Codex / OpenCode, make it work on
-**Colima** (not just Docker Desktop / OrbStack on macOS), and prove
-`agentbox pi` covers the full AgentBox feature set on local Docker.
+**Colima** (not just Docker Desktop / OrbStack on macOS), prove `agentbox pi`
+covers the full AgentBox feature set on local Docker, and extend it to a
+**cloud** sandbox (Daytona) — verified end-to-end including a live ChatGPT/
+openai-codex OAuth turn from the remote sandbox. See §10 for the cloud results.
 
 ---
 
@@ -241,13 +243,14 @@ All run against Docker-via-Colima. The box image was built locally on Colima
 
 Stated honestly and documented in-repo:
 
-1. **Docker-only.** Cloud providers (Daytona/Hetzner/Vercel/E2B) are not yet
-   supported for pi — pi isn't baked into the cloud base snapshots, and the
-   cloud agent-credential staging (`sandbox-cloud/agent-credentials.ts` +
-   per-provider `prepare.ts`) was intentionally left for a follow-up. `agentbox
-   pi --provider <cloud>` emits a clear "docker-only in v1" error rather than
-   half-creating a broken box. (The harness-surface map for the cloud wiring is
-   captured in the research notes, so this is a mechanical follow-up.)
+1. **Cloud: Daytona done + verified; Hetzner/Vercel/E2B pending.** `agentbox pi
+   --provider daytona` is fully wired and live-verified (see §10). The shared
+   cloud layer (`sandbox-cloud/agent-credentials.ts` AGENT_SPECS + forwarded
+   `PI_CODING_AGENT_DIR`, `host-stage.ts` pi static/credential stagers, the
+   `Dockerfile.box` auth.json symlink + pi bake) covers every provider, but the
+   per-provider **static-config staging** is only added to `daytona/prepare.ts`
+   so far — Hetzner/Vercel/E2B need the same one-line addition to their
+   `prepare.ts` (and their own creds to verify). A mechanical follow-up.
 2. **Session teleport.** Carrying a *host* pi session into a fresh box
    (`-c`/`--resume`) is a v1 stub (friendly error). pi's own `--continue`/
    `--resume` still work *inside* a box across stop/start (the volume persists
@@ -296,3 +299,60 @@ node apps/cli/dist/index.js destroy <box> -y
 pi authenticates from forwarded host env keys (`ANTHROPIC_API_KEY`,
 `OPENAI_API_KEY`, `ZAI_GLM_API_KEY`, ...) or the synced `~/.pi/agent/auth.json`.
 There is no `agentbox pi login` (pi has no interactive auth flow).
+
+---
+
+## 10. Cloud sandbox support (Daytona) — implemented + verified
+
+`agentbox pi --provider daytona` works end-to-end. Cloud differs from Docker in
+three mechanisms, all now wired for pi:
+
+1. **Binary** — baked into the base snapshot. Daytona builds the base from
+   `Dockerfile.box`, so the pi npm-install layer ships in the snapshot
+   (`agentbox prepare --provider daytona`). `ensurePiInstalled` remains the
+   Docker-side runtime fallback.
+2. **Static config** (settings.json / models.json / extensions/) — staged at
+   *prepare* time by `stagePiStaticForUpload()` and extracted to
+   `/home/vscode/.pi/agent` in the snapshot.
+3. **Credentials** (`auth.json`, incl. ChatGPT/openai-codex OAuth) — seeded at
+   *create* time into the shared `agentbox-credentials` volume at
+   `/home/vscode/.agentbox-creds/pi/`, reached via a baked symlink
+   `~/.pi/agent/auth.json → .agentbox-creds/pi/auth.json`. `PI_CODING_AGENT_DIR`
+   is forwarded into the sandbox.
+
+### What was implemented
+`sandbox-cloud/agent-credentials.ts` (`CloudAgentKind += 'pi'`, AGENT_SPECS +
+EXTRACT_SPECS entries, `PI_CODING_AGENT_DIR` + `PI_FORWARDED_ENV_KEYS` in
+`buildForwardedEnv`); `host-stage.ts` (`stagePiStaticForUpload` /
+`stagePiCredentialsForUpload` + a shared `runRsyncTolerant` that tolerates rsync
+exit 23); `claude-credentials.ts` (`PI_CREDENTIALS_BACKUP_FILE`,
+`CredentialAgentKind += 'pi'`); `Dockerfile.box` (pi creds symlink + pi bake);
+`daytona/prepare.ts` (pi in `stageAllAgentStatic`); `daytona/cli.ts`
+(`KNOWN_AGENTS += 'pi'`); `commands/pi.ts` (the `isCloud` branch →
+`cloudAgentCreate` / `cloudAgentAttach`, replacing the docker-only guard).
+
+### A real bug this surfaced
+The first cloud box came up with **no pi binary** even though codex/opencode were
+present. Root cause: `Dockerfile.box` exists in two places — the canonical
+`packages/sandbox-docker/Dockerfile.box` and a generated copy at
+`apps/cli/runtime/docker/Dockerfile.box` that `scripts/stage-runtime.mjs`
+**overwrites from the canonical on every build**. The pi bake had been added to
+the *generated* copy and was silently clobbered. Fixed by editing the canonical
+file. (Docker never noticed because `ensurePiInstalled` installs pi at runtime.)
+
+### Verification evidence (live, on Daytona)
+| Check | Result |
+|---|---|
+| `agentbox prepare --provider daytona` | ✅ baked `agentbox-base-06af95558570` (11.6 GB, active), pinned in `daytona-prepared.json` |
+| `agentbox pi --provider daytona` create | ✅ sandbox provisioned, workspace seeded via git bundle (per-box branch `agentbox/pi-daytona-ws-...`) |
+| pi binary in snapshot | ✅ `/usr/bin/pi` 0.79.10 |
+| pi config staged | ✅ settings.json (`defaultProvider: openai-codex`), models.json, 13 extensions |
+| openai-codex OAuth credential | ✅ `~/.pi/agent/auth.json → .agentbox-creds/pi/auth.json`, seeded (HAS_AUTH) |
+| pi tmux session | ✅ running; interactive TUI renders (GPT-5.5 / openai-codex) |
+| **Live codex GPT OAuth turn from remote sandbox** | ✅ `pi -p "Reply with exactly: PI_ON_DAYTONA_OK"` → **`PI_ON_DAYTONA_OK`** |
+
+The last row is the headline: a **ChatGPT-subscription OAuth token authenticated
+and produced a real model turn from Daytona's remote IP** — the OAuth-from-
+remote-IP concern (raised by the codex Keychain/device-auth docs) did **not**
+materialize for pi, because pi stores its openai-codex token as a plain file in
+`auth.json` (not the macOS Keychain), so it stages cleanly into the sandbox.
