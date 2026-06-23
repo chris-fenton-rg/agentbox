@@ -17,7 +17,7 @@ import { currentHostBranch } from './from-branch.js';
 
 export interface LaunchRecapArgs {
   record: BoxRecord;
-  mode: 'claude' | 'codex' | 'opencode' | 'shell';
+  mode: 'claude' | 'codex' | 'opencode' | 'pi' | 'shell';
   /** Reattach ref shown in the hint: the per-project index `n` or the box name. */
   reattach: string;
   /** Host repo path — used to resolve the base branch label when none was given. */

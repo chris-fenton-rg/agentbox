@@ -21,7 +21,7 @@ import { herdrSend } from './herdr-socket.js';
  * box's status.json, reports on each activity transition and resets the pane to
  * idle on detach.
  */
-export type HerdrAgentMode = 'claude' | 'codex' | 'opencode' | 'shell';
+export type HerdrAgentMode = 'claude' | 'codex' | 'opencode' | 'pi' | 'shell';
 
 /** Herdr's semantic agent states (https://herdr.dev/docs/socket-api). */
 type HerdrSemanticState = 'idle' | 'working' | 'blocked' | 'done' | 'unknown';
@@ -36,6 +36,7 @@ const AGENT_LABEL: Record<Exclude<HerdrAgentMode, 'shell'>, string> = {
   claude: 'claude',
   codex: 'codex',
   opencode: 'opencode',
+  pi: 'pi',
 };
 
 /**

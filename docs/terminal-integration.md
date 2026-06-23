@@ -141,7 +141,7 @@ background services have come up, so service status wins the slot. It's derived
 by `serviceStatusLabel` (`apps/cli/src/wrapped-pty/service-status.ts`) from the
 same `status.json` the footer polls every 3s. Boxes with **no** services fall
 back to the agent activity (`idle`/`working`/…) for claude, or the
-`(shell)`/`(codex)`/`(opencode)` mode label otherwise.
+`(shell)`/`(codex)`/`(opencode)`/`(pi)` mode label otherwise.
 
 ## cmux sidebar: box agent status (`attach.cmuxStatus`)
 
@@ -151,7 +151,7 @@ the sidebar shows what each box is doing. Config key `attach.cmuxStatus` (bool,
 default true); no-op outside cmux.
 
 - Driven from the existing 3s `status.json` poll loop in `run.ts` (`pollStatus`),
-  on each `claude`/`codex`/`opencode` activity transition.
+  on each `claude`/`codex`/`opencode`/`pi` activity transition.
 - State → workspace colour + description (`mapActivityToWorkspace`):
   working/compacting → Blue "working"; question/waiting → Amber "needs input";
   end-plan → Amber "plan ready"; error → Red; idle → tint cleared; unknown →
@@ -196,7 +196,7 @@ This is the load-bearing gotcha. cmux *does* have a per-workspace status pill
 **does not work for boxes**:
 
 - cmux only **renders** a status pill for workspaces it recognizes as running an
-  agent — its own claude/codex/opencode integrations register the agent (hooks +
+  agent — its own claude/codex/opencode/pi integrations register the agent (hooks +
   a tracked PID, swept every 30s). A box runs the agent **inside the container**,
   so cmux sees a generic `docker exec`/`ssh` process, never associates an agent
   with the workspace, and never draws the pill row.

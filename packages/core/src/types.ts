@@ -2,7 +2,7 @@ export type BoxId = string;
 
 export type BoxState = 'running' | 'paused' | 'stopped' | 'destroyed' | 'missing';
 
-export type AgentKind = 'claude-code' | 'codex' | (string & {});
+export type AgentKind = 'claude-code' | 'codex' | 'pi' | (string & {});
 
 export interface BoxDescriptor {
   id: BoxId;

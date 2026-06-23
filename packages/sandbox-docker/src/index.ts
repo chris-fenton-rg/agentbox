@@ -109,6 +109,30 @@ export {
   type PullOpencodeResult,
   type StartOpencodeSessionOptions,
 } from './opencode.js';
+export {
+  buildPiAttachArgv,
+  buildPiMounts,
+  DEFAULT_PI_SESSION,
+  ensurePiInstalled,
+  ensurePiVolume,
+  PI_FORWARDED_ENV_KEYS,
+  PiSessionError,
+  piSessionInfo,
+  pullPiConfig,
+  resolvePiVolume,
+  SHARED_PI_VOLUME,
+  startPiSession,
+  volumeHasPiAuth,
+  type EnsurePiInstalledResult,
+  type EnsurePiVolumeOptions,
+  type EnsurePiVolumeResult,
+  type PiConfigSpec,
+  type PiMountResult,
+  type PiSessionInfo,
+  type PullPiOptions,
+  type PullPiResult,
+  type StartPiSessionOptions,
+} from './pi.js';
 export { createBox, type CreateBoxOptions, type CreatedBox } from './create.js';
 export {
   agentboxHomeBytes,

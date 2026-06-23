@@ -9,11 +9,12 @@ apps/cli/                   commander-based npm bin (`agentbox`), entry `src/ind
   src/commands/_errors.ts   shared lifecycle-error → user-facing message mapper
 packages/core/              @agentbox/core — SandboxProvider interface, BoxState, etc.
 packages/sandbox-docker/    @agentbox/sandbox-docker — the local Docker provider
-  Dockerfile.box            base:ubuntu + fuse-overlayfs (inner dockerd fallback storage driver) + node + python + tmux + claude (native installer, stable channel) + codex (`npm i -g @openai/codex`) + opencode (`npm i -g opencode-ai`) + bundled agentbox-ctl + system-wide `git config safe.directory '*'` + `mkdir /workspace && chown vscode`
+  Dockerfile.box            base:ubuntu + fuse-overlayfs (inner dockerd fallback storage driver) + node + python + tmux + claude (native installer, stable channel) + codex (`npm i -g @openai/codex`) + opencode (`npm i -g opencode-ai`) + pi (`npm i -g --ignore-scripts @earendil-works/pi-coding-agent`) + bundled agentbox-ctl + system-wide `git config safe.directory '*'` + `mkdir /workspace && chown vscode`; NOTE: the published GHCR base predates the pi layer, so `ensurePiInstalled` reinstalls pi at runtime for boxes built from it
   src/create.ts             create orchestrator: image → relay → git-worktrees → snapshot? → volumes → run → mount → verify → ctl daemon → persist
   src/claude.ts             helpers for the named claude-config volume and the in-box tmux session (start/attach/info)
   src/codex.ts              codex parity of claude.ts (trimmed — no plugins): named codex-config volume + in-box tmux session + `codex login` argv + reverse `pullCodexConfig`
   src/opencode.ts           opencode parity of codex.ts: one volume holds OpenCode's two dirs (data at the root, config in a `config/` subdir via `OPENCODE_CONFIG_DIR`) + tmux session + `opencode auth login` argv + reverse `pullOpencodeConfig`
+  src/pi.ts                 pi (Earendil `@earendil-works/pi-coding-agent`) parity of opencode.ts: shared `agentbox-pi-config` volume at `/home/vscode/.pi`, rsyncs host `~/.pi/agent` + `PI_CODING_AGENT_DIR` env pin + tmux session + `ensurePiInstalled` runtime fallback (`npm install -g --ignore-scripts @earendil-works/pi-coding-agent`) for boxes from the pre-pi published base + reverse `pullPiConfig`; no `login` subcommand; docker-only in v1
   src/lifecycle.ts          list/inspect/pause/unpause/stop/start/destroy/prune/open; BoxNotFoundError + AmbiguousBoxError
   src/host-export.ts        per-box host export plumbing (rsync of /workspace into ~/.agentbox/boxes/<id>/workspace)
   src/ctl.ts                launchCtlDaemon — `docker exec -d` the in-box supervisor

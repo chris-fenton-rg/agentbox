@@ -243,12 +243,16 @@ export async function ensureClaudeVolume(
   // `oauthAccount` and break the box's first request (see volumeHasClaudeJson).
   const seedClaudeJson = !(await volumeHasClaudeJson(spec.volume, opts.image));
   const hostHome = homedir();
-  // Claude Code's user-skills convention: ~/.claude/skills/<name> is a
-  // RELATIVE symlink to ../../.agents/skills/<name>. From /src-claude/skills/
-  // inside the helper that resolves to /.agents/skills/<name>. Bind-mount the
-  // host's ~/.agents at /.agents so --copy-unsafe-links can dereference each
-  // symlink into a real directory in /dst. Without this, rsync errors with
-  // "symlink has no referent" and the whole sync aborts.
+  // Claude Code's user-skills convention: ~/.claude/skills/<name> is a symlink
+  // into ~/.agents/skills/<name>. It can be RELATIVE (../../.agents/skills/...)
+  // or ABSOLUTE (/Users/<you>/.agents/skills/...) — both forms occur in the
+  // wild (the latter from a plain `ln -s "$HOME/.agents/..."`). We bind-mount
+  // the host's ~/.agents at BOTH /.agents (so a relative link from
+  // /src-claude/skills/ resolves) and its real host path (so an absolute link's
+  // target exists at the same path inside the helper), so --copy-unsafe-links
+  // can dereference either form into a real directory in /dst. Without the
+  // real-path mount, absolute links error with "symlink has no referent" and
+  // the whole sync aborts.
   const hostAgents = join(homedir(), '.agents');
   const hasAgents = await pathExists(hostAgents);
   const args: string[] = [
@@ -266,7 +270,13 @@ export async function ensureClaudeVolume(
     `${hostClaude}:/src-claude:ro`,
   ];
   if (hasJson && seedClaudeJson) args.push('-v', `${hostClaudeJson}:/src-claude-json:ro`);
-  if (hasAgents) args.push('-v', `${hostAgents}:/.agents:ro`);
+  if (hasAgents) {
+    args.push('-v', `${hostAgents}:/.agents:ro`);
+    // Absolute ~/.claude/skills symlinks point at the host-absolute ~/.agents
+    // path; mount it there too so they dereference (no-op if ~/.agents IS
+    // /.agents, which never happens for a real homedir).
+    if (hostAgents !== '/.agents') args.push('-v', `${hostAgents}:${hostAgents}:ro`);
+  }
 
   // Pre-filter host-path hooks. Hook commands whose path is under the user's
   // host home (e.g. `/Users/marco/.config/iterm2/cc-status`) won't exist
@@ -400,7 +410,17 @@ export async function ensureClaudeVolume(
       '{ [ ! -f /dst/.agentbox-cleaned-nm-v1 ] && ' +
         'find /dst -name node_modules -type d -prune -exec rm -rf {} + && ' +
         'touch /dst/.agentbox-cleaned-nm-v1; true; }' +
-        ` && rsync ${rsyncFlags} /src-claude/ /dst/` +
+        // Tolerate rsync exit 23 (partial transfer). The pre-scan excludes the
+        // unsafe symlinks it can find, but it can't descend into reachable
+        // symlinked dirs (e.g. a skill that is itself a ~/.agents symlink), so a
+        // nested un-dereferenceable link inside one — a Python venv's
+        // bin/python -> host interpreter is the common case — still trips
+        // --copy-unsafe-links. Those targets are host binaries useless in the
+        // box anyway; copying everything else and moving on is the right call.
+        // Any other non-zero rsync exit still aborts (the `|| [ rc = 23 ]`
+        // re-raises it), so real failures are not masked. The trailing chown
+        // must still run, so this stays inside the && chain.
+        ` && { rsync ${rsyncFlags} /src-claude/ /dst/ || [ $? -eq 23 ]; }` +
         ' && { [ -f /src-claude-json ] && cp -a /src-claude-json /dst/_claude.json; true; }' +
         ' && { [ -f /src-filter/settings.json ] && cp -a /src-filter/settings.json /dst/settings.json; true; }' +
         ' && { [ -f /src-filter/_claude.json ] && cp -a /src-filter/_claude.json /dst/_claude.json; true; }' +
@@ -1340,7 +1360,7 @@ export async function warmUpClaudeCredentials(
 
 export function formatDetachNotice(
   ref: string,
-  command: 'claude' | 'shell' | 'codex' | 'opencode' = 'claude',
+  command: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi' = 'claude',
   suffix = '',
 ): string {
   return `Session detached. Reattach with: agentbox ${command} attach ${ref}${suffix}`;

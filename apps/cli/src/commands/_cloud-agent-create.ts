@@ -32,7 +32,7 @@ export interface CloudAgentCreateArgs {
   /** Tmux session name (e.g. `claude`). */
   sessionName: string;
   /** Mode label for the wrapper's footer. */
-  mode: 'claude' | 'codex' | 'opencode';
+  mode: 'claude' | 'codex' | 'opencode' | 'pi';
   /** Args passed to the agent after `--`. Threaded through to the attached CLI. */
   extraArgs?: string[];
   /** Bypass the spinner and stream raw provider output to stderr. */

@@ -39,6 +39,10 @@ agentbox hetzner claude
 
 `agentbox hetzner create|claude|codex|opencode` is sugar for the same command with `--provider hetzner`.
 
+<Callout type="warn" title="HEADS UP">
+`agentbox pi` is not supported on Hetzner in v1 — pi is Docker-only.
+</Callout>
+
 ## Prepare snapshot
 
 Hetzner can't build an image from a Dockerfile, so a one-time base snapshot must be baked before the first `create`. `agentbox prepare --provider hetzner` boots a throwaway VPS, runs the install script, snapshots the result, then cleans up.

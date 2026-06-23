@@ -24,7 +24,7 @@ import type { BoxStatusStore } from './status-store.js';
 export const QUEUE_DIR = join(STATE_DIR, 'queue');
 
 export type QueueJobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
-export type QueueAgentKind = 'claude-code' | 'codex' | 'opencode';
+export type QueueAgentKind = 'claude-code' | 'codex' | 'opencode' | 'pi';
 
 /**
  * Host-terminal targeting captured on the submitting host when `queue.openIn`
@@ -369,7 +369,7 @@ export function readActiveAgent(snap: Record<string, unknown> | undefined): {
 } {
   if (!snap || typeof snap !== 'object') return { state: null, updatedAt: null };
   const candidates: Array<{ state: WorkingAgentState; updatedAt: string | null }> = [];
-  for (const key of ['claude', 'codex', 'opencode']) {
+  for (const key of ['claude', 'codex', 'opencode', 'pi']) {
     const sub = (snap as Record<string, unknown>)[key];
     if (!sub || typeof sub !== 'object') continue;
     const o = sub as Record<string, unknown>;

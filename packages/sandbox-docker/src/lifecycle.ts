@@ -16,6 +16,7 @@ import {
   SHARED_OPENCODE_VOLUME,
   type OpencodeSessionInfo,
 } from './opencode.js';
+import { piSessionInfo, SHARED_PI_VOLUME, type PiSessionInfo } from './pi.js';
 import { listShellSessions, type ShellSessionSummary } from './shell-session.js';
 import { bindWorktrees, removeInBoxWorktree, resyncWorkspaceFromHost } from './in-box-git.js';
 import {
@@ -98,6 +99,8 @@ export interface ListedBox extends BoxRecord {
   codexSession: CodexSessionInfo | null;
   /** Live probe of the OpenCode tmux session; null when the box isn't running. */
   opencodeSession: OpencodeSessionInfo | null;
+  /** Live probe of the pi tmux session; null when the box isn't running. */
+  piSession: PiSessionInfo | null;
 }
 
 export async function listBoxes(): Promise<ListedBox[]> {
@@ -172,6 +175,7 @@ export async function listBoxes(): Promise<ListedBox[]> {
           shellSessions: [],
           codexSession: null,
           opencodeSession: null,
+          piSession: null,
         };
       }
       const state = await inspectContainerStatus(b.container);
@@ -187,6 +191,8 @@ export async function listBoxes(): Promise<ListedBox[]> {
         state === 'running' ? await codexSessionInfo(b.container) : null;
       const opencodeSession =
         state === 'running' ? await opencodeSessionInfo(b.container) : null;
+      const piSession =
+        state === 'running' ? await piSessionInfo(b.container) : null;
       return {
         ...b,
         state,
@@ -201,6 +207,7 @@ export async function listBoxes(): Promise<ListedBox[]> {
         shellSessions,
         codexSession,
         opencodeSession,
+        piSession,
       };
     }),
   );
@@ -449,6 +456,8 @@ export interface InspectedBox {
   codexSession: CodexSessionInfo | null;
   /** Null when the container isn't running; otherwise best-effort probe of the tmux 'opencode' session. */
   opencodeSession: OpencodeSessionInfo | null;
+  /** Null when the container isn't running; otherwise best-effort probe of the tmux 'pi' session. */
+  piSession: PiSessionInfo | null;
   /** Live shell tmux sessions; `[]` when the container isn't running. */
   shellSessions: ShellSessionSummary[];
   /** Persisted status snapshot (services/tasks/ports/claude); null when none. */
@@ -480,6 +489,7 @@ export async function inspectBox(idOrName: string): Promise<InspectedBox> {
   let claudeSession: ClaudeSessionInfo | null = null;
   let codexSession: CodexSessionInfo | null = null;
   let opencodeSession: OpencodeSessionInfo | null = null;
+  let piSession: PiSessionInfo | null = null;
   let shellSessions: ShellSessionSummary[] = [];
   if (state === 'running') {
     try {
@@ -497,6 +507,11 @@ export async function inspectBox(idOrName: string): Promise<InspectedBox> {
     } catch {
       opencodeSession = null;
     }
+    try {
+      piSession = await piSessionInfo(record.container);
+    } catch {
+      piSession = null;
+    }
     shellSessions = await listShellSessions(record.container);
   }
 
@@ -513,6 +528,7 @@ export async function inspectBox(idOrName: string): Promise<InspectedBox> {
     claudeSession,
     codexSession,
     opencodeSession,
+    piSession,
     shellSessions,
     persistedStatus,
     hostPaths,
@@ -604,6 +620,11 @@ export async function destroyBox(
   if (box.opencodeConfigVolume && box.opencodeConfigVolume !== SHARED_OPENCODE_VOLUME) {
     await removeVolume(box.opencodeConfigVolume);
     removedVolumes.push(box.opencodeConfigVolume);
+  }
+  // Same for the pi-config volume.
+  if (box.piConfigVolume && box.piConfigVolume !== SHARED_PI_VOLUME) {
+    await removeVolume(box.piConfigVolume);
+    removedVolumes.push(box.piConfigVolume);
   }
   // Per-box `.vscode-server` and `.cursor-server` volumes. The shared
   // SHARED_*_EXTENSIONS_VOLUMEs are never auto-removed (parallel reasoning to
@@ -754,6 +775,9 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
         .map((b) => b.opencodeConfigVolume)
         .filter((v): v is string => typeof v === 'string'),
       ...survivingBoxes
+        .map((b) => b.piConfigVolume)
+        .filter((v): v is string => typeof v === 'string'),
+      ...survivingBoxes
         .map((b) => b.vscodeServerVolume)
         .filter((v): v is string => typeof v === 'string'),
       ...survivingBoxes
@@ -769,6 +793,8 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
       SHARED_CODEX_VOLUME,
       // The shared opencode-config volume — same reasoning (holds OpenCode auth).
       SHARED_OPENCODE_VOLUME,
+      // The shared pi-config volume — same reasoning (holds pi auth/config).
+      SHARED_PI_VOLUME,
       // Shared across boxes: downloaded IDE extensions. Same reasoning.
       SHARED_VSCODE_EXTENSIONS_VOLUME,
       SHARED_CURSOR_EXTENSIONS_VOLUME,

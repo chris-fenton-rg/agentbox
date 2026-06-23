@@ -324,7 +324,7 @@ carry:
 
 The canonical use case is developing AgentBox inside an AgentBox: carry `~/.agentbox/secrets.env` and `~/.agentbox/claude-credentials.json` so the in-box CLI is already authenticated.
 
-When copying a directory, heavy regenerable dirs (`.git`, `node_modules`, `bin`, `obj`, `packages`, `dist`, `.next`, `target`) are dropped by default; `exclude:` adds to that set. The host resolver blocks `..` traversal, denies `/proc|/sys|/dev|/etc/passwd|/etc/shadow`, caps each entry at `box.cpMaxBytes` (default 100 MiB) **after excludes** — the same limit `agentbox cp` uses — and flags symlinks that escape `$HOME` and the project root. On `create`, `claude`, `codex`, and `opencode` the host prompts once — listing each src→dest with size, mode, and symlink warnings — before copying.
+When copying a directory, heavy regenerable dirs (`.git`, `node_modules`, `bin`, `obj`, `packages`, `dist`, `.next`, `target`) are dropped by default; `exclude:` adds to that set. The host resolver blocks `..` traversal, denies `/proc|/sys|/dev|/etc/passwd|/etc/shadow`, caps each entry at `box.cpMaxBytes` (default 100 MiB) **after excludes** — the same limit `agentbox cp` uses — and flags symlinks that escape `$HOME` and the project root. On `create`, `claude`, `codex`, `opencode`, and `pi` the host prompts once — listing each src→dest with size, mode, and symlink warnings — before copying.
 
 ```bash
 # auto-approve every carry entry for this box

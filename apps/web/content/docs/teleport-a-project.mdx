@@ -19,7 +19,7 @@ and [run an agent](/docs/run-an-agent) for the agent commands.
 
 ## Create a box
 
-From your project directory, `agentbox claude` (or `codex`/`opencode`) provisions
+From your project directory, `agentbox claude` (or `codex`/`opencode`/`pi`) provisions
 one isolated box — a local Docker container, or a remote sandbox with
 `--provider` — and launches the agent. It detects git repos, picks a fresh
 per-box branch, captures your uncommitted work, starts the box, and seeds
@@ -41,7 +41,7 @@ agentbox claude --provider hetzner   # or daytona, vercel; local docker is the d
 Refer to a box later by index (`1`, `2`), name, or id prefix. See
 [CLI commands](/docs/cli) for all flags.
 
-<Callout title="TIP">`agentbox claude`, `agentbox codex`, and `agentbox opencode` provision the box **and** launch the agent in one step — these are what you'll normally run. Use plain `agentbox create` when you want just the box, with no agent. See [run an agent](/docs/run-an-agent).</Callout>
+<Callout title="TIP">`agentbox claude`, `agentbox codex`, `agentbox opencode`, and `agentbox pi` provision the box **and** launch the agent in one step — these are what you'll normally run. Use plain `agentbox create` when you want just the box, with no agent. See [run an agent](/docs/run-an-agent).</Callout>
 
 {/* DIAGRAM /diagrams/teleport-a-project.png — nano-banana-pro, home-diagram style ref. Recipe + prompt in apps/web/images.md → Phase D. */}
 <Figure src="/diagrams/teleport-a-project.png" caption="agentbox create gives the box a writable copy of your repo on its own branch; your host checkout is untouched." />

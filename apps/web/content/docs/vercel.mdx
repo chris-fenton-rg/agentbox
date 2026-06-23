@@ -38,6 +38,10 @@ agentbox vercel claude
 
 `agentbox vercel create|claude|codex|opencode` is sugar for the same command with `--provider vercel`.
 
+<Callout type="warn" title="HEADS UP">
+`agentbox pi` is not supported on Vercel in v1 — pi is Docker-only.
+</Callout>
+
 ## Prepare the base snapshot
 
 Vercel can't build a Dockerfile image, so the base environment is a one-time Vercel snapshot (like Hetzner's prepare). `agentbox prepare --provider vercel` boots a fresh sandbox, provisions it (agents, relay shims, VNC, Chromium), then snapshots it. The snapshot id is recorded under the per-provider key `box.imageVercel`, and every `create --provider vercel` boots from it.

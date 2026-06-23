@@ -9,7 +9,7 @@ There are three capabilities here. **Running boxes in parallel** means you launc
 
 ## Run boxes in parallel
 
-Each `agentbox claude` / `codex` / `opencode` call spins up a separate box — separate container, branch, and `/workspace` worktree. They never share state. Each gets an auto-numbered name; pass `-n <name>` if you want to label them in `ls` and `top`.
+Each `agentbox claude` / `codex` / `opencode` / `pi` call spins up a separate box — separate container, branch, and `/workspace` worktree. They never share state. Each gets an auto-numbered name; pass `-n <name>` if you want to label them in `ls` and `top`.
 
 ```bash
 # Three independent boxes on the same repo, each on its own branch
@@ -29,7 +29,7 @@ These run with **no concurrency cap** — they all start immediately and each co
 
 ## Queue background runs with `-i`
 
-`-i, --initial-prompt <text>` (on `agentbox claude`, `codex`, and `opencode`) seeds the agent session with a first user turn and runs the box in the background — no attach. The call writes a queue manifest and returns immediately.
+`-i, --initial-prompt <text>` (on `agentbox claude`, `codex`, `opencode`, and `pi`) seeds the agent session with a first user turn and runs the box in the background — no attach. The call writes a queue manifest and returns immediately.
 
 ```bash
 agentbox claude -i "Upgrade all dependencies and fix the build"
@@ -107,7 +107,7 @@ queue.maxConcurrent = 5 (queue.enabled=true)
 
 ## Orchestrate boxes from an agent
 
-The real power of fan-out is letting *an agent* run the fleet for you. Ask Claude Code (or Codex / OpenCode) on your laptop to "spin up three boxes, fan out this work, watch them, and report back when they're done" — and it can, because AgentBox installs a host skill that teaches it the whole orchestration surface.
+The real power of fan-out is letting *an agent* run the fleet for you. Ask Claude Code (or Codex / OpenCode / pi) on your laptop to "spin up three boxes, fan out this work, watch them, and report back when they're done" — and it can, because AgentBox installs a host skill that teaches it the whole orchestration surface.
 
 ### The `/agentbox-info` skill
 
@@ -117,7 +117,7 @@ Three command families do the actual driving. All are stateless one-shot command
 
 ### `agentbox drive` — read the screen, send keystrokes
 
-`agentbox drive <box>` targets the box's running agent tmux session (auto-picking `claude` → `codex` → `opencode`) and is provider-uniform across docker, Daytona, Hetzner, and Vercel.
+`agentbox drive <box>` targets the box's running agent tmux session (auto-picking `claude` → `codex` → `opencode` → `pi`) and is provider-uniform across docker, Daytona, Hetzner, and Vercel.
 
 ```bash
 agentbox drive snapshot 1                              # print the rendered TUI as plain text
@@ -242,5 +242,5 @@ Per-box live CPU/mem metrics are docker-only; cloud boxes show `—` for those c
 <Figure src="/screenshots/dashboard.png" caption="agentbox dashboard: the box list on the left; the panel on the right acts on the selected box (start an agent, open a shell)." />
 
 <Callout title="NOTE">
-The `dashboard` compositor is Claude-only today. `agentbox codex` / `opencode` runs work in parallel but aren't shown in the dashboard panes yet — use `agentbox top` / `agentbox ls` to monitor those.
+The `dashboard` compositor is Claude-only today. `agentbox codex` / `opencode` / `pi` runs work in parallel but aren't shown in the dashboard panes yet — use `agentbox top` / `agentbox ls` to monitor those.
 </Callout>

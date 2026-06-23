@@ -329,6 +329,7 @@ async function approveInTui(id: string, opts: ApproveOpts): Promise<void> {
 function agentKindForSession(session: string): AgentKind {
   if (session === 'codex') return 'codex';
   if (session === 'opencode') return 'opencode';
+  if (session === 'pi') return 'pi';
   return 'claude';
 }
 

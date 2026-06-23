@@ -59,7 +59,7 @@ export interface CloudAgentAttachArgs {
   /** Tmux session name (e.g. `claude`). */
   sessionName: string;
   /** Mode label for the wrapper's footer. */
-  mode: 'claude' | 'codex' | 'opencode';
+  mode: 'claude' | 'codex' | 'opencode' | 'pi';
   /**
    * Extra args the user typed after `--`. Passed through to the in-box agent
    * verbatim via a base64-encoded launcher. Limitation: args containing

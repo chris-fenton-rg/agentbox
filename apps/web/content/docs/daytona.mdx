@@ -32,6 +32,10 @@ agentbox daytona claude
 
 `agentbox daytona create|claude|codex|opencode` is sugar for the same command with `--provider daytona`.
 
+<Callout type="warn" title="HEADS UP">
+`agentbox pi` is not supported on Daytona in v1 — pi is Docker-only.
+</Callout>
+
 ## Prepare image
 
 Unlike Docker, Daytona does **not** auto-build the box image on first `create`. Run `agentbox prepare --provider daytona` once per org: it builds a **base snapshot** server-side (runtime + your agent static config — plugins, skills, settings, Codex/OpenCode config) and pins it into project config as `box.image`, so later creates boot in seconds.

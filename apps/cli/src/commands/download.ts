@@ -13,6 +13,7 @@ import { handleLifecycleError } from './_errors.js';
 import { downloadClaudeCommand } from './download-claude.js';
 import { downloadCodexCommand } from './download-codex.js';
 import { downloadOpencodeCommand } from './download-opencode.js';
+import { downloadPiCommand } from './download-pi.js';
 import { downloadConfigCommand } from './download-config.js';
 import { downloadEnvCommand } from './download-env.js';
 
@@ -193,6 +194,7 @@ downloadCommand.addCommand(downloadCodexCommand);
 // `agentbox download opencode [box]` — box -> host pull of OpenCode config/auth
 // (additive; reads the opencode-config volume so the box need not be running).
 downloadCommand.addCommand(downloadOpencodeCommand);
+downloadCommand.addCommand(downloadPiCommand);
 
 // `agentbox download config [box]` — box -> host pull of just agentbox.yaml
 // (gitignore-bypassing; for syncing back an in-box-edited/regenerated config).

@@ -17,6 +17,7 @@ import type { BoxRecord, Provider } from '@agentbox/core';
 import { resolveClaudeTeleport } from './claude.js';
 import { resolveCodexTeleport } from './codex.js';
 import { resolveOpencodeTeleport } from './opencode.js';
+import { resolvePiTeleport } from './pi.js';
 import {
   TeleportError,
   type ResolvedTeleport,
@@ -72,6 +73,9 @@ export async function prepareTeleport(
     case 'opencode':
       // Throws TeleportError immediately — v1 stub.
       resolveOpencodeTeleport();
+    case 'pi':
+      // Throws TeleportError immediately — v1 stub.
+      resolvePiTeleport();
   }
 }
 

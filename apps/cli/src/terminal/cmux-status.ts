@@ -18,7 +18,7 @@ import { cmuxBinary } from './host.js';
  * status.json, captures the workspace's original colour/description on attach and
  * restores them on detach.
  */
-export type CmuxAgentMode = 'claude' | 'codex' | 'opencode' | 'shell';
+export type CmuxAgentMode = 'claude' | 'codex' | 'opencode' | 'pi' | 'shell';
 
 /** The workspace's prior colour/description, captured so we can restore on detach. */
 export interface CmuxWorkspaceState {
@@ -37,6 +37,7 @@ const AGENT_LABEL: Record<Exclude<CmuxAgentMode, 'shell'>, string> = {
   claude: 'claude',
   codex: 'codex',
   opencode: 'opencode',
+  pi: 'pi',
 };
 
 /**

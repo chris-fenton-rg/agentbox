@@ -4,7 +4,7 @@
  * import cycle through `index.ts`.
  */
 
-export type TeleportAgent = 'claude' | 'codex' | 'opencode';
+export type TeleportAgent = 'claude' | 'codex' | 'opencode' | 'pi';
 
 export type TeleportLogger = (line: string) => void;
 

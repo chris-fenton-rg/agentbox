@@ -33,6 +33,8 @@ export interface DockerBoxFields {
   codexConfigVolume?: string;
   /** Docker volume mounted at /home/vscode/.local/share/opencode. */
   opencodeConfigVolume?: string;
+  /** Docker volume mounted at /home/vscode/.pi/agent inside the box. */
+  piConfigVolume?: string;
   /** Per-box volume holding `.vscode-server`. */
   vscodeServerVolume?: string;
   /** Per-box volume holding `.cursor-server`. */
@@ -176,6 +178,8 @@ export interface BoxRecord {
   codexConfigVolume?: string;
   /** Docker volume mounted at /home/vscode/.local/share/opencode. Docker only. */
   opencodeConfigVolume?: string;
+  /** Docker volume mounted at /home/vscode/.pi/agent inside the box. Docker only. */
+  piConfigVolume?: string;
   /** Per-box volume holding `.vscode-server`. Docker only. */
   vscodeServerVolume?: string;
   /** Per-box volume holding `.cursor-server`. Docker only. */

@@ -4,10 +4,13 @@ import { join } from 'node:path';
 import {
   hostBackupHasCredentials,
   OPENCODE_FORWARDED_ENV_KEYS,
+  PI_FORWARDED_ENV_KEYS,
   SHARED_CODEX_VOLUME,
   SHARED_OPENCODE_VOLUME,
+  SHARED_PI_VOLUME,
   volumeHasCodexAuth,
   volumeHasOpencodeAuth,
+  volumeHasPiAuth,
 } from '@agentbox/sandbox-docker';
 import type { QueueAgentKind } from '@agentbox/relay';
 import { resolveClaudeAuth } from '../../auth.js';
@@ -67,6 +70,22 @@ export async function opencodeAuthAvailable(
   return volumeHasOpencodeAuth(SHARED_OPENCODE_VOLUME, image);
 }
 
+/**
+ * True when pi is already authenticated: any of its forwarded provider env keys
+ * (e.g. ANTHROPIC_API_KEY, ZAI_GLM_API_KEY), a host `~/.pi/agent/auth.json`, or
+ * an `auth.json` already in the shared pi-config volume.
+ */
+export async function piAuthAvailable(
+  image: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<boolean> {
+  for (const k of PI_FORWARDED_ENV_KEYS) {
+    if ((env[k] ?? '').length > 0) return true;
+  }
+  if (await fileExists(join(homedir(), '.pi', 'agent', 'auth.json'))) return true;
+  return volumeHasPiAuth(SHARED_PI_VOLUME, image);
+}
+
 const MESSAGES: Record<QueueAgentKind, string> = {
   'claude-code':
     '-i / --initial-prompt: no Claude credentials on host. Run `agentbox claude login` first (or `agentbox claude` interactively) to seed them, then retry.',
@@ -74,6 +93,7 @@ const MESSAGES: Record<QueueAgentKind, string> = {
     '-i / --initial-prompt: no Codex credentials on host. Run `agentbox codex login` first (or set OPENAI_API_KEY) to seed them, then retry.',
   opencode:
     '-i / --initial-prompt: no OpenCode credentials on host. Run `agentbox opencode login` first to seed them, then retry.',
+  pi: '-i / --initial-prompt: no pi credentials on host. Sign in to a provider in pi (writes ~/.pi/agent/auth.json) or set a provider API key (e.g. ANTHROPIC_API_KEY, ZAI_GLM_API_KEY), then retry.',
 };
 
 export class MissingAgentCredsError extends Error {
@@ -106,6 +126,8 @@ export async function assertAgentCredsAvailable(input: AssertAgentCredsInput): P
     ok = await claudeAuthAvailable(env);
   } else if (input.agent === 'codex') {
     ok = await codexAuthAvailable(input.image, env);
+  } else if (input.agent === 'pi') {
+    ok = await piAuthAvailable(input.image, env);
   } else {
     ok = await opencodeAuthAvailable(input.image, env);
   }

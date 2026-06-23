@@ -27,6 +27,12 @@ import {
   type OpencodeMountResult,
 } from './opencode.js';
 import {
+  buildPiMounts,
+  ensurePiVolume,
+  resolvePiVolume,
+  type PiMountResult,
+} from './pi.js';
+import {
   type BoxLimitSpec,
   containerExists,
   dockerInfo,
@@ -175,6 +181,13 @@ export interface CreateBoxOptions {
    * volume. See the opencode block below.
    */
   opencodeConfig?: { isolate: boolean };
+  /**
+   * pi CLI config volume. When provided (i.e. `agentbox pi`), the box always
+   * mounts a synced `agentbox-pi-config` volume at /home/vscode/.pi. When
+   * omitted, `createBox` still mounts it *if the host uses pi* (`~/.pi/agent`
+   * exists). `isolate: true` opts into a per-box volume. See the pi block below.
+   */
+  piConfig?: { isolate: boolean };
   /**
    * When true, run `npm install -g @playwright/cli@latest` inside the box after
    * `/workspace` is seeded. agent-browser is always installed in the image;
@@ -704,6 +717,30 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     opencodeConfigVolume = opencodeSpec.volume;
   }
 
+  // pi config volume. Mounted when the caller wants pi (`agentbox pi` passes
+  // `piConfig`) OR the host already uses pi (`~/.pi/agent` exists). One volume
+  // mounted at /home/vscode/.pi holds pi's agent state in an `agent/` subdir
+  // (synced from the host) plus pi's own cache — see pi.ts.
+  const wantPi =
+    opts.piConfig !== undefined || (await pathExists(join(homedir(), '.pi', 'agent')));
+  let piMounts: PiMountResult | undefined;
+  let piConfigVolume: string | undefined;
+  if (wantPi) {
+    const piSpec = resolvePiVolume({
+      isolate: opts.piConfig?.isolate ?? false,
+      boxId: id,
+    });
+    const piEnsured = await ensurePiVolume(piSpec, {
+      syncFromHost: true,
+      image: ensureRef,
+    });
+    if (piEnsured.synced) log(`synced ${piSpec.volume} from ~/.pi/agent`);
+    else if (piEnsured.created) log(`created empty volume ${piSpec.volume} (no host pi)`);
+    else log(`reusing volume ${piSpec.volume}`);
+    piMounts = buildPiMounts(piSpec, process.env);
+    piConfigVolume = piSpec.volume;
+  }
+
   const boxDir = boxRunDirFor({ id, name, projectIndex });
   const socketDir = join(boxDir, 'run');
   const socketPath = join(socketDir, 'ctl.sock');
@@ -718,6 +755,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   extraVolumes.push(...claudeMounts.extraVolumes);
   if (codexMounts) extraVolumes.push(...codexMounts.extraVolumes);
   if (opencodeMounts) extraVolumes.push(...opencodeMounts.extraVolumes);
+  if (piMounts) extraVolumes.push(...piMounts.extraVolumes);
   extraVolumes.push(...ide.extraVolumes);
   extraVolumes.push(`${socketDir}:/run/agentbox`);
   extraVolumes.push(`${mergedExportDir}:${CONTAINER_EXPORT_MERGED}`);
@@ -872,6 +910,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     claudeConfigVolume: claudeSpec.volume,
     codexConfigVolume,
     opencodeConfigVolume,
+    piConfigVolume,
     vscodeServerVolume: vscodeServerVolumeName(id),
     cursorServerVolume: cursorServerVolumeName(id),
     relayToken: relayUp ? relayToken : undefined,
@@ -905,6 +944,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       ...claudeMounts.env,
       ...(codexMounts?.env ?? {}),
       ...(opencodeMounts?.env ?? {}),
+      ...(piMounts?.env ?? {}),
       ...relayEnv,
       ...vncEnv,
       ...portlessEnv,

@@ -45,6 +45,7 @@ export interface DockerCreateOptions {
   claudeConfig?: { isolate: boolean };
   codexConfig?: { isolate: boolean };
   opencodeConfig?: { isolate: boolean };
+  piConfig?: { isolate: boolean };
   claudeEnv?: Record<string, string>;
 }
 
@@ -69,6 +70,7 @@ export const dockerProvider: Provider = {
       claudeEnv: po.claudeEnv,
       codexConfig: po.codexConfig,
       opencodeConfig: po.opencodeConfig,
+      piConfig: po.piConfig,
       withPlaywright: req.withPlaywright,
       withEnv: req.withEnv,
       envFilesToImport: req.envFilesToImport,

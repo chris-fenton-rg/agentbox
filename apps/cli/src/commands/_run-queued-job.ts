@@ -26,8 +26,10 @@ import {
   startClaudeSession,
   startCodexSession,
   startOpencodeSession,
+  startPiSession,
   ensureCodexInstalled,
   ensureOpencodeInstalled,
+  ensurePiInstalled,
 } from '@agentbox/sandbox-docker';
 import { readJob, writeJob, type QueueAgentKind, type QueueJob } from '@agentbox/relay';
 import { resolveClaudeAuth } from '../auth.js';
@@ -152,6 +154,7 @@ async function runDockerJob(
       job.agent === 'codex' ? { isolate: cfg.effective.box.isolateCodexConfig } : undefined,
     opencodeConfig:
       job.agent === 'opencode' ? { isolate: cfg.effective.box.isolateOpencodeConfig } : undefined,
+    piConfig: job.agent === 'pi' ? { isolate: cfg.effective.box.isolatePiConfig } : undefined,
     claudeEnv: resolved?.env,
     withPlaywright,
     withEnv: cfg.effective.box.withEnv,
@@ -222,6 +225,17 @@ async function runDockerJob(
       opencodeArgs: promptedArgs,
       sessionName: cfg.effective.opencode.sessionName,
     });
+  } else if (job.agent === 'pi') {
+    log.write(`checking pi`);
+    await ensurePiInstalled(result.record.container, {
+      onProgress: (line) => log.write(line),
+    });
+    log.write(`starting pi session`);
+    await startPiSession({
+      container: result.record.container,
+      piArgs: promptedArgs,
+      sessionName: cfg.effective.pi.sessionName,
+    });
   } else {
     throw new Error(`unknown agent kind: ${String(job.agent satisfies QueueAgentKind)}`);
   }
@@ -230,7 +244,7 @@ async function runDockerJob(
 }
 
 /** The CLI subcommand name for an agent kind (`claude-code` → `claude`). */
-function agentBinaryName(agent: QueueAgentKind): 'claude' | 'codex' | 'opencode' {
+function agentBinaryName(agent: QueueAgentKind): 'claude' | 'codex' | 'opencode' | 'pi' {
   return agent === 'claude-code' ? 'claude' : agent;
 }
 
@@ -346,6 +360,10 @@ async function runCloudJob(
   } else if (job.agent === 'opencode') {
     binary = 'opencode';
     sessionName = cfg.effective.opencode.sessionName;
+    extraArgs = promptedArgs;
+  } else if (job.agent === 'pi') {
+    binary = 'pi';
+    sessionName = cfg.effective.pi.sessionName;
     extraArgs = promptedArgs;
   } else {
     throw new Error(`unknown agent kind: ${String(job.agent satisfies QueueAgentKind)}`);

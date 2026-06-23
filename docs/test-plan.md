@@ -15,7 +15,7 @@ A regression checklist that an AI (or human) can drive end-to-end to declare Age
 
 **Log files.** Every long-running command tees to `~/.agentbox/logs/<cmd>.log`, with the previous run rotated to `<cmd>.log.prev`. `~/.agentbox/logs/latest.log` always points to the most recent run. Don't pick a blind long timeout — start the command in the background and `tail -f` the log until the BEGIN/END marker for the step you care about (see [CLAUDE.md §Testing / verifying](../CLAUDE.md)).
 
-**TUI tests.** Interactive commands (`dashboard`, `claude`, `codex`, `opencode`, `shell`) are driven through the `pnpm drive` PTY harness — see [`apps/cli/test/_harness/README.md`](../apps/cli/test/_harness/README.md).
+**TUI tests.** Interactive commands (`dashboard`, `claude`, `codex`, `opencode`, `pi`, `shell`) are driven through the `pnpm drive` PTY harness — see [`apps/cli/test/_harness/README.md`](../apps/cli/test/_harness/README.md).
 
 **CLI invocation.** Tests assume a built workspace (`pnpm -w build`) and invoke the CLI as `node apps/cli/dist/index.js <cmd>` so the path is unambiguous. After `npm i -g @madarco/agentbox`, the same calls work as `agentbox <cmd>`.
 
@@ -574,6 +574,34 @@ EOF`
 
 ---
 
+### agentbox pi
+
+- [ ] **PI-001** `pi` creates a box and launches pi session.
+  - **Providers:** [docker]
+  - **Run:** `node apps/cli/dist/index.js pi -y -n pi-smoke &` then `tail -f ~/.agentbox/logs/pi.log` until ready.
+  - **Signal:** box `running`; tmux session named `pi` present (`agentbox shell pi-smoke -- tmux list-sessions | grep -q pi`); pi TUI alive via `pnpm drive`.
+  - **Note:** End-to-end create + agent attach for pi (docker-only in v1; cloud providers are not supported).
+
+- [ ] **PI-002** `pi` subcommand parity with opencode (attach, start).
+  - **Providers:** [docker]
+  - **Run:** same sequence as OPENCODE-001..003 substituting `pi` (note: pi has no `login` subcommand — skip that step).
+  - **Signal:** see CLAUDE-001..003; auth is via env vars or `~/.pi/agent/auth.json`, not a `pi login` flow.
+  - **Note:** Confirms `pi attach` and `pi start` (with config resync) work without a `login` subcommand.
+
+- [ ] **PI-003** `pi start` resyncs host `~/.pi/agent` into the box.
+  - **Providers:** [docker]
+  - **Run:** modify `~/.pi/agent/settings.json` on host; `node apps/cli/dist/index.js pi start pi-smoke`; verify inside box: `agentbox shell pi-smoke -- cat /home/vscode/.pi/agent/settings.json`.
+  - **Signal:** box-side file reflects the host change; `PI_CODING_AGENT_DIR` set in box env.
+  - **Note:** Config resync path mirrors `claude start`'s `~/.claude` resync.
+
+- [ ] **PI-004** `download pi` copies pi config back to host.
+  - **Providers:** [docker]
+  - **Run:** install a pi extension inside the box; `node apps/cli/dist/index.js download pi pi-smoke`.
+  - **Signal:** new extension appears in host `~/.pi/agent/extensions/`; existing host files not overwritten (additive only).
+  - **Note:** Reverse of the forward sync; mirrors `download claude`.
+
+---
+
 ### agentbox open
 
 - [ ] **OPEN-001** `open --path` prints local sshfs/rsync mount path.
@@ -1015,6 +1043,8 @@ These appear in the test plan as **`EXPECTED-FAIL-*`** entries — they're track
 | EXPECTED-FAIL-CKPT-PAUSE | `checkpoint create --pause` flag on hetzner | `hertzner_backlog.md` |
 | EXPECTED-FAIL-HET-ZEROPAUSE | True zero-cost pause on hetzner (snapshot + respawn) | `hertzner_backlog.md` |
 | EXPECTED-FAIL-DAYTONA-WSCKPT | Daytona workspace-state checkpoint (`_experimental_createSnapshot` blocker) | `daytona-backlog.md` |
+| EXPECTED-FAIL-PI-CLOUD | `agentbox pi` on cloud providers (daytona/hetzner/vercel/e2b) not yet supported | backlog — pi is docker-only in v1 |
+| EXPECTED-FAIL-PI-TELEPORT | `agentbox pi -c` / `--resume` session teleport not yet supported | backlog — emits a friendly error |
 
 ---
 

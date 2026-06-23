@@ -19,7 +19,7 @@
  */
 import { isKnownProvider } from './registry.js';
 
-export const SUGARED_COMMANDS = ['create', 'claude', 'codex', 'opencode'] as const;
+export const SUGARED_COMMANDS = ['create', 'claude', 'codex', 'opencode', 'pi'] as const;
 export type SugaredCommand = (typeof SUGARED_COMMANDS)[number];
 
 function isSugared(name: string): name is SugaredCommand {

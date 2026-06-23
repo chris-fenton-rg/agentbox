@@ -18,7 +18,7 @@ the **local Docker** provider, which needs no account.
 - **Docker** — Desktop or OrbStack, running.
 - **Node** `>=20.10` on your `PATH`.
 - **MacOS** or **Linux**
-- An agent CLI — e.g. `claude`, `codex` or `opencode`.
+- An agent CLI — e.g. `claude`, `codex`, `opencode`, or `pi`.
 - (Optional) an account for Vercel, Hetzner or Daytona.
 
 NB: Agentbox will open a link for OAuth and acquire the tokens for your AI subscription and for cloud providers API keys.
@@ -104,7 +104,7 @@ Detach with `Ctrl+b` followed by `d` in rapid succession. Then you can reattach
 with `agentbox attach 1`, where `1` is the number assigned in sequence to
 every box in the same project.
 
-You can attach to any running Claude / Codex / OpenCode session, and also open the box's live screen to follow the agent's browser and IDE in real time.
+You can attach to any running Claude / Codex / OpenCode / pi session, and also open the box's live screen to follow the agent's browser and IDE in real time.
 
 The viewer streams the box's full desktop over noVNC.
 
@@ -126,7 +126,7 @@ list.
 | Command                            | What it does                                                            |
 | ---------------------------------- | ----------------------------------------------------------------------- |
 | `agentbox list`                    | List every box in the current project with its agent's live state.      |
-| `agentbox attach 1`                | Reattach to the running agent session on box 1 (claude / codex / opencode). |
+| `agentbox attach 1`                | Reattach to the running agent session on box 1 (claude / codex / opencode / pi). |
 | `agentbox shell 1`                 | Open an interactive bash shell inside the box.                          |
 | `agentbox url`                     | Open the box's web app URL in your browser.                             |
 | `agentbox pause 1`                 | Freeze the box to save resources — resumes sub-second.                  |

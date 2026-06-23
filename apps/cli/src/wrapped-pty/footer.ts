@@ -27,7 +27,7 @@ export type FooterState =
       boxServiceStatus?: string;
       /** Mode drives the state label: claude shows claude activity, the
        *  others show `(shell)` / `(codex)` / `(opencode)`. */
-      mode: 'claude' | 'shell' | 'codex' | 'opencode';
+      mode: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi';
       /** Whether the session can be detached (tmux-backed). Drives the
        *  expanded leader menu + the pinned `Control+a d: detach` hint. */
       detachable?: boolean;

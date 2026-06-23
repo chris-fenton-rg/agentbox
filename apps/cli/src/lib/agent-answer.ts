@@ -23,7 +23,7 @@ export const TUI_ID_PREFIX = 'tui';
 export type InTuiKind = 'plan' | 'question' | 'permission';
 
 /** Which coding agent owns the session (drives keystroke conventions). */
-export type AgentKind = 'claude' | 'codex' | 'opencode';
+export type AgentKind = 'claude' | 'codex' | 'opencode' | 'pi';
 
 export interface TuiId {
   boxId: string;

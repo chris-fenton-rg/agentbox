@@ -15,7 +15,7 @@ This is the command catalog. Conceptual depth lives in the linked task pages —
 
 ## Create & run
 
-`create` makes a box but launches no agent. `claude`, `codex`, and `opencode` create (or reuse) a box *and* launch that agent in a detachable tmux session — they mirror `create`'s entire flag surface, so you can swap the verb without relearning flags. `fork` teleports the agent session you're running on the host right now into a fresh box.
+`create` makes a box but launches no agent. `claude`, `codex`, `opencode`, and `pi` create (or reuse) a box *and* launch that agent in a detachable tmux session — they mirror `create`'s entire flag surface, so you can swap the verb without relearning flags. `fork` teleports the agent session you're running on the host right now into a fresh box.
 
 ```bash
 # Create a box, no agent
@@ -25,9 +25,10 @@ agentbox create
 agentbox claude
 agentbox codex
 agentbox opencode
+agentbox pi
 ```
 
-The agent-agnostic `agentbox attach [box]` reattaches to whichever agent session is running in the box (it prompts when more than one is live). It never auto-starts: when nothing is running it prints a warning and exits non-zero. Each agent command also exposes its own `attach` / `start` / `login` subcommands: per-agent `attach` reattaches *and* starts a session if none is running (never re-syncs config), `start` (re)starts a session in an existing box (rsyncs host config unless `--no-sync-config`), and `login` runs that agent's auth flow.
+The agent-agnostic `agentbox attach [box]` reattaches to whichever agent session is running in the box (it prompts when more than one is live). It never auto-starts: when nothing is running it prints a warning and exits non-zero. Each agent command also exposes its own `attach` / `start` subcommands: per-agent `attach` reattaches *and* starts a session if none is running (never re-syncs config), `start` (re)starts a session in an existing box (rsyncs host config unless `--no-sync-config`). `claude`, `codex`, and `opencode` also have a `login` subcommand for their respective auth flows; **pi has no `login` subcommand** — authenticate via API-key env vars or `~/.pi/agent/auth.json` (see [run an agent](/docs/run-an-agent)).
 
 ```bash
 # Create a box and drop into a shell once it's ready
@@ -50,11 +51,14 @@ agentbox fork --agent codex --attach-in background
 
 # Anything after -- is forwarded to the in-box agent
 agentbox claude -- --model sonnet
+agentbox pi -- --model zai-glm/glm-5.2
 ```
 
 Shared create/agent flags include `-n, --name`, `-w, --workspace <path>`, `--provider <name>`, `--snapshot <ref>` (start from a checkpoint), `--image <ref>`, `--build` (build the base image locally instead of pulling), `-y, --yes`, `--with-env`, `--with-playwright`, `--no-vnc`, `--portless` / `--no-portless`, `--from-branch <ref>`, `-b, --use-branch <name>`, `--memory`, `--cpus`, `--disk`, `--size <spec>` (cloud), and `--carry-yes` / `--carry <mode>`.
 
-Agent-specific: `--attach-in <split|window|tab|same>`, `-d, --no-attach`, `-i, --initial-prompt <text>` (background queue), and for `claude` only `-c, --continue`, `--resume <id>`, `--plan <path>`, and `--dangerously-skip-permissions` (on by default in boxes). `fork` adds `--agent`, `--session <id>`, and `--attach-in` (default `tab`).
+Agent-specific: `--attach-in <split|window|tab|same>`, `-d, --no-attach`, `-i, --initial-prompt <text>` (background queue), and for `claude` only `-c, --continue`, `--resume <id>`, `--plan <path>`, and `--dangerously-skip-permissions` (on by default in boxes). `fork` adds `--agent`, `--session <id>`, and `--attach-in` (default `tab`). pi adds `--isolate-pi-config` (per-box volume instead of the shared `agentbox-pi-config`); pi does **not** support `-c`/`--resume` (session teleport) or a `login` subcommand.
+
+<Callout type="warn" title="HEADS UP">`agentbox pi` is **Docker-only** in v1. Cloud providers (Daytona, Hetzner, Vercel, E2B) are not yet supported for pi.</Callout>
 
 <Callout type="warn" title="HEADS UP">`-i` / `--initial-prompt` is AgentBox's background-queue prompt, not the agent's own `-p` print mode. To run the agent headless, pass it after `--` (e.g. `agentbox claude -- -p "..."`). Note also that `-i` means `--inline` on the `attach`/`start` subcommands.</Callout>
 
@@ -184,7 +188,7 @@ agentbox git status 1
 agentbox git pr create 1
 ```
 
-`download` pulls `/workspace` back into your host workspace, honouring `.gitignore`. It has typed subcommands for agent state: `download env`, `download claude`, `download codex`, `download opencode`, `download config`. `cp` copies files or directories in either direction, like `docker cp`. `git` runs git/gh operations against the box from the host through the relay, so push and fetch use your host credentials and the box never sees them.
+`download` pulls `/workspace` back into your host workspace, honouring `.gitignore`. It has typed subcommands for agent state: `download env`, `download claude`, `download codex`, `download opencode`, `download pi`, `download config`. `cp` copies files or directories in either direction, like `docker cp`. `git` runs git/gh operations against the box from the host through the relay, so push and fetch use your host credentials and the box never sees them.
 
 `cp` drops heavy, regenerable directories by default (`.git`, `node_modules`, `bin`, `obj`, `packages`, `dist`, `.next`, `target`) — keep them with `--no-default-excludes`, or add more with repeatable `--exclude=<glob|name>`. An upload whose size (after excludes) exceeds `box.cpMaxBytes` (default 100 MB) is **blocked** and prints a `du`-style tree of the biggest remaining folders so you can decide what to drop; trim it with `--exclude`, copy the heavy folders one at a time, or pass `--yes` to copy it all anyway.
 
@@ -305,7 +309,7 @@ agentbox prune --dry-run
 agentbox prune --all -y
 agentbox prune --provider hetzner
 
-# Background jobs (agentbox claude|codex|opencode -i)
+# Background jobs (agentbox claude|codex|opencode|pi -i)
 agentbox queue list
 agentbox queue show <id>
 agentbox queue cancel <id>

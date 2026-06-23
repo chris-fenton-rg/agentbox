@@ -66,7 +66,7 @@ export interface WrappedAttachOptions {
    *  title. Pre-feature boxes lack it; absent is fine. */
   projectIndex?: number;
   /** Mode label affects the idle footer state label only. */
-  mode: 'claude' | 'shell' | 'codex' | 'opencode';
+  mode: 'claude' | 'shell' | 'codex' | 'opencode' | 'pi';
   /** Whether the inner session can be detached (tmux-backed). Drives the
    *  `Ctrl+a d` detach chord + footer hint. Defaults to `mode === 'claude'`
    *  (claude is always tmux-backed); a tmux-backed `agentbox shell` passes
@@ -163,7 +163,7 @@ function buildAgentboxAttachArgv(
   mode: WrappedAttachOptions['mode'],
   boxName: string,
 ): string[] | null {
-  if (mode !== 'claude' && mode !== 'codex' && mode !== 'opencode') return null;
+  if (mode !== 'claude' && mode !== 'codex' && mode !== 'opencode' && mode !== 'pi') return null;
   return [mode, 'attach', boxName, '--attach-in', 'same'];
 }
 
@@ -835,7 +835,9 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
           ? status?.codex
           : opts.mode === 'opencode'
             ? status?.opencode
-            : opts.mode === 'shell'
+            : // pi has no ctl activity reporter yet, so (like shell) it carries no
+              // live agent body — the footer falls back to the box name.
+              opts.mode === 'shell' || opts.mode === 'pi'
               ? undefined
               : status?.claude;
       const nextTitle = body?.sessionTitle?.trim() || undefined;

@@ -73,7 +73,7 @@ checkpoint alpha-1 (layered) -> /Users/you/.agentbox/checkpoints/<hash>/alpha-1 
 
 The payoff of a checkpoint is booting a new box *from* it instead of building from scratch — workspace seeding is skipped entirely since the image already has `/workspace` populated. Two ways to start warm:
 
-- **Explicit** — `agentbox create --snapshot <ref>` (also works on `claude` / `codex` / `opencode`); overrides any configured default.
+- **Explicit** — `agentbox create --snapshot <ref>` (also works on `claude` / `codex` / `opencode` / `pi`); overrides any configured default.
 - **Implicit** — once a checkpoint is `set-default`, every plain `agentbox create` in that project starts from it automatically.
 
 By default, starting from a checkpoint still merges the host's current branch and overlays your uncommitted changes on top of the captured state. `--no-resync` uses the frozen tree as-is.

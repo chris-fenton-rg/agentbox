@@ -62,6 +62,7 @@ export interface UserConfig {
     isolateClaudeConfig?: boolean;
     isolateCodexConfig?: boolean;
     isolateOpencodeConfig?: boolean;
+    isolatePiConfig?: boolean;
     image?: string;
     /**
      * Per-provider override of `image`. Written by `agentbox prepare
@@ -97,6 +98,9 @@ export interface UserConfig {
     dangerouslySkipPermissions?: boolean;
   };
   opencode?: {
+    sessionName?: string;
+  };
+  pi?: {
     sessionName?: string;
   };
   attach?: {
@@ -192,6 +196,7 @@ export interface EffectiveConfig {
     isolateClaudeConfig: boolean;
     isolateCodexConfig: boolean;
     isolateOpencodeConfig: boolean;
+    isolatePiConfig: boolean;
     image: string;
     imageDocker: string;
     imageDaytona: string;
@@ -222,6 +227,9 @@ export interface EffectiveConfig {
     dangerouslySkipPermissions: boolean;
   };
   opencode: {
+    sessionName: string;
+  };
+  pi: {
     sessionName: string;
   };
   attach: {
@@ -336,6 +344,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     isolateClaudeConfig: false,
     isolateCodexConfig: false,
     isolateOpencodeConfig: false,
+    isolatePiConfig: false,
     image: 'agentbox/box:dev',
     imageDocker: '',
     imageDaytona: '',
@@ -369,6 +378,9 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   },
   opencode: {
     sessionName: 'opencode',
+  },
+  pi: {
+    sessionName: 'pi',
   },
   attach: {
     openIn: 'split',
@@ -592,6 +604,11 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     description: 'Use a per-box OpenCode config/data volume instead of the shared one.',
   },
   {
+    key: 'box.isolatePiConfig',
+    type: 'bool',
+    description: 'Use a per-box pi config volume (~/.pi/agent) instead of the shared one.',
+  },
+  {
     key: 'box.image',
     type: 'string',
     description: 'Generic box image ref (fallback). Used as fallback when no per-provider override is set; the default `agentbox/box:dev` is treated as a sentinel by cloud backends (boot from their prepared base snapshot instead).',
@@ -721,6 +738,11 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'opencode.sessionName',
     type: 'string',
     description: 'tmux session name for `agentbox opencode`.',
+  },
+  {
+    key: 'pi.sessionName',
+    type: 'string',
+    description: 'tmux session name for `agentbox pi`.',
   },
   {
     key: 'attach.openIn',

@@ -12,7 +12,7 @@ export interface HelpGroup {
 }
 
 export const HELP_GROUPS: HelpGroup[] = [
-  { title: 'Create & run', commands: ['create', 'claude', 'fork', 'codex', 'opencode'] },
+  { title: 'Create & run', commands: ['create', 'claude', 'fork', 'codex', 'opencode', 'pi'] },
   {
     title: 'Access',
     commands: ['dashboard', 'attach', 'url', 'screen', 'code', 'shell', 'open', 'logs', 'drive'],
