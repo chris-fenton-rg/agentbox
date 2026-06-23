@@ -243,14 +243,17 @@ All run against Docker-via-Colima. The box image was built locally on Colima
 
 Stated honestly and documented in-repo:
 
-1. **Cloud: Daytona done + verified; Hetzner/Vercel/E2B pending.** `agentbox pi
-   --provider daytona` is fully wired and live-verified (see §10). The shared
-   cloud layer (`sandbox-cloud/agent-credentials.ts` AGENT_SPECS + forwarded
-   `PI_CODING_AGENT_DIR`, `host-stage.ts` pi static/credential stagers, the
-   `Dockerfile.box` auth.json symlink + pi bake) covers every provider, but the
-   per-provider **static-config staging** is only added to `daytona/prepare.ts`
-   so far — Hetzner/Vercel/E2B need the same one-line addition to their
-   `prepare.ts` (and their own creds to verify). A mechanical follow-up.
+1. **Cloud: Daytona live-verified; Hetzner/Vercel/E2B wired, validation
+   pending.** `agentbox pi --provider daytona` is verified end-to-end (§10). All
+   four cloud providers are now fully wired for pi: the shared layer
+   (`sandbox-cloud/agent-credentials.ts` AGENT_SPECS + forwarded
+   `PI_CODING_AGENT_DIR`, `host-stage.ts` pi stagers, `Dockerfile.box` bake +
+   symlink) plus per-provider pieces — `daytona/prepare.ts` staging,
+   `vercel`/`hetzner` `prepare.ts` staging + `provision.sh`/`install-box.sh`
+   (pi install + creds symlink), and `e2b` `build-template.sh` (pi install +
+   creds symlink; e2b stages no agent static config, matching codex/opencode).
+   Hetzner/Vercel/E2B are **implemented but not yet live-validated** — that needs
+   each provider's credentials + a `prepare` run. See §10.
 2. **Session teleport.** Carrying a *host* pi session into a fresh box
    (`-c`/`--resume`) is a v1 stub (friendly error). pi's own `--continue`/
    `--resume` still work *inside* a box across stop/start (the volume persists
@@ -356,3 +359,16 @@ and produced a real model turn from Daytona's remote IP** — the OAuth-from-
 remote-IP concern (raised by the codex Keychain/device-auth docs) did **not**
 materialize for pi, because pi stores its openai-codex token as a plain file in
 `auth.json` (not the macOS Keychain), so it stages cleanly into the sandbox.
+
+### Hetzner / Vercel / E2B — wired, validation pending
+All three are now implemented the same way (binary install + creds symlink in
+each provider's bake script — `provision.sh` / `install-box.sh` /
+`build-template.sh` — plus pi static-config staging in `vercel`/`hetzner`
+`prepare.ts`; E2B stages no agent static config, matching codex/opencode there).
+They share the generic cloud credential seeding, so `agentbox pi --provider
+{hetzner,vercel,e2b}` routes through the same `cloudAgentCreate` path as Daytona.
+Each still needs its own provider credentials + a `prepare` run to bake the base,
+then the same lifecycle sweep — a validation pass, not new design. The
+**gotcha** from Daytona applies to all of them: edit the **canonical** bake
+scripts under `packages/sandbox-{vercel,hetzner,e2b}/scripts/`, not the generated
+`apps/cli/runtime/.../scripts/` copies that `stage-runtime.mjs` overwrites.

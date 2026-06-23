@@ -217,15 +217,19 @@ sudo -u vscode -H mkdir -p \
   /home/vscode/.claude/skills/agentbox-setup \
   /home/vscode/.codex \
   /home/vscode/.local/share/opencode \
+  /home/vscode/.pi/agent \
   /home/vscode/.agentbox-creds/claude \
   /home/vscode/.agentbox-creds/codex \
-  /home/vscode/.agentbox-creds/opencode
+  /home/vscode/.agentbox-creds/opencode \
+  /home/vscode/.agentbox-creds/pi
 sudo -u vscode -H ln -sf /home/vscode/.agentbox-creds/claude/.credentials.json \
   /home/vscode/.claude/.credentials.json
 sudo -u vscode -H ln -sf /home/vscode/.agentbox-creds/codex/auth.json \
   /home/vscode/.codex/auth.json
 sudo -u vscode -H ln -sf /home/vscode/.agentbox-creds/opencode/auth.json \
   /home/vscode/.local/share/opencode/auth.json
+sudo -u vscode -H ln -sf /home/vscode/.agentbox-creds/pi/auth.json \
+  /home/vscode/.pi/agent/auth.json
 sudo -u vscode -H ln -sf /home/vscode/.claude/_claude.json /home/vscode/.claude.json
 
 # `/agentbox-setup` skill — the in-box-only first-run wizard the setup
@@ -338,7 +342,9 @@ done_ "agent-browser + playwright + portless (global npm)"
 step "Codex CLI prereqs (bubblewrap) + agent installs"
 apt-get install -y --no-install-recommends bubblewrap
 npm install -g @openai/codex opencode-ai
-done_ "Codex CLI prereqs (bubblewrap) + agent installs"
+# pi: separate line with --ignore-scripts (skips pi's postinstall node fetch).
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+done_ "Codex CLI prereqs (bubblewrap) + agent installs (incl. pi)"
 
 step "Claude Code (native installer, run as vscode)"
 # Anthropic's native installer drops `claude` at /home/vscode/.local/bin/.

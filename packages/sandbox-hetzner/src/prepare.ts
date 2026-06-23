@@ -37,6 +37,7 @@ import {
   stageClaudeStaticForUpload,
   stageCodexStaticForUpload,
   stageOpencodeStaticForUpload,
+  stagePiStaticForUpload,
   type StageResult,
 } from '@agentbox/sandbox-cloud';
 import { ensureHetznerCredentials } from './credentials.js';
@@ -260,7 +261,7 @@ export async function prepareHetzner(
     // opencode boot with no plugins, no skills, no settings, and prompt the
     // user to log in fresh on every box.
     progress('staging host agent static config');
-    const stagings: Array<{ kind: 'claude' | 'codex' | 'opencode'; tar: StageResult; dest: string }> = [];
+    const stagings: Array<{ kind: 'claude' | 'codex' | 'opencode' | 'pi'; tar: StageResult; dest: string }> = [];
     try {
       const claudeTar = await stageClaudeStaticForUpload({ hostWorkspace: opts.hostWorkspace });
       for (const w of claudeTar.warnings) log(`prepare-hetzner: ${w}`);
@@ -276,6 +277,11 @@ export async function prepareHetzner(
       for (const w of opencodeTar.warnings) log(`prepare-hetzner: ${w}`);
       if (opencodeTar.tarballPath) stagings.push({ kind: 'opencode', tar: opencodeTar, dest: '/home/vscode/.local/share/opencode' });
       else await opencodeTar.cleanup();
+
+      const piTar = await stagePiStaticForUpload();
+      for (const w of piTar.warnings) log(`prepare-hetzner: ${w}`);
+      if (piTar.tarballPath) stagings.push({ kind: 'pi', tar: piTar, dest: '/home/vscode/.pi/agent' });
+      else await piTar.cleanup();
 
       for (const s of stagings) {
         const remote = `/tmp/agentbox-${s.kind}-static.tar.gz`;

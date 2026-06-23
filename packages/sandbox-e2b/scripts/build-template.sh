@@ -163,15 +163,19 @@ sudo -u vscode -H mkdir -p \
   /home/vscode/.claude/skills/agentbox-setup \
   /home/vscode/.codex \
   /home/vscode/.local/share/opencode \
+  /home/vscode/.pi/agent \
   /home/vscode/.agentbox-creds/claude \
   /home/vscode/.agentbox-creds/codex \
-  /home/vscode/.agentbox-creds/opencode
+  /home/vscode/.agentbox-creds/opencode \
+  /home/vscode/.agentbox-creds/pi
 sudo -u vscode -H ln -sf /home/vscode/.agentbox-creds/claude/.credentials.json \
   /home/vscode/.claude/.credentials.json
 sudo -u vscode -H ln -sf /home/vscode/.agentbox-creds/codex/auth.json \
   /home/vscode/.codex/auth.json
 sudo -u vscode -H ln -sf /home/vscode/.agentbox-creds/opencode/auth.json \
   /home/vscode/.local/share/opencode/auth.json
+sudo -u vscode -H ln -sf /home/vscode/.agentbox-creds/pi/auth.json \
+  /home/vscode/.pi/agent/auth.json
 sudo -u vscode -H ln -sf /home/vscode/.claude/_claude.json /home/vscode/.claude.json
 sudo -u vscode -H cp /usr/local/share/agentbox/setup-guide.md \
   /home/vscode/.claude/skills/agentbox-setup/SKILL.md
@@ -228,7 +232,10 @@ done_ "VNC stack (TigerVNC + websockify + noVNC)"
 step "agent CLIs (codex + opencode + agent-browser, global npm)"
 npm install -g @openai/codex opencode-ai agent-browser 2>&1 | tail -3 || \
   echo "build-template.sh: one or more agent npm installs failed (continuing)"
-done_ "agent CLIs (codex + opencode + agent-browser, global npm)"
+# pi: separate line with --ignore-scripts (skips pi's postinstall node fetch).
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent 2>&1 | tail -3 || \
+  echo "build-template.sh: pi npm install failed (continuing)"
+done_ "agent CLIs (codex + opencode + pi + agent-browser, global npm)"
 
 step "Claude Code (native installer, run as vscode)"
 # Anthropic's canonical installer drops `claude` at /home/vscode/.local/bin/.

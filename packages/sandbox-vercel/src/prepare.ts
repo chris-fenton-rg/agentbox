@@ -31,6 +31,7 @@ import {
   stageClaudeStaticForUpload,
   stageCodexStaticForUpload,
   stageOpencodeStaticForUpload,
+  stagePiStaticForUpload,
   type StageResult,
 } from '@agentbox/sandbox-cloud';
 import { ensureVercelCredentials } from './credentials.js';
@@ -207,7 +208,7 @@ async function stageAgentConfig(
 ): Promise<void> {
   const progress = (s: string) => log(`prepare-vercel: ${s}`);
   progress('staging host agent static config');
-  const stagings: Array<{ kind: 'claude' | 'codex' | 'opencode'; tar: StageResult; dest: string }> = [];
+  const stagings: Array<{ kind: 'claude' | 'codex' | 'opencode' | 'pi'; tar: StageResult; dest: string }> = [];
   try {
     const claudeTar = await stageClaudeStaticForUpload({ hostWorkspace });
     for (const w of claudeTar.warnings) progress(w);
@@ -223,6 +224,11 @@ async function stageAgentConfig(
     for (const w of opencodeTar.warnings) progress(w);
     if (opencodeTar.tarballPath) stagings.push({ kind: 'opencode', tar: opencodeTar, dest: '/home/vscode/.local/share/opencode' });
     else await opencodeTar.cleanup();
+
+    const piTar = await stagePiStaticForUpload();
+    for (const w of piTar.warnings) progress(w);
+    if (piTar.tarballPath) stagings.push({ kind: 'pi', tar: piTar, dest: '/home/vscode/.pi/agent' });
+    else await piTar.cleanup();
 
     for (const s of stagings) {
       const remote = `/tmp/agentbox-${s.kind}-static.tar.gz`;
