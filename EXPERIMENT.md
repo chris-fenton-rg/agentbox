@@ -1,14 +1,15 @@
 # EXPERIMENT: Adding the `pi` agent harness to AgentBox (+ Colima support)
 
 **Repo:** `chris-fenton-rg/agentbox` (fork of `madarco/agentbox`)
-**Date:** 2026-06-22 (Docker + Colima); 2026-06-23 (Daytona cloud)
+**Date:** 2026-06-22 (Docker + Colima); 2026-06-23 (Daytona, E2B, Hetzner, Vercel cloud)
 **Author:** Claude Code (Opus 4.8), driven by chris@rogerhealthcare.com
 **Goal:** Fork AgentBox, add the [pi](https://pi.dev/docs/latest) coding agent as a
 first-class harness alongside Claude Code / Codex / OpenCode, make it work on
 **Colima** (not just Docker Desktop / OrbStack on macOS), prove `agentbox pi`
-covers the full AgentBox feature set on local Docker, and extend it to a
-**cloud** sandbox (Daytona) — verified end-to-end including a live ChatGPT/
-openai-codex OAuth turn from the remote sandbox. See §10 for the cloud results.
+covers the full AgentBox feature set on local Docker, and extend it to **cloud**
+sandboxes — verified end-to-end on **all four cloud providers** (Daytona, E2B,
+Hetzner, Vercel), each with a live ChatGPT/openai-codex OAuth turn from the remote
+sandbox. See §10 for the cloud results.
 
 ---
 
@@ -243,17 +244,17 @@ All run against Docker-via-Colima. The box image was built locally on Colima
 
 Stated honestly and documented in-repo:
 
-1. **Cloud: Daytona live-verified; Hetzner/Vercel/E2B wired, validation
-   pending.** `agentbox pi --provider daytona` is verified end-to-end (§10). All
-   four cloud providers are now fully wired for pi: the shared layer
-   (`sandbox-cloud/agent-credentials.ts` AGENT_SPECS + forwarded
+1. **Cloud: all four providers live-validated.** `agentbox pi --provider
+   {daytona,e2b,hetzner,vercel}` are each verified end-to-end — `prepare` bake →
+   box create → pi runs → a real ChatGPT/openai-codex (OAuth) turn returns the
+   expected sentinel from the remote sandbox → stop/start/destroy lifecycle (§10).
+   The shared layer (`sandbox-cloud/agent-credentials.ts` AGENT_SPECS + forwarded
    `PI_CODING_AGENT_DIR`, `host-stage.ts` pi stagers, `Dockerfile.box` bake +
-   symlink) plus per-provider pieces — `daytona/prepare.ts` staging,
-   `vercel`/`hetzner` `prepare.ts` staging + `provision.sh`/`install-box.sh`
-   (pi install + creds symlink), and `e2b` `build-template.sh` (pi install +
-   creds symlink; e2b stages no agent static config, matching codex/opencode).
-   Hetzner/Vercel/E2B are **implemented but not yet live-validated** — that needs
-   each provider's credentials + a `prepare` run. See §10.
+   symlink) plus per-provider pieces — `daytona/vercel/hetzner` `prepare.ts`
+   staging + `provision.sh`/`install-box.sh` (pi install + creds symlink), and
+   `e2b` `build-template.sh` (pi install + creds symlink; e2b stages no agent
+   static config, matching codex/opencode). Validation surfaced and fixed three
+   real bugs (§10) — none of which the "wired but unverified" state had caught.
 2. **Session teleport.** Carrying a *host* pi session into a fresh box
    (`-c`/`--resume`) is a v1 stub (friendly error). pi's own `--continue`/
    `--resume` still work *inside* a box across stop/start (the volume persists
@@ -360,15 +361,47 @@ remote-IP concern (raised by the codex Keychain/device-auth docs) did **not**
 materialize for pi, because pi stores its openai-codex token as a plain file in
 `auth.json` (not the macOS Keychain), so it stages cleanly into the sandbox.
 
-### Hetzner / Vercel / E2B — wired, validation pending
-All three are now implemented the same way (binary install + creds symlink in
-each provider's bake script — `provision.sh` / `install-box.sh` /
-`build-template.sh` — plus pi static-config staging in `vercel`/`hetzner`
-`prepare.ts`; E2B stages no agent static config, matching codex/opencode there).
+### E2B / Hetzner / Vercel — live-validated (2026-06-23)
+All three were validated end-to-end with the same bar as Daytona: `prepare` bake
+→ box create → pi binary/auth check → a real openai-codex (ChatGPT OAuth) `pi -p`
+turn returning the expected sentinel from the remote sandbox → stop/start/destroy.
+
+| Provider | base bake | pi @ node | auth seeded | live turn | lifecycle |
+|---|---|---|---|---|---|
+| **E2B** | ✅ template `5p3y8c7kct60s429v9zh` | ✅ pi 0.80.1 @ node 24 | ✅ | ✅ `PI_ON_E2B_OK` | ✅ stop/start/destroy |
+| **Hetzner** | ✅ snapshot `agentbox-base-mqr4qnag` | ✅ pi 0.80.1 @ node 24 | ✅ | ✅ `PI_ON_HETZNER_OK` | ✅ stop/start/destroy |
+| **Vercel** | ✅ snapshot `snap_UsDrrBRLioZlN9F1NEY5UMJChHMu` | ✅ pi 0.80.1 @ node 24 | ✅ | ✅ `PI_ON_VERCEL_OK` | ✅ stop/start/destroy |
+
 They share the generic cloud credential seeding, so `agentbox pi --provider
-{hetzner,vercel,e2b}` routes through the same `cloudAgentCreate` path as Daytona.
-Each still needs its own provider credentials + a `prepare` run to bake the base,
-then the same lifecycle sweep — a validation pass, not new design. The
-**gotcha** from Daytona applies to all of them: edit the **canonical** bake
-scripts under `packages/sandbox-{vercel,hetzner,e2b}/scripts/`, not the generated
-`apps/cli/runtime/.../scripts/` copies that `stage-runtime.mjs` overwrites.
+{e2b,hetzner,vercel}` routes through the same `cloudAgentCreate` path as Daytona,
+with no command-layer changes. The **gotcha** from Daytona held throughout: edit
+the **canonical** bake scripts under `packages/sandbox-{vercel,hetzner,e2b}/
+scripts/`, not the generated `apps/cli/runtime/.../scripts/` copies that
+`stage-runtime.mjs` overwrites.
+
+### Three bugs the validation surfaced (none caught by "wired but unverified")
+1. **E2B base shipped node 20 → pi crashed on launch.** E2B's base template
+   carries a standalone node 20.9.0 at `/usr/local/bin/node`; pi's bundled
+   `undici` calls `webidl.util.markAsUncloneable`, which only exists in node
+   ≥ 20.18 / 24, so every `pi` invocation died with `TypeError:
+   markAsUncloneable is not a function`. Fix: `build-template.sh` now installs
+   node 24 **cleanly via NodeSource** (matching the docker + hetzner bases) —
+   first removing the standalone node + its stale npm, because merging a newer
+   node tarball over `/usr/local` leaves mismatched npm files that break every
+   `npm install -g` with `Class extends value undefined is not a constructor`.
+   (Hetzner already installed node 24; Vercel's base is node 24 — E2B was the
+   only one affected.)
+2. **Host pi `extensions/` broke `pi -p` on every static-staging provider.** The
+   host's `~/.pi/agent/extensions/*.ts` (TUI/UX customizations + a symlinked
+   model shim) were staged into the box and, when they fail to load there, abort
+   `pi -p`'s output entirely (empty stdout). Fix: exclude `extensions/` from the
+   pi static stage (`PI_RSYNC_EXCLUDES` in `host-stage.ts`) — cloud boxes get
+   auth + settings + models, the essentials, and `pi` starts clean. (E2B was
+   immune only because it does no static staging; Hetzner exposed it.)
+3. **Bloated codex config blew past Vercel's `writeFiles` cap (413) and aborted
+   the whole bake.** The codex static stage kept `archived_sessions` (parallel to
+   the already-excluded `sessions`) and build artifacts under `~/.codex/skills/*`
+   (`target/`, `.venv/`, `node_modules/`) — 2.5 GB, which Vercel's upload rejected
+   with a 413 the SDK then choked on as non-JSON, killing the bake before pi could
+   stage. Fix: exclude those four in `CODEX_RSYNC_EXCLUDES` (2.5 GB → 71 MB). Not
+   pi-specific — it blocks any agent's Vercel bake on a real, long-running host.

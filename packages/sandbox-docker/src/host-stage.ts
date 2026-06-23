@@ -459,6 +459,17 @@ export interface StageCodexOptions {
 
 const CODEX_RSYNC_EXCLUDES = [
   '--exclude=sessions',
+  // archived_sessions is sessions' older sibling — same box-irrelevant turn
+  // logs, and on a long-running host it dwarfs everything else (observed 776 MB).
+  '--exclude=archived_sessions',
+  // Build artifacts under ~/.codex/skills/* — Rust `target/`, Python `.venv/`,
+  // node `node_modules/`. Host-platform binaries, useless in a Linux box, and
+  // gigabytes each; excluded at any depth (no leading slash). Without these the
+  // codex static tarball blew past Vercel's writeFiles size cap (413), aborting
+  // the whole base bake before pi could even stage.
+  '--exclude=node_modules',
+  '--exclude=.venv',
+  '--exclude=target',
   '--exclude=log',
   '--exclude=history.jsonl',
   '--exclude=hooks.json',
@@ -692,10 +703,18 @@ export interface StagePiOptions {
 // dir, the npm extension cache, host binaries, and editor backups — large,
 // host-specific, or box-irrelevant. `auth.json` is excluded here and ships via
 // the credentials variant. Extracts into `/home/vscode/.pi/agent/`.
+//
+// `extensions/` is excluded too: the host's pi extensions are local TUI/UX
+// customizations (clickable-urls, tokens-per-sec, ...) and per-host model
+// shims (some are symlinks into ~/.agents) that are useless in a headless
+// cloud box and, if they fail to load there, abort `pi -p`'s output entirely.
+// Cloud boxes get auth + settings + models — the essentials — so `pi` starts
+// clean. (A box that needs a specific extension can add it explicitly.)
 const PI_RSYNC_EXCLUDES = [
   '--exclude=sessions',
   '--exclude=run-history.jsonl',
   '--exclude=intercom',
+  '--exclude=extensions',
   '--exclude=npm',
   '--exclude=bin',
   '--exclude=cache',

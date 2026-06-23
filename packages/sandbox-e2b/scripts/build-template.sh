@@ -67,14 +67,27 @@ apt-get install -y -q --no-install-recommends \
   autocutsel
 done_ "apt base packages"
 
-step "node sanity"
-# E2B base ships node 20; just confirm it's on PATH.
-if ! command -v node >/dev/null 2>&1; then
-  echo "build-template.sh: node not found on the E2B base template — unexpected" >&2
-  exit 65
+step "Node 24 (replace base node 20)"
+# The E2B base ships a standalone node 20 binary at /usr/local/bin/node (npm
+# prefix /usr/local, ahead of /usr/bin on PATH). That's too old for the pi
+# harness: pi's bundled undici calls webidl.util.markAsUncloneable, which only
+# exists in node >= 20.18 / 24. Install node 24 cleanly via NodeSource (-> /usr,
+# fresh npm), matching the docker + hetzner bases. We must FIRST remove the base
+# standalone node and its stale npm: it shadows /usr/bin/node on PATH, and
+# merging a newer node over /usr/local leaves mismatched npm files that break
+# every `npm install -g` with "Class extends value undefined is not a
+# constructor or null". Must run BEFORE the global npm installs so codex /
+# opencode / pi / playwright build against node 24.
+if ! command -v node >/dev/null 2>&1 || ! node --version | grep -qE '^v24\.'; then
+  rm -f /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx
+  rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack
+  curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
+  apt-get install -y -q nodejs
+  hash -r
 fi
-node --version
-done_ "node sanity"
+node --version | grep -qE '^v24\.' || { echo "build-template.sh: node 24 upgrade failed" >&2; exit 65; }
+echo "node: $(command -v node) $(node --version) | npm $(npm --version) | prefix $(npm config get prefix)"
+done_ "Node 24 (replace base node 20)"
 
 step "vscode user + sudoers"
 # Don't force a uid: the E2B base template's `code` group/user holds 1000,
